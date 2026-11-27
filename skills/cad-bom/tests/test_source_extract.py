@@ -230,6 +230,13 @@ class ExtractTests(unittest.TestCase):
         _, result = run(*self.args(page, "--find", "M4"))
         self.assertEqual([(c["header"], c["value"]) for c in result["matches"][0]["cells"]], [("Size", "M4"), ("dk", "16")])
 
+    def test_a_pdf_result_says_in_a_field_that_column_order_is_not_extracted(self) -> None:
+        _, result = run(*self.args(PDF, "--find", "M4 x"))
+        self.assertEqual(result["column_order"], "unverified")
+        self.assertEqual([m["column_order"] for m in result["matches"]], ["unverified"])
+        _, table = run(*self.args(HTML, "--find", "dk"))
+        self.assertNotIn("column_order", table)
+
     def test_bad_arguments_exit_2(self) -> None:
         for argv in (["lower-1", str(HTML)], ["PIN-0001"], ["PIN-0001", str(HTML), "--bogus"]):
             with self.subTest(argv=argv):
