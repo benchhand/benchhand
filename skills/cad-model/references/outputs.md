@@ -315,7 +315,7 @@ the sweep does at the nominal pose: through the joints from the pair's common an
 the version's record snapshot, which must place every occurrence where the manifest does. A version
 without a snapshot uses T_a^-1 T_b of the assembly STEP components. The distance is the BRepExtrema
 minimum distance, 0 when one part lies inside a solid of the other, a solid of a compound part
-included. Within 1e-6 mm, the shared volume is the non-destructive Boolean common (fuzzy 1e-7 mm),
+included. Within 1e-6 mm, the shared volume is the non-destructive Boolean common (fuzzy 1e-5 mm, above the round-off of a placement),
 measured with the adaptive volume rule. Fast mode, the default, leaves a pair unmeasured when its box
 gap or mesh bound (python-fcl) clears 1e-6 mm, its clearance requirement plus margin and the 2 mm
 band. A declared interference fit and a fixed joint are always measured. `--exact` measures every
