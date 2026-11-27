@@ -690,6 +690,18 @@ def project_checks(environ: Mapping[str, str], cwd: Path) -> list[Check]:
     return _fea_checks(command, environ, fea)
 
 
+def _recorded_checks(record: Mapping[str, Any]) -> list[Check] | None:
+    """The checks of a finished warm-up record, or None when its shape is not a report of Check rows."""
+    report = record.get("report")
+    rows = report.get("checks") if isinstance(report, dict) else None
+    if not isinstance(rows, list):
+        return None
+    try:
+        return [Check(**row) for row in rows]
+    except (TypeError, ValueError):
+        return None
+
+
 def _without_warm_up(code: int, text: str, environ: Mapping[str, str], cwd: Path) -> tuple[int, str]:
     """`code` and `text` for a status with no usable warm-up. A failing project setting is the user's to fix
     now, whatever the warm-up state: it is reported, with exit 1, ahead of the missing warm-up."""
@@ -715,8 +727,15 @@ def warm_status(environ: Mapping[str, str] | None = None, wait_s: float = 0.0,
             return _without_warm_up(EXIT_NO_WARM, (f"No warm-up is recorded for {CAD_ROOT} ({path}). "
                                                    "Run `preflight.py --warm` in the foreground."), env, project)
         if record.get("state") == "finished":
-            recorded = [Check(**check) for check in record["report"]["checks"] if check["id"] not in PROJECT_CHECKS]
-            missing = [name for name in WARM_IDS if name not in {check.id for check in recorded}]
+            rows = _recorded_checks(record)
+            if rows is None:
+                return _without_warm_up(EXIT_NO_WARM, (
+                    f"The warm-up record {path} is unreadable: its report is not a list of checks. "
+                    "Run `preflight.py --warm` in the foreground."), env, project)
+            recorded = [check for check in rows if check.id not in PROJECT_CHECKS]
+            # Only a pass or a fail is a result: an info check (or none) is no evidence that the check ran.
+            ran = {check.id for check in recorded if check.status in ("pass", "fail")}
+            missing = [name for name in WARM_IDS if name not in ran]
             if missing and not any(check.required and check.status not in PASSING for check in recorded):
                 return _without_warm_up(EXIT_NO_WARM, (
                     f"The warm-up finished at {record.get('finished_at')} is incomplete: it has no result for "
@@ -728,6 +747,9 @@ def warm_status(environ: Mapping[str, str] | None = None, wait_s: float = 0.0,
             return _without_warm_up(EXIT_NO_WARM, (
                 f"The warm-up started at {record.get('started_at')} (pid {record.get('pid')}) "
                 f"stopped without a report; see {log}. Run `preflight.py --warm` in the foreground."), env, project)
+        fea = project_fea(project)
+        if fea.invalid:  # the project's own mistake: reported now, not after the worker finishes
+            return _without_warm_up(EXIT_RUNNING, "", env, project)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return EXIT_RUNNING, (f"The warm-up started at {record.get('started_at')} (pid {record['pid']}) is still "

@@ -52,8 +52,12 @@ def read(cwd: Path) -> tuple[bool, str | None]:
     """(enabled, invalid) for the project at `cwd`: invalid is None, or the file and the cause."""
     hw = Path(cwd) / "hw"
     path = hw / "product.yaml"
-    if not path.exists():
+    try:
+        path.stat()
+    except (FileNotFoundError, NotADirectoryError):  # only a file that is not there is absent configuration
         return False, None
+    except OSError as error:
+        return False, f"{path}: cannot read: {error}"
     try:
         flow_profile = load_flow_profile()
     except ImportError as error:
@@ -63,8 +67,8 @@ def read(cwd: Path) -> tuple[bool, str | None]:
     except (flow_profile.ProfileError, ValueError) as error:  # ValueError: a date that is not a date
         text = str(error)
         return False, text if str(path) in text else f"{path}: cannot read: {text}"
-    if product is None:  # an empty file
-        return False, None
+    if product is None:  # an empty file or an explicit null: a document that holds nothing
+        return False, f"{path}: the document is empty or null; it must be a mapping"
     node: Any = product
     trail = ""
     for key in ("flow", "profile", "fea"):
