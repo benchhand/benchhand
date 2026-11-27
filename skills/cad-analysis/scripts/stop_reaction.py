@@ -115,8 +115,16 @@ METHOD = ("rigid statics of the modelled stop contact: the peak use-case force t
           "stop_reaction.py)")
 COVERAGE = ("the reaction of one pivot at its joint limits under the peak recorded force; the force is taken at the "
             "moving part's farthest point from the axis, perpendicular to the lever, because its location is not "
-            "recorded; a prismatic stop's reaction is the peak load component along the slide axis; strength and stiffness of the "
+            "recorded; strength and stiffness of the "
             "load path, friction, dynamics and non-planar contact are not covered")
+METHOD_AXIAL = ("statics of the modelled slide stop: the largest use-case load component along the slide axis that presses "
+                "the limit, placed in the assembly frame (cad-analysis stop_reaction.py)")
+COVERAGE_AXIAL = ("the reaction of one slide at its joint limits under the recorded loads, the component along the slide axis "
+                  "that presses each limit; strength and stiffness of the load path, friction, dynamics and contact that is "
+                  "not squarely against travel are not covered")
+RULE_SOURCE_AXIAL = {"kind": "policy", "reference": "cad-analysis stop reaction rule: a slide stop's reaction is the axial use-case load "
+                                                    "component along the slide axis", "origin": "benchhand",
+                     "document": "skills/cad-analysis/scripts/stop_reaction.py"}
 RULE_SOURCE = {"kind": "policy", "reference": "cad-analysis stop reaction rule: a stop's design reaction is the applied moment over "
                                               "its smallest contact arm", "origin": "benchhand",
                "document": "skills/cad-analysis/scripts/stop_reaction.py"}
@@ -525,7 +533,7 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         return unresolved(if_id, "not_applicable" if why.startswith("no movable") else "unknown", f"{if_id}: {why}")
     tolerance, source = contact_tolerance(interface)
     states = [assess_end(chain, definitions, pivot, label, tolerance) for label in ("min", "max")]
-    detail: dict[str, Any] = {"pivot": pivot.joint.id, "moving": chain.ref(pivot.moving), "fixed": chain.ref(pivot.fixed),
+    detail: dict[str, Any] = {"pivot": pivot.joint.id, "joint_type": pivot.joint.type, "moving": chain.ref(pivot.moving), "fixed": chain.ref(pivot.fixed),
                               "contact_tolerance": {"mm": tolerance, "source": source}, "ends": {}}
     for state in states:
         detail["ends"][state["label"]] = {"joint_value": state["value"], "touching": state["touching"],
@@ -592,7 +600,8 @@ def unknown_finding(entry: Assessment, base: Mapping[str, Any]) -> dict[str, Any
 
 
 def reaction_finding(entry: Assessment, label: str, result: statics.Reaction, base: Mapping[str, Any]) -> dict[str, Any]:
-    where = f"the {label} limit of the pivot"
+    axial = entry.detail.get("joint_type") == "prismatic"
+    where = f"the {label} limit of the {'slide' if axial else 'pivot'}"
     ident = f"{slug(entry.interface)}_{label}_stop_reaction_{result.status}"
     if result.status == statics.UNBOUNDED:
         estimates = f"uniform pressure {result.uniform_n or 0:.4g} N and a compliant stop {result.compliant_n or 0:.4g} N"
@@ -604,6 +613,16 @@ def reaction_finding(entry: Assessment, label: str, result: statics.Reaction, ba
                                 f"the cheeks cannot be sized ({estimates} are estimates, not bounds)"),
                 "remedy": REMEDY_UNBOUNDED}
     recorded = entry.detail["recorded_contact_load_n"]
+    if axial:
+        return {"id": ident, "code": "engineering.stop_reaction_understated", **base, "severity": result.severity,
+                "outcome": "fail", "measured": {"value": recorded, "units": "N"},
+                "criterion": {"property": "contact_load", "operator": ">=", "value": result.design_n, "units": "N",
+                              "source": dict(RULE_SOURCE_AXIAL)},
+                "uncertainty": f"{where}: {result.message}",
+                "consequence": (f"{entry.interface} is sized for {recorded:.4g} N but its stop reacts {result.design_n:.4g} N "
+                                f"along the slide axis at {where}"),
+                "remedy": ("record the axial reaction as functional.contact.load and size the stop and its fasteners for it, "
+                           "or model the contact in an FEA contact case approved in a design record")}
     return {"id": ident, "code": "engineering.stop_reaction_understated", **base, "severity": result.severity,
             "outcome": "fail", "measured": {"value": recorded, "units": "N"},
             "criterion": {"property": "contact_load", "operator": ">=", "value": result.design_n, "units": "N",
@@ -614,11 +633,19 @@ def reaction_finding(entry: Assessment, label: str, result: statics.Reaction, ba
                        "load bound, or model the contact in an FEA contact case approved in a design record")}
 
 
+def method_of(entry: Assessment) -> str:
+    return METHOD_AXIAL if entry.detail.get("joint_type") == "prismatic" else METHOD
+
+
+def coverage_of(entry: Assessment) -> str:
+    return COVERAGE_AXIAL if entry.detail.get("joint_type") == "prismatic" else COVERAGE
+
+
 def findings_of(entry: Assessment, obligation: str) -> list[dict[str, Any]]:
     if entry.outcome in ("pass", "not_applicable"):
         return []
     subject = {"interface": entry.interface}
-    base = {"obligation": obligation, "subject": subject, "method": {"name": METHOD, "tool": PRODUCER},
+    base = {"obligation": obligation, "subject": subject, "method": {"name": method_of(entry), "tool": PRODUCER},
             "recheck": {"families": [FAMILY], "scope": [subject], "earliest_stage": "layout"}}
     if not entry.reactions:
         return [unknown_finding(entry, base)]
@@ -627,7 +654,8 @@ def findings_of(entry: Assessment, obligation: str) -> list[dict[str, Any]]:
 
 def outcome_row(entry: Assessment, obligation: str, mine: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     row: dict[str, Any] = {"obligation": obligation, "outcome": entry.outcome, "level": "simulation_supported",
-                           "method": METHOD, "coverage": entry.reasons[0] if entry.outcome == "not_applicable" else COVERAGE}
+                           "method": method_of(entry),
+                           "coverage": entry.reasons[0] if entry.outcome == "not_applicable" else coverage_of(entry)}
     if mine:
         row["findings"] = [f["id"] for f in mine]
     if entry.outcome == "unknown":
@@ -647,7 +675,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
     dependencies = file_hashes(record_hw, ("assembly.yaml", "interfaces.yaml", "product.yaml"))
     if version is not None:
         dependencies["version_manifest"] = pose.input_sha256(args.version_dir)
-    detail: dict[str, Any] = {"interfaces": {}, "limits": [COVERAGE]}
+    detail: dict[str, Any] = {"interfaces": {}, "limits": [COVERAGE, COVERAGE_AXIAL]}
     outcomes: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
     if expected:
