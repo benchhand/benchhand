@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import re
+import sys
 from collections.abc import Mapping
 from typing import Any
 
@@ -112,8 +113,16 @@ def size_problem(standard: str, size: str) -> str | None:
     return f"size {size!r} does not fit {standard}"
 
 
+_MAX_INT = int(sys.float_info.max)  # the largest integer a float holds: beyond it, no order line can state the number
+
+
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+    """A finite positive number the order line can state. An integer is compared as an integer, never converted to float."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return 0 < value <= _MAX_INT
+    return isinstance(value, float) and math.isfinite(value) and value > 0
 
 
 Issue = tuple[str, str]  # (the designation field, why it is wrong)
@@ -170,7 +179,7 @@ def _standard_issues(designation: Mapping[str, Any]) -> list[Issue]:
 
 def _family_issues(designation: Mapping[str, Any]) -> list[Issue]:
     family = designation.get("family")
-    if family not in KNOWN_FAMILIES:
+    if not isinstance(family, str) or family not in KNOWN_FAMILIES:
         return [("family", f"{family!r} is not a known commodity family ({', '.join(sorted(KNOWN_FAMILIES))})")]
     fields = KNOWN_FAMILIES[family]
     issues = _text_issues(designation, fields)
@@ -201,7 +210,11 @@ def designation_problem(designation: Any) -> str | None:
 
 def part_designation_issues(part: Mapping[str, Any]) -> list[Issue]:
     """The issues of the structured designation the part's purchased route operation supplies."""
-    return designation_issues(_purchase(part).get("designation"))
+    purchase = _purchase(part)
+    supplied = purchase.get("designation")
+    if supplied is not None and not isinstance(supplied, Mapping):  # supplied but malformed, unlike an omitted designation
+        return [("", f"must be a mapping with a kind (standard_designation or family_designation), not {supplied!r}")]
+    return designation_issues(supplied)
 
 
 def _number(value: Any) -> str:

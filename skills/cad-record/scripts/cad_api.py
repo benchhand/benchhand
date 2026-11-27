@@ -6,7 +6,7 @@
 # schema-sha256 cc2ca1a50d093d0dc81975cf82020b5295f7a13043cf0bde3e5e83877f315d6c skills/cad-concept/assets/schemas/handoff.schema.json
 # schema-sha256 b851d6f420c0ea132ba6c096b5b5105daced23aadae85ed3b10286997554565e skills/cad-record/schemas/assembly.schema.json
 # schema-sha256 cabe6a6c934a7ba10522b6c4f3e47e756c972ed60db881dbe515baf7593a84cb skills/cad-record/schemas/bom-row.schema.json
-# schema-sha256 02b013bdc87c6ff2eac691a5de5adcfabfa92159fec0eff864573ea7116fde41 skills/cad-record/schemas/bom-summary.schema.json
+# schema-sha256 cce7a6387838df08c1043f5828275c9a59f6ccd2867709944ceda31ed2223d79 skills/cad-record/schemas/bom-summary.schema.json
 # schema-sha256 6868af6519ab519f02414dc1d860de2b33d3757aa39d78d4960530f0b4dbbe28 skills/cad-record/schemas/bundle-manifest.schema.json
 # schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 skills/cad-record/schemas/drawing.schema.json
 # schema-sha256 6ffce99afd025a980bb99e691f44813b24e9814209a7ae84e64fa9071e5d55bf skills/cad-record/schemas/evidence-digest.schema.json
@@ -1298,7 +1298,7 @@ class BomSummaryDesignationFinding(TypedDict):
     - additionalProperties: false
 
     Field notes:
-    - field: the part.yaml field, purchase.designation.<name>; pattern: "^purchase\\\\.designation\\\\."
+    - field: the part.yaml field, purchase.designation.<name>; pattern: "^purchase\\\\.designation(\\\\..+)?$"
     - reason: minLength: 1
     """
     PN: Required[str]

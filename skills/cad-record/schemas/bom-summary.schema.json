@@ -25,7 +25,7 @@
       "required": ["PN", "field", "reason"],
       "properties": {
         "PN": {"type": "string"},
-        "field": {"description": "the part.yaml field, purchase.designation.<name>", "type": "string", "pattern": "^purchase\\.designation\\."},
+        "field": {"description": "the part.yaml field, purchase.designation.<name>", "type": "string", "pattern": "^purchase\\.designation(\\..+)?$"},
         "reason": {"type": "string", "minLength": 1}
       }
     }

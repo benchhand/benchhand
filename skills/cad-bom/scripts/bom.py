@@ -247,7 +247,7 @@ def designation_findings(rows: list[dict[str, str]], parts: dict[str, dict[str, 
     findings: list[dict[str, str]] = []
     for pn in dict.fromkeys(row["PN"] for row in rows):
         for field, reason in identity.part_designation_issues(parts.get(pn) or {}):
-            findings.append({"PN": pn, "field": f"purchase.designation.{field}", "reason": reason})
+            findings.append({"PN": pn, "field": "purchase.designation" + (f".{field}" if field else ""), "reason": reason})
     return findings
 
 
