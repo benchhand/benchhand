@@ -146,23 +146,39 @@ def _artifacts(node: Any) -> Iterator[str]:
             yield from _artifacts(value)
 
 
-def documents_problems(documents: Mapping[str, Any], hw: Path) -> list[str]:
-    """Every problem of the capability (and material) documents: the record's own checks, then the profile rules.
+def _record_problems(documents: Mapping[str, Any], hw: Path) -> list[Any]:
+    """The record's own problems about the capability and material documents (and the artifacts they name).
 
     `intent.check_documents` does not fit: it normalizes without `hw`, so it never checks a named source artifact against
-    its sha256, which a user `max_speed` rests on. Problems about the artifacts these documents name are kept, and so is a
-    missing or unsupported record version: the loader stops there before it hashes any artifact, so the check reports it."""
+    its sha256, which a user `max_speed` rests on. A missing or unsupported record version is kept: the loader stops there
+    before it hashes any artifact, so the check reports it."""
     own = {rel: documents[rel] for rel in (CAPABILITIES, MATERIALS) if rel in documents}
     record = intent.normalize_record(documents, hw=hw)
     wanted = {f"hw/{rel}" for rel in own} | {f"hw/{artifact}" for artifact in _artifacts(list(own.values()))}
-    found = [problem for problem in intent.schema_problems(own) + list(record.problems)
-             if (problem.path in wanted or problem.code == intent.VERSION_UNSUPPORTED) and (problem.severity == "error" or problem.code == "intent.calibration_state")]
-    messages = [f"{problem.path}: {problem.pointer or '-'}: {problem.message}" for problem in found]
+    return [problem for problem in intent.schema_problems(own) + list(record.problems)
+            if problem.path in wanted or problem.code == intent.VERSION_UNSUPPORTED]
+
+
+def _message(problem: Any) -> str:
+    return f"{problem.path}: {problem.pointer or '-'}: {problem.message}"
+
+
+def documents_problems(documents: Mapping[str, Any], hw: Path) -> list[str]:
+    """Every error of the capability (and material) documents: the record's own errors, then the profile rules.
+    An advisory (`documents_advisories`) is no error: it never sets the exit status or stops a save."""
+    messages = [_message(problem) for problem in _record_problems(documents, hw) if problem.severity == "error"]
     catalog = guidelines.discover(hw)
     for profile in (documents.get(CAPABILITIES) or {}).get("profiles") or ():
         if isinstance(profile, Mapping):
             messages += profile_problems(profile, catalog)
     return messages
+
+
+def documents_advisories(documents: Mapping[str, Any], hw: Path) -> list[str]:
+    """What the calibration_state of a profile draws, as advisories: a custom state with no measured calibration, a
+    malformed state, a dangling provenance. Wording only: nothing here blocks."""
+    return [_message(problem) for problem in _record_problems(documents, hw)
+            if problem.severity == "warning" and problem.code == "intent.calibration_state"]
 
 
 def _read(hw: Path) -> dict[str, Any]:
@@ -181,6 +197,11 @@ def _read(hw: Path) -> dict[str, Any]:
 def check(hw: Path) -> list[str]:
     """Every problem of the capability profiles at `hw`; empty when they pass. ValueError when the files cannot be read."""
     return documents_problems(_read(Path(hw)), Path(hw))
+
+
+def advisories(hw: Path) -> list[str]:
+    """The advisories of the capability profiles at `hw` (`documents_advisories`). ValueError when the files cannot be read."""
+    return documents_advisories(_read(Path(hw)), Path(hw))
 
 
 def _starter(material: str) -> dict[str, Any] | None:
@@ -267,6 +288,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     for problem in problems:
         print(problem)
+    try:
+        notes = advisories(args.hw)
+    except (OSError, ValueError, yaml.YAMLError):
+        notes = []
+    for note in notes:
+        print(f"advisory: {note}")
     return 1 if problems else 0
 
 
