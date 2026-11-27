@@ -437,7 +437,7 @@ def seed_store(hw: Path, scratch_fd: int, notes: list[str] | None = None) -> int
     can be made (another filesystem) seeding stops, and the scratch build builds the rest itself;
     nothing is copied, because the store can be as large as every version together. A link in the lead's cache
     path is refused, except that a caller passing `notes` (init) gets a note instead and starts unseeded."""
-    lay, seeded = layout.load(), 0
+    lay = layout.load()
     hw_fd = open_dir(hw.resolve())
     opened: list[int] = []
     try:
@@ -454,28 +454,39 @@ def seed_store(hw: Path, scratch_fd: int, notes: list[str] | None = None) -> int
                 notes.append(f"the lead's {'/'.join(folder)} is behind a symlink, so it is not used; the workspace starts without those stored builds")
                 continue
             opened.append(source_fd)
-            names = sorted(entry.name for entry in os.scandir(source_fd)
-                           if entry.is_file(follow_symlinks=False)
-                           and (match := lay.classify(f"hw/{'/'.join(folder)}/{entry.name}")) is not None
-                           and match.entry.id == entry_id)
+            names = cache_names(lay, entry_id, source_fd, folder)
             if names:
                 dest_fd = descend(scratch_fd, folder, create=True)
                 opened.append(dest_fd)
                 wanted += [(source_fd, dest_fd, name) for name in names]
-        for _, dest_fd, name in wanted:
-            if exists_at(dest_fd, name) and stat.S_ISLNK(os.stat(name, dir_fd=dest_fd, follow_symlinks=False).st_mode):
-                raise UsageError(f"scratch contains a symlink at the cache file {name}")
-        for source_fd, dest_fd, name in wanted:
-            if exists_at(dest_fd, name):
-                continue
-            try:
-                os.link(name, name, src_dir_fd=source_fd, dst_dir_fd=dest_fd, follow_symlinks=False)
-            except OSError:
-                return seeded
-            seeded += 1
+        return link_cache(wanted)
     finally:
         for fd in (hw_fd, *opened):
             os.close(fd)
+
+
+def cache_names(lay: Any, entry_id: str, source_fd: int, folder: Sequence[str]) -> list[str]:
+    """The regular files in the lead's cache directory that the layout classifies as `entry_id`."""
+    prefix = f"hw/{'/'.join(folder)}"
+    return sorted(entry.name for entry in os.scandir(source_fd)
+                  if entry.is_file(follow_symlinks=False)
+                  and (match := lay.classify(f"{prefix}/{entry.name}")) is not None and match.entry.id == entry_id)
+
+
+def link_cache(wanted: list[tuple[int, int, str]]) -> int:
+    """Link each wanted file once every leaf is known not to be a link; stop at the first link that fails."""
+    for _, dest_fd, name in wanted:
+        if exists_at(dest_fd, name) and stat.S_ISLNK(os.stat(name, dir_fd=dest_fd, follow_symlinks=False).st_mode):
+            raise UsageError(f"scratch contains a symlink at the cache file {name}")
+    seeded = 0
+    for source_fd, dest_fd, name in wanted:
+        if exists_at(dest_fd, name):
+            continue
+        try:
+            os.link(name, name, src_dir_fd=source_fd, dst_dir_fd=dest_fd, follow_symlinks=False)
+        except OSError:
+            break
+        seeded += 1
     return seeded
 
 
