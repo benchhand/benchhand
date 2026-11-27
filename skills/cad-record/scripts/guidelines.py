@@ -366,12 +366,18 @@ def snapshot_files(hw: Path) -> dict[str, bytes]:
             for g in sorted(discover(hw).guidelines.values(), key=lambda g: g.id) if g.origin == "shipped" and g.file is not None}
 
 
+# The service classes known to be below safety_critical (manufacturing_intent.SERVICE_CLASSES, less safety_critical and
+# unknown). Only these let the shipped guidelines stand in for a machine: an unknown class could be safety_critical.
+MACHINE_OPTIONAL_SERVICE = frozenset({"appearance_concept", "fit_assembly", "functional_demo", "working_prototype", "production"})
+
+
 def machine_optional(process: str | None, provider: str | None, service_class: str | None, calibration: bool) -> bool:
     """Whether a route's machine is optional evidence: an FDM route (the process the shipped guideline values cover) with
-    calibration off, run locally, for a service class below safety_critical. A supplier's capability and a safety-critical
-    service need a recorded capability profile whatever the flag says; the shipped guidelines never stand in for one."""
+    calibration off, run locally, for a service class known to be below safety_critical. A supplier's capability, a
+    safety-critical service and a service class not yet known need a recorded capability profile whatever the flag says;
+    the shipped guidelines never stand in for one."""
     return (process in GUIDELINE_PROCESSES and not calibration and provider != "outsourced"
-            and service_class != "safety_critical")
+            and service_class in MACHINE_OPTIONAL_SERVICE)
 
 
 def calibration_enabled() -> bool:
