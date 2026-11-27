@@ -35,7 +35,7 @@ Allow only one active lead session per project. Before resuming, stop or reconci
 - Each L1-L4 commit batch builds one version and checks it in the [fail-fast order](#fail-fast-check-order). Stop on any blocking failure. Show that exact version's renders at the stage gates.
 - An explicit check output is a new path under `.cad-work/`; generated version and producer paths come from the cad-record layout API.
 - The user's commit or the layout threshold triggers broader changed-parts/dependents recheck. Use `flow.recheck_from` and applicable earlier-stage checks; stamp the exact staged `hw/` only after every required check passes.
-- Verify each staged `hw/` tree before committing. From the project directory, run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify` after staging. Exit 0 permits the commit. Exit 2 means do not commit; fix stderr's reason, restamp, and verify again.
+- Verify each staged `hw/` tree before committing. From the project directory, run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify` after staging. Exit 0 permits the commit. Every nonzero result blocks it. Fix the reported problem and verify again.
 - Record changed items, dependents, checks, results, and artifacts. A later edit starts a new batch on the next commit.
 - After DESIGN freeze, reopen only affected parts and dependents. Preserve unaffected parts and their evidence. Before another release, build a new version and re-freeze its exact manifest anchor.
 - A preview or render is not a check result. Tie reported checks to a design revision/configuration.
