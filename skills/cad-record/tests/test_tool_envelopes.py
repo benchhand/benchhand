@@ -118,8 +118,9 @@ class EnvelopeTests(unittest.TestCase):
     def test_sized_pliers_have_their_jaws_swept_then_the_rest_to_their_maximum_length(self) -> None:
         # ISO 5746:2021 Table 1, engineer's pliers, nominal 160 mm: l max 169, l3 32 +- 5, w3 max 25, t1 max 11.2
         # (read from the standard, not the module). The jaws, w3 by t1 in section, sweep a circle of their
-        # diagonal about the tool axis, over l3 at its largest; the rest of the tool runs on to l max.
-        jaws_length, jaws_radius, overall = 32.0 + 5.0, round(math.hypot(25.0, 11.2) / 2, 6), 169.0
+        # diagonal about the tool axis. Their length is anywhere from 27 to 37 mm, so the wider rest of the tool
+        # may start as close as 27 mm to the tip: the jaw section runs to l3 min, and the rest from there to l max.
+        jaws_length, jaws_radius, overall = 32.0 - 5.0, round(math.hypot(25.0, 11.2) / 2, 6), 169.0
         for name in ("160 mm combination pliers", "engineer's pliers 160 mm"):
             with self.subTest(name=name):
                 envelope = envelopes.classify(name).envelope
@@ -128,6 +129,17 @@ class EnvelopeTests(unittest.TestCase):
                 self.assertEqual((jaws.start_mm, jaws.length_mm, jaws.radius_mm), (0.0, jaws_length, jaws_radius))
                 self.assertEqual((rest.start_mm, rest.start_mm + rest.length_mm), (jaws_length, overall))
                 self.assertIn("ISO 5746:2021 Table 1", envelope.sources[0]["reference"])
+
+    def test_pliers_cover_both_ends_of_the_jaw_length_tolerance(self) -> None:
+        # ISO 5746:2021 Table 1 l3: 160 mm 32 +- 5 (27 to 37), 250 mm 50 +- 12 (38 to 62); w3 max and t1 max
+        # 25 x 11.2 and 40 x 18; Figure 1 handle span 50 +15 mm. Each obstacle sits inside the l3 band, outside
+        # the jaws' swept circle but inside the handles' span: pliers whose jaws end at l3 min hit it, those
+        # whose jaws run to l3 max clear it, so the envelope must take it in.
+        for nominal, (axial, radial) in {160: (32.0, 20.0), 250: (50.0, 27.0)}.items():
+            with self.subTest(nominal=nominal):
+                envelope = envelopes.classify(f"{nominal} mm pliers").envelope
+                covering = [s.radius_mm for s in envelope.segments if s.start_mm <= axial <= s.start_mm + s.length_mm]
+                self.assertGreaterEqual(max(covering), radial)
 
     def test_pliers_without_a_listed_nominal_length_are_a_note(self) -> None:
         for name in ("pliers", "170 mm pliers"):
