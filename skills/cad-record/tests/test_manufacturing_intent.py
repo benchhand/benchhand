@@ -400,6 +400,44 @@ class LoadByPathWithoutOptionalDependencies(unittest.TestCase):
         self.assertEqual(done.stdout.decode().strip(), f"ok {parts} []", done.stderr.decode())
 
 
+class OptionalMachineOffer(unittest.TestCase):
+    """The machine offer is made once, at GROUND, and is optional: the generated use case neither leaves the equipment list
+    unknown nor asks again at INTENT. Equipment evidence a route genuinely needs stays with the capability checks."""
+
+    def test_the_generated_use_case_records_the_equipment_list_as_optional_not_unknown(self) -> None:
+        _entries, paths = mi.use_case_questions(1)
+        equipment = mi.blank_use_case("not recorded", paths)["capability"]["equipment"]
+        self.assertEqual(equipment["status"], "not_applicable")
+        self.assertRegex(equipment["reason"], r"(?i)GROUND")
+        self.assertRegex(equipment["reason"], r"(?i)guideline")
+        self.assertNotIn("question", equipment)
+
+    def test_no_generated_question_asks_for_the_equipment(self) -> None:
+        entries, paths = mi.use_case_questions(1)
+        self.assertNotIn("capability.equipment", paths)
+        for entry in entries:
+            self.assertNotRegex(entry["question"], r"(?i)equipment|printer|machine")
+
+    def test_the_project_template_matches_the_generator(self) -> None:
+        import yaml
+        template = SKILL / "assets" / "project-template" / "hw"
+        product = yaml.safe_load((template / "product.yaml").read_text(encoding="utf-8"))
+        entries, paths = mi.use_case_questions(1)
+        self.assertEqual(product["use_case"]["capability"]["equipment"],
+                         mi.blank_use_case("not recorded yet", paths)["capability"]["equipment"])
+        asked = {q["id"]: q["question"]
+                 for q in yaml.safe_load((template / "requirements.yaml").read_text(encoding="utf-8"))["open_questions"]}
+        self.assertEqual([asked[e["id"]] for e in entries], [e["question"] for e in entries])
+
+    def test_an_unknown_equipment_list_with_no_tracking_question_still_blocks_a_final_choice(self) -> None:
+        """Only the declined, optional offer is recorded as not applicable; an unknown list is still a gap."""
+        block = fx.use_case("confirmed", capability={"equipment": fx.unknown("not recorded"),
+                                                     "operator": fx.not_applicable("n/a"),
+                                                     "outsourcing": fx.not_applicable("n/a")})
+        record = mi.normalize_record(fx.record(product_data=fx.product(block), decisions=("DR-001",)))
+        self.assertTrue(any("capability.equipment" in message for message in mi.assess_use_case(record).blocking))
+
+
 class UseCaseReadiness(unittest.TestCase):
     def confirmed(self) -> Any:
         """The TST record with its use case confirmed by DR-001: every question resolved and every use-case fact

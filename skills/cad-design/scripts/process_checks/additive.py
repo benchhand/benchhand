@@ -51,13 +51,15 @@ def _k(ctx: Context) -> str:
 
 
 def _no_basis(ctx: Context, findings: list[Draft], draft: Draft, what: str, otherwise: str,
-              why: str = "no calibration or guideline", process: str | None = None) -> tuple[str, str]:
+              why: str = "no calibration or guideline", process: str | None = None, op: Any | None = None) -> tuple[str, str]:
     """`draft`, the finding of a check that has no value to judge against, as a sub-check. On a printer (the `process`
-    whose as-made result is judged, this operation's by default) a calibration is optional (benchhand-c7q.30): the check
-    is not assessed, a minor finding that blocks no gate and is never a pass. On any other process it stays UNKNOWN with
-    `otherwise` as its coverage."""
+    whose as-made result is judged, this operation's by default; `op` the operation whose stock is judged, this one by
+    default) a calibration is optional (benchhand-c7q.30): the check
+    is not assessed, a minor finding that blocks no gate and is never a pass. On any other process, or with the stock
+    material unidentified (no calibration or guideline could be looked up), it stays UNKNOWN with `otherwise` as its
+    coverage."""
     findings.append(draft)
-    if (process or _k(ctx)) not in PRINTERS:
+    if (process or _k(ctx)) not in PRINTERS or ctx.stock_material_id(op) is None:
         return UNKNOWN, otherwise
     draft.outcome, draft.severity, draft.reason = NOT_ASSESSED, "minor", NO_BASIS
     return NOT_ASSESSED, f"{what} not assessed: {why}; print and inspect, or calibrate to assess"
@@ -140,9 +142,12 @@ def orientation(ctx: Context) -> Result:
             parts.append((PASS if supported else FAIL, "stability relies on supports" if supported else "unstable pose"))
         elif centre:
             parts.append((PASS, "centre of volume above the bed contact hull"))
-    parts.append(_envelope(ctx, g, findings))
+    envelope = _envelope(ctx, g, findings)
+    parts.append(envelope)
     _layer_note(ctx, g, findings)
-    return combine(method, parts, findings, reason=NO_BASIS)
+    unassessed = any(f.outcome == NOT_ASSESSED for f in findings)
+    return combine(method, parts, findings,
+                   reason="no_capability_profile" if envelope[0] == NOT_ASSESSED and not unassessed else _reason(findings))
 
 
 def _outside_hull(point: Any, hull: Any) -> bool:
@@ -185,6 +190,8 @@ def _contact_area(ctx: Context, g: Geometry, contact: float, findings: list[Draf
 
 def _envelope(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, str]:
     kind, profile = _k(ctx), ctx.profile
+    if profile is None and ctx.guidelines_without_machine():
+        return NOT_ASSESSED, "no machine recorded; the envelope is not assessed"
     raw = (profile.raw.get("envelope") if profile is not None else None) or {}
     known: list[float] = []
     for axis in "xyz":

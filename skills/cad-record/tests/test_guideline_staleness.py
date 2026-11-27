@@ -28,6 +28,7 @@ from modload import load_module as load  # noqa: E402
 acceptance = load("cad_record_acceptance_fixtures", HERE / "fixtures" / "acceptance.py")
 fx, mi, impact = acceptance.fx, acceptance.mi, acceptance.impact
 gl = load("cad_record_guidelines", SKILL / "scripts" / "guidelines.py")
+build = load("cad_model_record_for_stock_staleness", SKILL.parent / "cad-model" / "scripts" / "cadmodel" / "record.py")
 registry = fx.schema_registry_module()
 
 
@@ -77,6 +78,101 @@ class Staleness(unittest.TestCase):
         put(self.project, "generic", guideline("fdm.generic"))
         documents = {rel: data for rel, data in fx.tst_record().items() if not rel.startswith("_")}
         self.assertEqual(dict(mi.normalize_record(documents).guideline_digests), {})
+
+    def machine_free(self) -> None:
+        """TST-0001's route names no machine: its capability is an unknown fact."""
+        path = self.hw / "parts" / "TST-0001" / "part.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for operation in data["intent"]["route"]:
+            operation["capability"] = fx.unknown("no machine recorded")
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    def test_tightening_a_guideline_after_a_build_stales_a_part_that_names_no_machine(self) -> None:
+        """An FDM route with no machine resolves its limits through the guideline sets for its process and material, so
+        editing such a set changes the part's source fingerprint, though no capability profile names it."""
+        self.machine_free()
+        put(self.project, "generic", guideline("fdm.generic", 0.8))
+        before = self.source(self.record())
+        put(self.project, "generic", guideline("fdm.generic", 0.9))
+        self.assertNotEqual(self.source(self.record()), before)
+
+    def test_a_machine_free_part_records_the_digests_of_the_sets_it_resolves_through(self) -> None:
+        self.machine_free()
+        path = put(self.project, "generic", guideline("fdm.generic"))
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        digests = self.record().guideline_digests
+        self.assertEqual(digests[gl.machine_free_key("fdm")]["tst_polymer_printed"], {"fdm.generic@1": digest})
+
+    def print_from_tpu_stock(self) -> None:
+        """TST-0001 names no machine and is of PLA (its main profile), printed from TPU stock (its print's setup.stock)."""
+        self.machine_free()
+        materials_path = self.hw / "manufacturing" / "materials.yaml"
+        materials = yaml.safe_load(materials_path.read_text(encoding="utf-8"))
+        polymer = next(p for p in materials["profiles"] if p["id"] == "tst_polymer_printed")
+        polymer["material_family"] = fx.known("pla")
+        materials["profiles"].append(fx.material_profile("tst_tpu_printed", level="family", form="printed",
+                                                         family="TST TPU", material_family=fx.known("tpu")))
+        materials_path.write_text(yaml.safe_dump(materials, sort_keys=False), encoding="utf-8")
+        part_path = self.hw / "parts" / "TST-0001" / "part.yaml"
+        data = yaml.safe_load(part_path.read_text(encoding="utf-8"))
+        data["intent"]["route"][0]["setup"] = {"stock": {"material_profile": "tst_tpu_printed"}}
+        part_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    def built(self) -> Any:
+        """The record of version v1, built from hw/ as it stands."""
+        record_dir = self.hw / "versions" / "v1" / "record"
+        pns = sorted(path.parent.name for path in (self.hw / "parts").glob("*/part.yaml"))
+        build.write_snapshot(record_dir, build.snapshot(self.hw, pns))
+        return mi.load_record(record_dir, snapshot=True)
+
+    def test_tightening_the_guideline_of_the_print_stock_after_a_build_stales_the_built_part(self) -> None:
+        """The process checks pick the guideline sets of an operation's setup.stock material, not of the part's main
+        profile. A part printed from TPU stock is stale once the TPU set tightens after the version was built."""
+        self.print_from_tpu_stock()
+        put(self.project, "tpu", guideline("fdm.material.tpu", 2.0, material_family=["tpu"]))
+        built = self.source(self.built())
+        self.assertEqual(self.source(self.record()), built, "the snapshot fingerprints as the record it was built from")
+        put(self.project, "tpu", guideline("fdm.material.tpu", 3.0, material_family=["tpu"]))
+        self.assertNotEqual(self.source(self.record()), built)
+
+    def test_tightening_the_guideline_of_the_part_material_after_a_build_stales_its_stack_evidence(self) -> None:
+        """Stack-up resolves a part's limits through its main material profile even when the print names other stock, so
+        the part keeps the sets of both: tightening the PLA set marks the accepted stack evidence of IF-001 stale."""
+        self.print_from_tpu_stock()
+        put(self.project, "tpu", guideline("fdm.material.tpu", 2.0, material_family=["tpu"]))
+        put(self.project, "pla", guideline("fdm.material.pla", 1.0, material_family=["pla"]))
+        built = self.built()
+        stack = next(o for o in mi.required_checks(built) if o.id == "interface.stack@IF-001")
+        accepted = acceptance.entry(built, "EV-stack", {"interface": "IF-001"}, stack.level, obligation=stack.id,
+                                    version="v1", manifest_sha256="a" * 64)
+        (self.hw / "manufacturing" / "evidence.yaml").write_text(yaml.safe_dump({"entries": [accepted]}, sort_keys=False),
+                                                                 encoding="utf-8")
+
+        def status() -> str:
+            return str(acceptance.evidence.assess(self.record(), version="v1", manifest_sha256="a" * 64).statuses[stack.id].result)
+
+        self.assertNotEqual(status(), "stale", "the evidence is current before the edit")
+        put(self.project, "pla", guideline("fdm.material.pla", 1.5, material_family=["pla"]))
+        self.assertEqual(status(), "stale")
+
+    def service_class(self, value: str) -> None:
+        path = self.hw / "product.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data["use_case"]["service_class"] = fx.known(value)
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    def test_reclassifying_the_use_case_stales_the_ream_and_stack_packets_of_a_part_with_no_machine(self) -> None:
+        """Whether the shipped guidelines stand in for the missing machine depends on the service class, so reclassifying
+        functional_demo as safety_critical after a build makes the ream allowance and stack checks stale (the impact the
+        evidence gate takes as stale_since_build for their producer packets)."""
+        self.machine_free()
+        self.service_class("functional_demo")
+        built = self.built()
+        self.service_class("safety_critical")
+        stale = impact.compare(built, self.record(), since="v1").stale_obligations
+        for ident in ("process.reaming.allowance@TST-0001/ream", "interface.stack@IF-001"):
+            with self.subTest(ident):
+                self.assertIn(ident, stale)
 
     def test_editing_an_applicable_set_changes_the_source_fingerprint_and_no_other_domain(self) -> None:
         put(self.project, "generic", guideline("fdm.generic", 0.8))

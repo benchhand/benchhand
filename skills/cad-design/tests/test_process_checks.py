@@ -737,6 +737,36 @@ class MultiprocessRouteTests(Checks):
                 self.assertEqual(self.outcome(result, obligation), "pass", self.codes(result, obligation))
 
 
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class RouteProviderTests(Checks):
+    """Route consistency of an operation that names a capability but states no provider: the provider is the part's
+    recorded sourcing, so a part bought to its drawing is outsourced. Its supplier must be named and the capability
+    profile's provider must agree."""
+
+    BOUGHT = {"make_buy": "buy", "procurement": {"mode": "made_to_drawing"}, "supplier": "TST print bureau"}
+
+    def route_codes(self, sourcing: dict[str, Any], profile_provider: str) -> tuple[str, list[str]]:
+        documents = printed("TST-0101", {"strategy": "none"})
+        documents["parts/TST-0101/part.yaml"].update(copy.deepcopy(sourcing))
+        documents["manufacturing/capabilities.yaml"]["profiles"][0]["provider"] = profile_provider
+        result = self.assess(documents)
+        row = next(r for r in result.outcomes if r["obligation"].startswith("route.consistency@TST-0101"))
+        return row["outcome"], self.codes(result, row["obligation"])
+
+    def test_an_omitted_provider_is_checked_as_the_part_sourcing(self) -> None:
+        for name, sourcing, provider, verdict, wanted, unwanted in (
+                ("made to drawing on a local profile", self.BOUGHT, "local", "fail", {"route.provider_mismatch"}, set()),
+                ("made to drawing with no named supplier", self.BOUGHT, "outsourced", "unknown", {"route.supplier_unknown"},
+                 {"route.provider_mismatch"}),
+                ("made in-house on a local profile", {}, "local", "pass", set(),
+                 {"route.provider_mismatch", "route.supplier_unknown"})):
+            with self.subTest(name):
+                outcome, codes = self.route_codes(sourcing, provider)
+                self.assertEqual(outcome, verdict, codes)
+                self.assertTrue(wanted <= set(codes), codes)
+                self.assertEqual(unwanted & set(codes), set(), codes)
+
+
 # --- row 17: dispatch by process -----------------------------------------------------------------------------------
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
@@ -2440,6 +2470,91 @@ class CalibrationFlagTests(Checks):
             with self.subTest(check=check):
                 self.assertEqual(self.outcome(self.judged(data, True), obligation), "pass")
 
+    def unprofiled(self, data: dict[str, Any], flag: bool) -> Any:
+        """An FDM part whose route names no capability: no machine is recorded, in the functional_demo service class."""
+        route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
+                              supports={"strategy": "none"})]
+        documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[], materials=materials(),
+                              product_data=FX.product(FX.use_case(service_class=known("functional_demo"))), decisions=("DR-001", "DR-002"))
+        result = pc.assess(load(self, documents), geometry("TST-0101", data), today=TODAY, catalog=SHIPPED, calibration=flag)
+        self.assertEqual(packet_errors(result.packet({"version_manifest": "0" * 64})), [])
+        return result
+
+    def test_off_an_fdm_route_with_no_machine_is_judged_on_the_guideline_values(self) -> None:
+        for check, (data, obligation) in self.CASES.items():
+            with self.subTest(check=check):
+                result = self.unprofiled(data, False)
+                self.assertEqual(self.outcome(result, obligation), "pass")
+                self.assertEqual([c for c in self.codes(result) if c.endswith("capability_unknown")], [])
+
+    def test_off_an_fdm_route_with_no_machine_still_fails_a_guideline_fail(self) -> None:
+        result = self.unprofiled(walled(0.5), False)  # below the plain 0.8 mm floor, which needs no nozzle
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.wall")["criterion"]["source"]["kind"], "guideline")
+
+    def test_off_an_fdm_route_with_no_machine_raises_no_missing_machine_finding_and_never_passes_the_machine(self) -> None:
+        result = self.unprofiled(walled(3.0), False)
+        gone = [c for c in self.codes(result) if c.endswith(("capability_unknown", "envelope_unknown"))]
+        self.assertEqual(gone, [])
+        route = next(row for row in result.outcomes if row["obligation"].startswith("route"))
+        self.assertEqual((route["outcome"], route.get("reason")), ("not_assessed", "no_capability_profile"))
+        orientation = next(row for row in result.outcomes if row["obligation"].startswith("process.fdm.orientation"))
+        self.assertIn("envelope is not assessed", orientation["coverage"])
+
+    def test_off_an_outsourced_or_safety_critical_fdm_route_with_no_machine_still_needs_the_capability(self) -> None:
+        """The guideline fallback covers only a route whose machine is optional evidence: a supplier's capability and a
+        safety-critical service need a capability profile, so the route and the check stay unknown. An operation that
+        states no provider is outsourced when the part is recorded as bought to its drawing. An unknown service class could
+        be safety_critical, so it needs the profile too."""
+        bought = {"make_buy": "buy", "procurement": {"mode": "made_to_drawing"}, "supplier": "TST print bureau"}
+        demo, unassessed = known("functional_demo"), FX.unknown("service class not assessed")
+        for name, provider, service, sourcing in (("outsourced", "outsourced", demo, {}),
+                                                  ("safety_critical", None, known("safety_critical"), {}),
+                                                  ("made_to_drawing", None, demo, bought),
+                                                  ("unknown service class", None, unassessed, {})):
+            with self.subTest(name):
+                route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
+                                      supports={"strategy": "none"}, **({"provider": provider} if provider else {}))]
+                if provider:
+                    route[0]["supplier"] = "TST supplier"
+                use = FX.use_case(service_class=service)
+                documents = FX.record(parts=[part("TST-0101", route, process="fdm", **sourcing)], capabilities=[],
+                                      materials=materials(), product_data=FX.product(use), decisions=("DR-001", "DR-002"))
+                result = pc.assess(load(self, documents), geometry("TST-0101", walled(3.0)), today=TODAY, catalog=SHIPPED,
+                                   calibration=False)
+                self.assertIn("process.fdm.capability_unknown", self.codes(result))
+                self.assertIn("route.capability_unknown", self.codes(result))
+
+    def test_on_an_fdm_route_with_no_machine_still_needs_the_capability(self) -> None:
+        result = self.unprofiled(walled(3.0), True)
+        self.assertIn("process.fdm.capability_unknown", self.codes(result))
+
+    def test_off_approved_measured_geometry_leaves_no_unknown_obligation_and_form_check_exits_0(self) -> None:
+        """The packet form_check publishes: with the flag off, a printed part whose approved pose, walls and supports pass the
+        guideline values has no unknown obligation, whether or not a machine is recorded. The gaps that only a calibration or a
+        machine could close (bed contact area and warp: no_guideline; the envelope: no_capability_profile) are not_assessed,
+        so the evidence gate does not block."""
+        form_check = load_module("tst_form_check_flag", FORM_CHECK)
+        data = walled(3.0)
+        for name, result in (("machine recorded", self.judged(data, False)), ("no machine", self.unprofiled(data, False))):
+            with self.subTest(name):
+                packet = result.packet({"version_manifest": "0" * 64})
+                unknown = [row["obligation"] for row in packet["outcomes"] if row["outcome"] in ("unknown", "fail")]
+                self.assertEqual(unknown, [])
+                self.assertEqual((packet["result"], form_check.packet_code(False, packet)), ("not_assessed", 0))
+                reasons = {row["reason"] for row in packet["outcomes"] if row["outcome"] == "not_assessed"}
+                self.assertTrue(reasons <= {"no_guideline", "no_capability_profile"} and reasons, reasons)
+
+    def test_off_a_missing_material_is_still_unknown_not_not_assessed(self) -> None:
+        """A calibration gap is excused only for a known material: with the stock unidentified the calibration cannot be
+        looked up at all, which is a genuine unknown."""
+        route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
+                              supports={"strategy": "none"})]
+        documents = FX.record(parts=[part("TST-0101", route, process="fdm", material=None)], capabilities=[],
+                              materials=materials(), product_data=FX.product(FX.use_case(service_class=known("functional_demo"))), decisions=("DR-001", "DR-002"))
+        result = pc.assess(load(self, documents), geometry("TST-0101", walled(3.0)), today=TODAY, catalog=SHIPPED, calibration=False)
+        self.assertEqual(self.outcome(result, "process.fdm.orientation@TST-0101/print"), "unknown")
+
     def test_off_a_guideline_fail_still_fails(self) -> None:
         result = self.judged(walled(1.0), False)
         self.assertEqual(self.outcome(result, GEOMETRY), "fail")
@@ -2568,15 +2683,14 @@ class CalibrationRemedyTests(Checks):
         self.assertIn(self.COUPON, remedy)
         self.assertNotIn("record the calibration", remedy)
 
-    def test_an_fdm_operation_without_a_capability_asks_for_no_calibration(self) -> None:
+    def test_an_fdm_operation_without_a_capability_asks_for_calibration_only_while_the_flag_is_on(self) -> None:
         route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
                               supports={"strategy": "none"})]
         documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[], materials=materials(),
-                              product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
-        off, on = (self.remedy(self.assess_off(documents, None, flag=flag), "process.fdm.capability_unknown")
-                   for flag in (False, True))
-        self.assertEqual(off, "record the capability profile of the actual machine, operator or supplier")
+                              product_data=FX.product(FX.use_case(service_class=known("functional_demo"))), decisions=("DR-001", "DR-002"))
+        on = self.remedy(self.assess_off(documents, None, flag=True), "process.fdm.capability_unknown")
         self.assertEqual(on, "record the capability profile of the actual machine, operator or supplier, with its calibrations")
+        self.assertNotIn("process.fdm.capability_unknown", self.codes(self.assess_off(documents, None, flag=False)))
 
     def test_a_cnc_precision_remedy_asks_for_no_calibration_while_the_flag_is_off(self) -> None:
         profile = FX.capability_profile("tst_mill", "cnc", parameters={"axes": known(mm(3, units="count"))},
@@ -3030,10 +3144,16 @@ class GuidelineWithoutCalibrationTests(Checks):
 
     REAM = "process.reaming.allowance@TST-0101/ream"
 
-    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo") -> Any:
-        """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size."""
+    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo", machine: bool = True,
+               stock: Any = None) -> Any:
+        """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size. Without `machine` the print
+        names no capability profile; with `stock` the print's setup.stock.material_profile is that value."""
         documents = guided(service=service, calibrations=(CONTACT,))
         intent = documents["parts/TST-0101/part.yaml"]["intent"]
+        if not machine:
+            intent["route"][0]["capability"] = FX.unknown("no machine recorded")
+        if stock is not None:
+            intent["route"][0]["setup"] = {"stock": {"material_profile": stock}}
         intent["route"][0]["allowances"] = [{"feature": "bore", "amount": mm(allowance), "purpose": "finish",
                                              "source": FX.source("user")}]
         intent["route"].append(FX.operation("ream", "reaming", "tst_reamer", targets=[{"feature": "bore"}]))
@@ -3050,6 +3170,22 @@ class GuidelineWithoutCalibrationTests(Checks):
                 self.assertEqual(self.outcome(result, self.REAM), expected, self.codes(result, self.REAM))
                 if expected == "fail":
                     self.assertTrue(self.finding(result, "process.reaming.allowance_short")["uncertainty"].startswith("guideline "))
+
+    def test_a_ream_allowance_after_a_print_with_no_machine_is_judged_against_the_guideline_hole_deviation(self) -> None:
+        """The deviation is the producing print's: with no machine recorded its process and material scope the shipped
+        guideline, not the reaming operation's own profile."""
+        for allowance, expected in ((0.6, "pass"), (0.3, "fail")):
+            with self.subTest(allowance=allowance), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "0"}):
+                result = self.reamed(allowance, catalog=SHIPPED, machine=False)
+                self.assertEqual(self.outcome(result, self.REAM), expected, self.codes(result, self.REAM))
+
+    def test_a_ream_allowance_after_a_print_whose_stock_is_unknown_stays_unknown(self) -> None:
+        """Stock the print records as unknown is not the part's material: no deviation of the print can be looked up, so
+        the allowance is unknown, never passed on the part material's guideline, with or without a machine."""
+        for machine in (True, False):
+            with self.subTest(machine=machine), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "0"}):
+                result = self.reamed(0.6, catalog=SHIPPED, machine=machine, stock=FX.unknown("stock not identified"))
+                self.assertEqual(self.outcome(result, self.REAM), "unknown", self.codes(result, self.REAM))
 
     def test_a_ream_allowance_after_printing_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
         result = self.reamed(0.6, catalog=None)

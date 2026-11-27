@@ -366,6 +366,20 @@ def snapshot_files(hw: Path) -> dict[str, bytes]:
             for g in sorted(discover(hw).guidelines.values(), key=lambda g: g.id) if g.origin == "shipped" and g.file is not None}
 
 
+# The service classes known to be below safety_critical (manufacturing_intent.SERVICE_CLASSES, less safety_critical and
+# unknown). Only these let the shipped guidelines stand in for a machine: an unknown class could be safety_critical.
+MACHINE_OPTIONAL_SERVICE = frozenset({"appearance_concept", "fit_assembly", "functional_demo", "working_prototype", "production"})
+
+
+def machine_optional(process: str | None, provider: str | None, service_class: str | None, calibration: bool) -> bool:
+    """Whether a route's machine is optional evidence: an FDM route (the process the shipped guideline values cover) with
+    calibration off, run locally, for a service class known to be below safety_critical. A supplier's capability, a
+    safety-critical service and a service class not yet known need a recorded capability profile whatever the flag says;
+    the shipped guidelines never stand in for one."""
+    return (process in GUIDELINE_PROCESSES and not calibration and provider != "outsourced"
+            and service_class in MACHINE_OPTIONAL_SERVICE)
+
+
 def calibration_enabled() -> bool:
     """Whether the calibration flag is on. Read it once per job and pass the value on."""
     return os.getenv(CALIBRATION_FLAG) == "1"
@@ -449,6 +463,16 @@ def context_for(profile: Any, material: Any = None) -> Context:
     pin = profile.raw.get("guidelines")
     return Context(profile.process, facts, _millimetres(profile.parameters.get("nozzle_diameter")),
                    _millimetres(profile.parameters.get("line_width")), tuple(pin) if pin else None)
+
+
+def context_without_machine(process: str, material: Any = None) -> Context:
+    """The Context of a process and, when given, a material profile, with no machine recorded: every machine fact
+    (nozzle material, nozzle diameter, line width) is unknown and no guideline pin applies."""
+    facts: dict[str, str | None] = {name: None for name in SCOPE_FACTS}
+    raw = material.raw if material is not None else {}
+    for name in ("material_family", "filler", "shore"):
+        facts[name] = _text_fact(raw.get(name))
+    return Context(process, facts)
 
 
 def _matches(scope: Mapping[str, Any], context: Context) -> bool | None:
@@ -552,10 +576,17 @@ def applicable_digests(catalog: Catalog, context: Context) -> dict[str, str]:
     return dict(sorted(found.items()))
 
 
+def machine_free_key(process: str) -> str:
+    """The `record_digests` key of the guideline sets a route of `process` resolves through when no machine is recorded.
+    It cannot be a capability profile id (ids are plain names), so it never collides with one."""
+    return f"(no machine: {process})"
+
+
 def record_digests(record: Any, catalog: Catalog) -> dict[str, dict[str, dict[str, str]]]:
     """capability profile id -> material profile name -> applicable_digests of that profile with that material. A record
     without materials has the one name "" (the profile alone). A profile that no set can resolve through is left out; one
-    that some material resolves sets for lists every material, so that a material with none is not read as unknown."""
+    that some material resolves sets for lists every material, so that a material with none is not read as unknown.
+    Each guideline process also has a `machine_free_key` entry: the sets its routes resolve through with no machine."""
     found: dict[str, dict[str, dict[str, str]]] = {}
     for ident, profile in sorted(record.capabilities.items()):
         materials: dict[str, Any] = dict(record.materials) or {"": None}
@@ -563,6 +594,12 @@ def record_digests(record: Any, catalog: Catalog) -> dict[str, dict[str, dict[st
                        for name, material in sorted(materials.items())}
         if any(by_material.values()):
             found[ident] = by_material
+    for process in sorted(GUIDELINE_PROCESSES):
+        materials = dict(record.materials) or {"": None}
+        by_material = {name: applicable_digests(catalog, context_without_machine(process, material))
+                       for name, material in sorted(materials.items())}
+        if any(by_material.values()):
+            found[machine_free_key(process)] = by_material
     return found
 
 

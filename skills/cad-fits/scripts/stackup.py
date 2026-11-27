@@ -1112,12 +1112,25 @@ def _fdm_operation(record: Any, pn: str) -> Any:
     return next((op for op in part.intent.route if op.kind == "fdm"), None)
 
 
-def _clearance_scope(record: Any, pn: str) -> tuple[tuple[Any, str] | None, _Unusable | None]:
-    """((the PN's FDM route operation, its material profile id), None), or (None, why it has none). The material is
-    checked here because the resolver would otherwise fall back to the generic set without it."""
+def _machine_optional(record: Any, pn: str, op: Any, calibration: bool) -> bool:
+    """Whether `op` of `pn` names no machine and needs none: the shipped guideline sets for its process and material govern
+    (guidelines.machine_optional, with the provider the operation states, else the part's recorded sourcing)."""
+    if not _intent_module().is_fact(op.capability):
+        return False
+    service = record.use_case.service_class
+    return bool(GUIDELINES.machine_optional(op.kind, record.parts[pn].provider_of(op.provider),
+                                            str(service.value) if service.known else None, calibration))
+
+
+def _clearance_scope(record: Any, pn: str, calibration: bool = True) -> tuple[tuple[Any, str, Any] | None, _Unusable | None]:
+    """((the PN's FDM route operation, its material profile id, the guideline context), None), or (None, why it has none).
+    A local print below safety_critical that names no machine, with calibration off, is scoped by its process and
+    material alone. The material is checked here because the resolver would otherwise fall back to the generic set
+    without it."""
     op = _fdm_operation(record, pn)
     assert op is not None  # _clearance_inputs keeps only the sliding parts with an fdm operation
-    if not isinstance(op.capability, str) or op.capability not in record.capabilities:
+    machine_free = _machine_optional(record, pn, op, calibration)
+    if not machine_free and (not isinstance(op.capability, str) or op.capability not in record.capabilities):
         return None, _Unusable(f"{pn}'s {op.id} operation names no capability profile of the record",
                                f"name a capability profile of the record on {pn}'s {op.id} operation, then rerun")
     material = record.parts[pn].intent.material_profile
@@ -1126,7 +1139,9 @@ def _clearance_scope(record: Any, pn: str) -> tuple[tuple[Any, str] | None, _Unu
     if material not in record.materials:
         return None, _Unusable(f"{pn}'s material profile {material} is not in the record's materials",
                                f"add the material profile {material} to the record's materials, then rerun")
-    return (op, material), None
+    context = (GUIDELINES.context_without_machine(op.kind, record.materials[material]) if machine_free
+               else GUIDELINES.context_for(record.capabilities[op.capability], record.materials[material]))
+    return (op, material, context), None
 
 
 # What clears each reason the guideline resolver gives for an unknown limit, keyed by a phrase of the reason.
@@ -1157,11 +1172,10 @@ def _resolve_sliding(record: Any, pns: list[str], catalog: Any, on: date | None,
     """(each part's resolved sliding clearance, or [] and why one is unusable). `digests` collects the sets consulted."""
     resolutions = []
     for pn in pns:
-        scope, why = _clearance_scope(record, pn)
+        scope, why = _clearance_scope(record, pn, calibration)
         if scope is None:
             return [], why
-        op, material = scope
-        context = GUIDELINES.context_for(record.capabilities[op.capability], record.materials[material])
+        op, material, context = scope
         if calibration:
             resolved = GUIDELINES.resolve(record, op, CLEARANCE_CHARACTERISTIC, catalog=catalog, material=material, on=on)
         else:  # a recorded calibration is not used: the guideline value governs

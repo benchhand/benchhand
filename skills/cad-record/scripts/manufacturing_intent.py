@@ -181,6 +181,11 @@ _USE_CASE_DIMENSIONS = {
     "motion.service_life": ("time", "count"), "logistics.quantity": ("count",), "logistics.lead_time": ("time",),
 }
 
+# The equipment list is the optional machine offer that GROUND makes once. The template records it as not applicable, so a
+# declined or unanswered offer leaves no unknown to ask about again; the capability profiles a route needs are checked apart.
+EQUIPMENT_OPTIONAL = ("optional: offered once at GROUND; with no machine recorded the shipped guideline values govern FDM "
+                      "and each route's capability is checked on its own")
+
 # The use-case questions the project template asks: (question, use-case paths it answers,
 # material_to_choice, safety_relevant). One authority, so the template and its fixtures ask the same.
 USE_CASE_QUESTIONS: tuple[tuple[str, tuple[str, ...], bool, bool], ...] = (
@@ -202,8 +207,8 @@ USE_CASE_QUESTIONS: tuple[tuple[str, tuple[str, ...], bool, bool], ...] = (
       "consequences.supervision", "consequences.approval_authority"), True, True),
     ("What quantity, budget, lead time, maintenance and repair needs apply?",
      ("logistics.quantity", "logistics.budget", "logistics.lead_time", "logistics.maintenance", "logistics.repair"), True, False),
-    ("Which equipment and operators are available, and is outsourcing acceptable?",
-     ("capability.equipment", "capability.operator", "capability.outsourcing"), True, False),
+    ("Which operators are available, and is outsourcing acceptable?",
+     ("capability.operator", "capability.outsourcing"), True, False),
     ("What may a release claim: its purpose, operating limits, exclusions and the evidence each requirement needs?",
      ("release_scope.purpose", "release_scope.operating_limits", "release_scope.exclusions", "evidence_policy"), False, True),
 )
@@ -596,6 +601,12 @@ class Part:
     def existing(self) -> bool:
         """Pre-existing equipment the product mounts onto: outside the product, never bought or made."""
         return self.sourcing == "existing"
+
+    def provider_of(self, stated: str | None) -> str:
+        """Who runs a route operation of this part: the operation's `stated` provider, else the recorded sourcing
+        (make_buy and procurement.mode): local for a part made in-house, outsourced for one bought to a drawing or from a
+        catalogue."""
+        return stated or ("local" if self.sourcing == "make" else "outsourced")
 
 
 @dataclass(frozen=True)
@@ -2857,7 +2868,7 @@ def blank_use_case(reason: str, questions: Mapping[str, str]) -> dict[str, Any]:
         if dotted == "environment.corrosion":
             block["loads"] = unknown("loads")
     capability = block.pop("capability")
-    block["capability"] = {"equipment": unknown("capability.equipment"), **capability}
+    block["capability"] = {"equipment": {"status": "not_applicable", "reason": EQUIPMENT_OPTIONAL}, **capability}
     release = block.pop("release_scope")
     block["release_scope"] = release
     block["evidence_policy"] = unknown("evidence_policy")

@@ -115,7 +115,17 @@ class CheckTests(Case):
         found = self.messages()
         self.assertTrue(any(m.startswith("bench: parameters/hotend_max_temperature") and "user" in m for m in found), found)
 
-    def test_user_source_on_machine_identity_is_refused(self) -> None:
+    def test_user_declared_machine_identity_is_accepted(self) -> None:
+        """The user is the authority on which machine they own; the envelope and parameters may stay unknown."""
+        p = profile()
+        p["machine"]["identity"] = {"status": "known", "value": "Bambu Lab H2D", "basis": "user_declared",
+                                    "sources": [user("the machine I own")]}
+        p["envelope"] = {axis: {"status": "unknown", "reason": "not published for this profile"} for axis in "xyz"}
+        p["parameters"] = {"nozzle_diameter": {"status": "unknown", "reason": "not stated"}}
+        self.put(p)
+        self.assertEqual(self.messages(), [])
+
+    def test_user_source_on_machine_identity_needs_the_user_declared_basis(self) -> None:
         p = profile()
         p["machine"]["identity"]["sources"] = [user("I own it")]
         self.put(p)

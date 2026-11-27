@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
@@ -256,19 +258,85 @@ class PolymerAcceptedWithEvidence(unittest.TestCase):
         self.assertEqual(only_decision(report)["recommendation"]["primary"], "machined_cover",
                          "a feasible candidate outranks a conditional one whatever the scores")
 
-    def test_a_candidate_step_without_a_capability_is_conditional_never_a_crash(self) -> None:
-        """A schema-invalid step that records no capability (evidence.py assesses records without the schema
-        check) reads as capability unknown: the candidate stays conditional and the report still renders."""
+    def with_unknown_capability(self, ident: str) -> dict[str, Any]:
+        """The cover scenario with `ident`'s route step naming no machine, as a schema-valid unknown fact."""
         documents = scenarios.qualified_polymer_cover()
-        del selection_candidate(documents, "printed_cover")["parts"][0]["route"][0]["capability"]
-        report = selection.assess(mi.normalize_record(documents))
-        printed = candidate(report, "printed_cover")
-        self.assertEqual((printed["status"], printed["unknown"]), ("conditional", ["capability"]))
+        selection_candidate(documents, ident)["parts"][0]["route"][0]["capability"] = fx.unknown("no machine named")
+        return documents
+
+    def assessed(self, documents: dict[str, Any], flag: str | None) -> dict[str, Any]:
+        """The assessment of the record on disk under CAD_CALIBRATION=`flag` (None: unset), the CLI's path."""
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CAD_CALIBRATION", None)
+            if flag is not None:
+                os.environ["CAD_CALIBRATION"] = flag
+            return assess(self, documents)
+
+    def test_a_non_fdm_step_with_an_unknown_capability_is_conditional_under_either_flag(self) -> None:
+        for flag in (None, "1"):
+            with self.subTest(flag=flag):
+                report = self.assessed(self.with_unknown_capability("machined_cover"), flag)
+                machined = candidate(report, "machined_cover")
+                self.assertEqual((machined["status"], machined["unknown"]), ("conditional", ["capability"]))
+                (capability,) = evaluations(machined, "capability")
+                self.assertIn("no capability profile", capability["reasons"][0])
+                self.assertEqual(only_decision(report)["recommendation"]["primary"], "printed_cover")
+                self.assertIn("machined_cover", selection.render_markdown(report))
+
+    def test_an_fdm_step_with_an_unknown_capability_is_a_note_with_the_flag_off_and_conditional_with_it_on(self) -> None:
+        """No machine recorded is no fault while calibration is off: the guideline values govern, the capability is
+        not_assessed (never a pass, never blocking). With the flag on a calibration needs the machine, so it stays unknown."""
+        off = self.assessed(self.with_unknown_capability("printed_cover"), None)
+        printed = candidate(off, "printed_cover")
+        self.assertEqual((printed["status"], printed["unknown"]), ("feasible", []))
         (capability,) = evaluations(printed, "capability")
-        self.assertIn("the candidate records no capability", capability["reasons"][0])
-        self.assertEqual(printed["parts"][0]["route"][0]["capability"], "unknown")
-        self.assertEqual(only_decision(report)["recommendation"]["primary"], "machined_cover")
-        self.assertIn("printed_cover", selection.render_markdown(report))
+        self.assertEqual(capability["outcome"], "not_assessed")
+        reasons = " ".join(capability["reasons"])
+        self.assertIn("machine not recorded", reasons)
+        self.assertIn("guideline", reasons)
+        decision = only_decision(off)
+        self.assertIn("not assessed, not a pass: capability", json.dumps(decision))
+        self.assertEqual((decision["recommendation"]["status"], decision["recommendation"]["primary"]), ("final", "printed_cover"))
+        self.assertEqual(selection.exit_status(off), 0)
+        on = self.assessed(self.with_unknown_capability("printed_cover"), "1")
+        flagged = candidate(on, "printed_cover")
+        self.assertEqual((flagged["status"], flagged["unknown"]), ("conditional", ["capability"]))
+        self.assertEqual(only_decision(on)["recommendation"]["primary"], "machined_cover")
+
+    def test_the_machine_is_required_for_an_outsourced_or_a_safety_critical_fdm_route(self) -> None:
+        """The no-machine exception covers only a route whose equipment evidence is optional: a supplier's capability and a
+        safety-critical service need a capability profile whatever the flag says. A step that states no provider is
+        outsourced when the part is recorded as bought to its drawing. An unknown service class could be safety_critical."""
+        outsourced = self.with_unknown_capability("printed_cover")
+        selection_candidate(outsourced, "printed_cover")["parts"][0]["route"][0]["provider"] = "outsourced"
+        critical = self.with_unknown_capability("printed_cover")
+        critical["product.yaml"]["use_case"]["service_class"] = fx.known("safety_critical")
+        unassessed = self.with_unknown_capability("printed_cover")
+        unassessed["product.yaml"]["use_case"]["service_class"] = fx.unknown("service class not assessed")
+        bought = self.with_unknown_capability("printed_cover")
+        del selection_candidate(bought, "printed_cover")["parts"][0]["route"][0]["provider"]
+        bought["parts/TST-0301/part.yaml"].update(make_buy="buy", procurement={"mode": "made_to_drawing"},
+                                                  supplier="TST print bureau")
+        for name, documents in (("outsourced", outsourced), ("safety_critical", critical), ("made_to_drawing", bought),
+                                ("unknown service class", unassessed)):
+            with self.subTest(name):
+                report = self.assessed(documents, None)
+                printed = candidate(report, "printed_cover")
+                self.assertIn("capability", printed["unknown"])
+                (capability,) = evaluations(printed, "capability")
+                self.assertEqual(capability["outcome"], "unknown")
+
+    def test_the_effective_calibration_flag_is_part_of_the_confirmation_digest(self) -> None:
+        """The flag can change the winning candidate, so an assessment recorded under one setting is stale under the other."""
+        documents = scenarios.qualified_polymer_cover()
+        self.assertNotEqual(selection.input_digest(documents, calibration=False), selection.input_digest(documents, calibration=True))
+        hw = write(self, self.with_unknown_capability("printed_cover"))  # records the digest under the flag unset
+        for flag, current in ((None, True), ("1", False)):
+            with self.subTest(flag=flag), mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("CAD_CALIBRATION", None)
+                if flag is not None:
+                    os.environ["CAD_CALIBRATION"] = flag
+                self.assertIs(selection.assess_hw(hw)["recorded"]["assessment"]["current"], current)
 
     def test_family_guidance_never_passes_a_requirement(self) -> None:
         documents = scenarios.qualified_polymer_cover()

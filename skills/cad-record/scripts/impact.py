@@ -298,6 +298,16 @@ class _Record:
                                                     if isinstance(c, Mapping)]
         return [name for name in names if isinstance(name, str)]
 
+    def machine_free_service(self, route: list[Mapping[str, Any]]) -> dict[str, Any]:
+        """The use case's service class, when an operation of a guideline process names no machine: it decides whether the
+        shipped guidelines stand in for the machine (guidelines.machine_optional), so the process, route and interface
+        checks that read the capability depend on it. Empty otherwise, so a part with its machines recorded keeps its
+        fingerprint."""
+        if not any(not isinstance(op.get("capability"), str) and op.get("kind") in guidelines.GUIDELINE_PROCESSES
+                   for op in route):
+            return {}
+        return {"service_class": _get(self.use_case, "service_class")}
+
     def part_values(self, pn: str) -> dict[str, Any]:
         part, intent, route = self.parts.get(pn), self.intent(pn), self.route(pn)
         if part is None:
@@ -326,7 +336,8 @@ class _Record:
                         "procurement": _get(part, "procurement", "mode"), "kinds": [op.get("kind") for op in route],
                         "route": None if route else intent.get("route")},
             "route": [_without(op, "setup", "orientation", "supports", "post_processing", "allowances") for op in route],
-            "capability": {"profiles": capabilities, "facts": capability_facts},
+            "capability": {"profiles": capabilities, "facts": capability_facts,
+                           **self.machine_free_service(route)},
             "setup": [{"id": op.get("id"), "setup": op.get("setup")} for op in route],
             "orientation": [{"id": op.get("id"), "orientation": op.get("orientation"), "supports": op.get("supports")}
                             for op in route],
@@ -350,9 +361,18 @@ class _Record:
                                                      if isinstance(c, Mapping) and c.get("material_profile") is not None)]
         undecided = any(not isinstance(m, str) and not (isinstance(m, Mapping) and m.get("status") == "not_applicable")
                         for m in declared)  # a main or component material that is unknown could be any of them
-        for op in self.route(pn):  # a guideline set the part's capability profile resolves through, for its own materials
+        for op in self.route(pn):  # a guideline set the operation's capability profile resolves through, for its material
             profile = op.get("capability")
-            for ref, sha in guidelines.digests_for(digests.get(profile), [] if undecided else self.profiles(pn)).items() if isinstance(profile, str) else ():
+            if not isinstance(profile, str) and op.get("kind") in guidelines.GUIDELINE_PROCESSES:
+                profile_digests = digests.get(guidelines.machine_free_key(op["kind"]))  # no machine: the process's own sets
+            else:
+                profile_digests = digests.get(profile) if isinstance(profile, str) else None
+            # the process checks read the sets of the operation's stock, if named; stack-up those of the part's materials
+            stock = _get(op, "setup", "stock", "material_profile")
+            found = guidelines.digests_for(profile_digests, [] if undecided else self.profiles(pn))
+            if isinstance(stock, str):
+                found.update(guidelines.digests_for(profile_digests, [stock]))
+            for ref, sha in sorted(found.items()):
                 values["source"][f"guideline:{ref}"] = sha
         mounting = self.mounting_inputs(pn)
         if mounting is not None:

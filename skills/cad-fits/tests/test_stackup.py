@@ -889,6 +889,37 @@ class ClearanceTests(unittest.TestCase):
         self.assertEqual(row["guidelines"]["fdm.generic@2"], generic.sha256)
         self.assertEqual(codes(result), ["stack.clearance_below_minimum"])
 
+    def machine_free_clearance(self, service: Any) -> dict:
+        """clearance_documents with TST-0001's print naming no machine, in the use case's service class `service`."""
+        documents = clearance_documents()
+        documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["capability"] = fx.unknown("no machine recorded")
+        documents["product.yaml"]["use_case"]["service_class"] = service
+        return documents
+
+    def test_off_a_sliding_part_printed_with_no_machine_is_judged_on_the_shipped_minimum(self) -> None:
+        """With calibration off, a local print that names no machine resolves the clearance through the shipped sets for its
+        process and material. With the flag on a calibration needs the machine, so the clearance stays unknown."""
+        documents = self.machine_free_clearance(fx.known("functional_demo"))
+        shipped = GL.discover(None)
+        for gap, met in ((0.2, False), (0.4, True)):
+            with self.subTest(gap=gap):
+                result = self.run_stack(documents, clearance_stack("side", nominal_gap=gap), shipped, calibration=False)
+                row = result["clearance"]
+                self.assertEqual((row["status"], row.get("minimum_mm"), row.get("met")), ("guideline", 0.3, met))
+                self.assertEqual(row["guidelines"]["fdm.generic@2"], shipped.guidelines["fdm.generic"].sha256)
+        on = self.run_stack(documents, clearance_stack("side", nominal_gap=0.4), shipped, calibration=True)
+        self.assertIn("stack.clearance_unknown", codes(on))
+
+    def test_off_a_print_with_no_machine_needs_a_known_service_class_below_safety_critical(self) -> None:
+        """The machine is optional evidence only for a service class known to be below safety_critical: an unknown class
+        could be safety_critical, so the clearance stays unknown."""
+        for name, service in (("unknown", fx.unknown("service class not assessed")), ("safety_critical", fx.known("safety_critical"))):
+            with self.subTest(name):
+                result = self.run_stack(self.machine_free_clearance(service), clearance_stack("side", nominal_gap=0.4),
+                                        GL.discover(None), calibration=False)
+                self.assertEqual(result["clearance"]["status"], "unknown")
+                self.assertIn("stack.clearance_unknown", codes(result))
+
     def test_the_packet_depends_on_every_guideline_set_the_clearance_resolved_through(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             stack_path = Path(directory) / "case.yaml"

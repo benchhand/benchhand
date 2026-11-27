@@ -17,8 +17,8 @@
 schema cannot say:
 
 - every known machine, envelope or tool fact cites a `datasheet` or `supplier` source with a `url` and an `accessed` date;
-- a `kind: user` source is allowed only for installed configuration: nozzle diameter and material, the usable envelope
-  and `max_speed`, which also names the frozen slicer file (`artifact` and `sha256`, checked against the file);
+- a `kind: user` source is allowed only for the machine identity (with `basis: user_declared`) and installed
+  configuration: nozzle diameter and material, the usable envelope and `max_speed`, which also names the frozen slicer file (`artifact` and `sha256`, checked against the file);
 - every guideline pin names a set of the `guidelines.discover()` catalog, at that revision;
 - a profile with no `machine` carries no pin.
 - the record has a supported `record_version` in product.yaml, because the loader stops before it hashes a source
@@ -52,6 +52,7 @@ MATERIALS = "manufacturing/materials.yaml"
 STARTERS = SCRIPTS.parent / "assets" / "manufacturing" / "material-profiles"
 SOURCED_KINDS = frozenset({"datasheet", "supplier"})
 # Installed configuration may rest on the user's word: a statement about this machine as set up, not about the product.
+IDENTITY_FIELD = "machine/identity"  # which machine the user owns: the user's word, with basis user_declared
 FROZEN_FIELDS = frozenset({"parameters/max_speed", "tools/parameters/max_speed"})  # a user value needs the frozen slicer file
 USER_FIELDS = FROZEN_FIELDS | {"envelope/x", "envelope/y", "envelope/z", "parameters/nozzle_diameter", "parameters/nozzle_material",
                                "tools/parameters/nozzle_diameter", "tools/parameters/nozzle_material"}
@@ -102,9 +103,12 @@ def _source_problems(rule_key: str, fact: Mapping[str, Any]) -> list[str]:
     for source in sources:
         kind = source.get("kind") if isinstance(source, Mapping) else None
         if kind == "user":
+            if rule_key == IDENTITY_FIELD and fact.get("basis") == "user_declared":
+                continue  # the user is the authority on which machine they own
             if rule_key not in USER_FIELDS:
-                found.append("a user source is allowed only for nozzle diameter, nozzle material, the usable envelope and a "
-                             "max_speed from a frozen slicer file; cite the datasheet or supplier")
+                found.append("a user source is allowed only for the machine identity (basis user_declared), nozzle diameter, "
+                             "nozzle material, the usable envelope and a max_speed from a frozen slicer file; "
+                             "cite the datasheet or supplier")
             elif rule_key in FROZEN_FIELDS and not (source.get("artifact") and source.get("sha256")):
                 found.append("a user max_speed must come from a frozen slicer file: name its artifact and sha256")
         elif kind not in SOURCED_KINDS:

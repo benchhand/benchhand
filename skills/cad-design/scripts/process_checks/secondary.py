@@ -169,7 +169,6 @@ def _cleanup(ctx: Context, feature: str, source_op: Any, amount: Any, item: Any,
     characteristic = AS_MADE.get(source_op.kind)
     if characteristic is None:
         return UNKNOWN, f"{feature}: no as-made deviation contract for {source_op.kind}"
-    profile = ctx.record.capabilities.get(source_op.capability) if isinstance(source_op.capability, str) else None
     orientation = size = None
     if source_op.kind in ("fdm", "resin"):
         geometry = ctx.geometries.get((ctx.pn, ctx.component))
@@ -178,7 +177,7 @@ def _cleanup(ctx: Context, feature: str, source_op: Any, amount: Any, item: Any,
             return UNKNOWN, f"{feature}: as-printed orientation unknown"
         from .additive import hole_class
         orientation, size = hole_class(hole["axis"]), hole["diameter_mm"]
-    cal = ctx.governing(characteristic, profile=profile, orientation=orientation, size=size)
+    cal = ctx.governing(characteristic, op=source_op, orientation=orientation, size=size)  # the producer's limits
     kind = ctx.operation.kind
     if not cal.known:
         from .additive import _no_basis
@@ -187,7 +186,7 @@ def _cleanup(ctx: Context, feature: str, source_op: Any, amount: Any, item: Any,
             cal.criterion(characteristic), "allowance against the predecessor's calibration", "; ".join(cal.reasons),
             f"whether {amount} on {feature} cleans up the as-made variation is unknown",
             remedy=f"calibrate {characteristic} of {source_op.id}", recheck=[f"process.{kind}.allowance"], feature=feature),
-            f"{feature} allowance", f"{feature} allowance unverified", process=source_op.kind)
+            f"{feature} allowance", f"{feature} allowance unverified", process=source_op.kind, op=source_op)
     worst = cal.bounds("mm")[1]
     if amount.bounds[0] < worst - 1e-9:
         findings.append(Draft(f"process.{kind}.allowance_short", "major", FAIL, {**amount.as_dict()},

@@ -142,8 +142,6 @@ QUESTIONS: tuple[tuple[str, str], ...] = (
     ("Which fits must not jam or rattle with real, imperfect parts: only the critical ones, all of them, or none?",
      "--stack-up"),
     ("How much review before release: full, a quick re-check of retainers, mounts and walls, or none?", "--critique"),
-    ("Which printer, nozzle and filament? What is the bed size?",
-     "the capability profile in hw/manufacturing/capabilities.yaml, not flow.profile"),
     ("Are supports allowed, or must parts print support-free? Do you know your overhang, bridge, thinnest-wall and "
      "smallest-feature limits, or should I wait for a test print?",
      "--supports, --overhang-deg, --bridge-mm, --min-wall-mm, --min-feature-mm, --warp"),
@@ -154,6 +152,8 @@ QUESTIONS: tuple[tuple[str, str], ...] = (
     ("Should every stage gate wait for your approval, or only intent, variant, freeze and release?", "--human-approval"),
     ("Should generated results (STEP, GLB, renders) be committed to git?", "--results-in-git"),
 )
+MACHINE_STATEMENT = ("Stated, not asked: the optional offer to record the user's machine belongs to GROUND and is made "
+                     "once there. It is not asked here, and no answer to it is recorded or required.")
 MOTION_STATEMENT = ("Stated, not asked: once any joint moves, the motion sweep checks its full range for collisions "
                     "and the motion is rendered (motion: auto).")
 RECORDED_OPTION = "Record the user's answers as flow.profile"
@@ -543,15 +543,15 @@ def print_questions() -> None:
     print("Ask the user these questions verbatim, then record the answers with flow_profile.py record.\n")
     for number, (text, _records) in enumerate(QUESTIONS, start=1):
         print(f"{number}. {text}")
-    print(f"\n{MOTION_STATEMENT}\n\nEach answer records as:")
+    print(f"\n{MOTION_STATEMENT}\n{MACHINE_STATEMENT}\n\nEach answer records as:")
     for number, (_text, records) in enumerate(QUESTIONS, start=1):
         print(f"  {number}: {records}")
     print("\nDefaults, shown with each question:")
     for field, value in gate.DEFAULTS.items():
         print(f"  {field.replace('/', '.')}: {json.dumps(value)}")
     print("Show the user each question with its default. Record an answer as its option, or a")
-    print("default the user accepts with --accept-default <options>. A question neither answered nor accepted refuses")
-    print("the record.")
+    print("default the user accepts with --accept-default <options>. A listed question neither answered nor accepted refuses")
+    print("the record; the machine offer is no listed question.")
 
 
 def main(argv: list[str] | None = None) -> int:
