@@ -405,14 +405,36 @@ def axial_force(loads: Sequence[Mapping[str, Any]], axis: Vec, label: str, trans
     return float(max(0.0, *(sign * row["newtons"] * dot(assembly_direction(row, transforms), axis) for row in loads)))
 
 
-def recorded_load_n(interface: Any) -> float | None:
-    """The upper bound in N of the interface's known functional.contact.load, else None."""
+def recorded_load_n(interface: Any) -> tuple[float | None, str]:
+    """(the upper bound in N of the interface's known functional.contact.load, "") or (None, why not). A load that is
+    not known is no rating (None, ""). A known one must be a force quantity with finite, non-negative bounds before it
+    is compared with a bound: anything else is the reason the rating cannot be judged."""
     contact = interface.functional.raw.get("contact")
     fact = contact.get("load") if isinstance(contact, Mapping) else None
     if not isinstance(fact, Mapping) or fact.get("status") != "known":
-        return None
-    quantity = intent.quantity(fact["value"])
-    return float(quantity.to("N").bounds[1]) if quantity.dimension == "force" else None
+        return None, ""
+    try:
+        quantity = intent.quantity(fact["value"])
+        lower, upper = quantity.to("N").bounds
+    except (KeyError, TypeError, ValueError, intent.IntentError) as error:  # IntentError is a ValueError in cad-record, named for clarity
+        return None, f"the recorded contact load is not a force quantity ({error})"
+    if quantity.dimension != "force":
+        return None, f"the recorded contact load is a {quantity.dimension}, not a force"
+    if not (math.isfinite(lower) and math.isfinite(upper)):
+        return None, "the recorded contact load is not finite"
+    if lower < 0:
+        return None, f"the recorded contact load is negative ({lower:.4g} N)"
+    return float(upper), ""
+
+
+def judging_inputs(record: Any, interface: Any, chain: Any, pivot: Pivot) -> tuple[float | None, list[dict[str, Any]], float | None, str]:
+    """(the peak force, the loads read, the recorded rating, why the stop cannot be judged): a force that is not known, or a
+    rating that is not a finite force, leaves the stop unjudged."""
+    force, loads, why = applied_force(record, interface, chain if pivot.joint.type == "prismatic" else None)
+    if force is None:
+        return None, loads, None, why
+    recorded, why = recorded_load_n(interface)
+    return force, loads, recorded, why
 
 
 def contact_tolerance(interface: Any) -> tuple[float, str]:
@@ -576,12 +598,11 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
     stops = [state for state in stops if state["label"] not in unusable]  # a slide's other limits keep their own verdicts
     if unusable:
         detail["unresolved_limits"] = {label: f"{if_id}: at the {why}" for label, why in unusable.items()}
-    force, loads, why = applied_force(record, interface, chain if pivot.joint.type == "prismatic" else None)
-    if force is None:
+    force, loads, recorded, why = judging_inputs(record, interface, chain, pivot)
+    if why:
         reason = f"{if_id} is a stop at the {' and '.join(state['label'] for state in stops)} limit of {pivot.joint.id}, but {why}"
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
     detail.update(loads=loads, peak_force_n=force)
-    recorded = recorded_load_n(interface)
     return judge_stops(if_id, stops, stop_reactions(pivot, stops, loads, force, recorded), recorded, detail)
 
 
