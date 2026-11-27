@@ -6,7 +6,8 @@ with a 10x6 cutout through its +X wall; ``slotted`` a 50x20x5 plate with a close
 long and 3 deep; ``chamfered_boss`` a 30x30x5 plate with a d6 boss 10 high whose top edge has a
 0.5 mm chamfer; ``drafted_dish`` a 60 long tub whose long walls are 3 thick at the rim (z = 20) and
 drafted 3 deg wider toward the floor, a spherical dish 0.8 deep and 16 across in its 3 mm floor, and
-under the floor a dovetail 20 wide at its bed (z = -8) with 70 deg flanks. The result maps each
+under the floor a dovetail 20 wide at its bed (z = -8) with 70 deg flanks; ``vcut`` a 60x40x10 plate
+with a V-cut 2 wide and 1 deep, flanks at 45 deg, in its top face. The result maps each
 fixture to its faces and recognition.
 """
 
@@ -75,11 +76,16 @@ def drafted_dish():
     return shape.removeSplitter().cut(dish)
 
 
+def vcut():
+    """A 60x40x10 plate with a V-cut 2 wide and 1 deep (45 deg flanks, no flat floor) in its top face, x from 10 to 50."""
+    return box(0, 0, 0, 60, 40, 10).cut(prism([(18, 11), (22, 11), (20, 9)], 10, 50))
+
+
 def main():
     try:
         result = {"status": "pass", "fixtures": {}}
         for name, build in (("plate", plate), ("shell", shell), ("slotted", slotted),
-                            ("chamfered_boss", chamfered_boss), ("drafted_dish", drafted_dish)):
+                            ("chamfered_boss", chamfered_boss), ("drafted_dish", drafted_dish), ("vcut", vcut)):
             shape = build().removeSplitter()
             faces = feature_geometry.extract_faces(shape)
             recognition = feature_recognition.recognize([feature_geometry.Face.from_dict(f) for f in faces],

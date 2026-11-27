@@ -21,11 +21,12 @@ from decimal import Decimal
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "scripts"))
+sys.path.insert(0, str(HERE.parent / "scripts"))   # the skill scripts are no package: E402 below is the import order
 import drawing  # noqa: E402
 import drawing_intent  # noqa: E402
 import part_views  # noqa: E402
 import sheet  # noqa: E402
+import feature_geometry as fg  # noqa: E402
 from drawing_intent import Characteristic, Datum, DatumFrame, Instance, IntentError, Tolerance  # noqa: E402
 from feature_geometry import Binding, Edge, Face, ResolvedFeature  # noqa: E402
 from freecad_views import ViewGeometry  # noqa: E402
@@ -404,6 +405,175 @@ class SizesAtAPlane(unittest.TestCase):
         markup = sheet._dimension_markup(dim, 30.0, 3.5, "asme").markup
         self.assertIn('x1="39.000" y1="10.000" x2="28.500" y2="10.000"', markup)
         self.assertIn('text-anchor="end"', markup, "ASME text reads leftward, away from the view")
+
+
+class FailedBindings(unittest.TestCase):
+    """A locator that no longer matches the model is a finding that names the feature, wherever it is used."""
+
+    BED = rectangle(0, 0, 0, 60, 40, 0)
+    FLOOR = rectangle(1, 10, 5, 20, 15, -1)
+
+    @staticmethod
+    def locator(kind: str, point, **relations):
+        return {"kind": kind, "patches": [{"support_type": "plane", "point_mm": list(point)}],
+                **({"relations": relations} if relations else {})}
+
+    def bind(self, locators, bound):
+        """The binding as the drawing run builds it: ``bound`` maps a feature to its patch matches ([] = stale)."""
+        return fg.resolve(locators, bound, [self.BED, self.FLOOR])
+
+    def part(self, **drawing):
+        return {"process": "fdm", "drawing": {
+            "type": "detail", "coordinate_frame": {"origin": {"at": "bed"}, "z": {"normal_to": "bed"}}, **drawing}}
+
+    def measure(self, locators, bound, **drawing):
+        binding = self.bind(locators, bound)
+        return drawing_intent.measure("TST-0006", self.part(**drawing), {}, [], binding, [self.BED, self.FLOOR])
+
+    def test_a_feature_whose_locator_went_stale_is_named_and_not_measured(self) -> None:
+        measured = self.measure({"bed": self.locator("plane_face", (30, 20, 0)), "tab": self.locator("plane_face", (5, 5, 5))},
+                                {"bed": [[0]], "tab": [[]]}, features={"bed": {}, "tab": {}})
+        self.assertEqual({c.feature for c in measured.characteristics} - {"bed"}, set())
+        (named,) = measured.findings
+        self.assertEqual((named["code"], named["feature"]), ("feature_not_found", "tab"))
+
+    def test_an_engraving_on_a_stale_surface_is_named_with_that_surface(self) -> None:
+        measured = self.measure({"bed": self.locator("plane_face", (30, 20, 0)),
+                                 "tab": self.locator("plane_face", (5, 5, 5)),
+                                 "mark": self.locator("engraving", (15, 10, -1), on=["tab"])},
+                                {"bed": [[0]], "tab": [[]], "mark": [[1]]},
+                                features={"bed": {}, "tab": {}, "mark": {}}, notes=[{"reference": "mark"}])
+        (finding,) = [f for f in measured.findings if f.get("feature") == "mark"]
+        self.assertEqual(finding["code"], "feature_not_found")
+        self.assertIn("tab", finding["message"])
+
+    def test_an_axis_distance_request_naming_a_stale_feature_is_named(self) -> None:
+        measured = self.measure({"bed": self.locator("plane_face", (30, 20, 0)), "hole": self.locator("bore", (5, 5, 5))},
+                                {"bed": [[0]], "hole": [[]]}, features={"bed": {}, "hole": {}},
+                                dimensions=[{"id": "pitch", "operation": "axis_distance", "features": ["hole", "bed"]}])
+        (finding,) = [f for f in measured.findings if f.get("dimension") == "pitch"]
+        self.assertEqual(finding["code"], "feature_not_found")
+        self.assertIn("hole", finding["message"])
+
+    def test_a_detail_view_of_a_stale_feature_is_refused_naming_it(self) -> None:
+        binding = self.bind({"bed": self.locator("plane_face", (30, 20, 0)), "tab": self.locator("plane_face", (5, 5, 5))},
+                            {"bed": [[0]], "tab": [[]]})
+        views = [PLAN, {"id": "zoom", "kind": "detail", "feature": "tab"}]
+        frame = DatumFrame((0.0, 0.0, 0.0), X, Y, Z, False, {"A": Datum("A", "bed", "plane", (0.0, 0.0, 0.0), Z)})
+        with self.assertRaises(IntentError) as caught:
+            part_views.plan_views({"views": views}, frame, binding.features, {0: self.BED, 1: self.FLOOR})
+        self.assertEqual(caught.exception.code, "feature_not_found")
+        self.assertIn("tab", str(caught.exception))
+
+    def test_an_engraving_with_no_geometry_is_named(self) -> None:
+        features = {"bed": ResolvedFeature("bed", "plane_face", (0,)),
+                    "mark": ResolvedFeature("mark", "engraving", (), relations={"on": ("bed",)})}
+        part = self.part(features={"bed": {}, "mark": {}}, notes=[{"reference": "mark"}])
+        measured = drawing_intent.measure("TST-0006", part, {}, [], Binding(features, {0: "bed"}, ()), [self.BED])
+        (finding,) = [f for f in measured.findings if f.get("feature") == "mark"]
+        self.assertEqual(finding["code"], "feature_not_found")
+
+    def test_a_v_cut_whose_grooves_open_through_different_planes_is_refused_naming_the_engraving(self) -> None:
+        """Two 1 mm grooves on terraces 5 mm apart: one depth cannot state both, so none is stated."""
+        def flank(index: int, y: float, z: float, other: int, terrace: int) -> Face:
+            top, low = ((10.0, y, z), (50.0, y, z)), ((10.0, 0.0, z - 1.0), (50.0, 0.0, z - 1.0))
+            return Face(index, "plane", 1.0, (10.0, y, z - 1.0, 50.0, 0.0, z), (Edge(terrace, top), Edge(other, low)), (),
+                        point=(30.0, y / 2, z - 0.5), normal=(0.0, 0.7071, 0.7071))
+        upper, lower = rectangle(0, 0, -30, 60, 30, 10), rectangle(1, 0, -30, 60, 30, 5)
+        faces = [upper, lower, flank(2, -1.0, 10.0, 3, 0), flank(3, 1.0, 10.0, 2, 0),
+                 flank(4, -1.0, 5.0, 5, 1), flank(5, 1.0, 5.0, 4, 1), rectangle(6, 0, -30, 60, 30, 0)]
+        features = {"bed": ResolvedFeature("bed", "plane_face", (6,)),
+                    "terraces": ResolvedFeature("terraces", "plane_face", (0, 1)),
+                    "mark": ResolvedFeature("mark", "engraving", (2, 3, 4, 5), relations={"on": ("terraces",)})}
+        part = self.part(features={"bed": {}, "terraces": {}, "mark": {}}, notes=[{"reference": "mark"}])
+        measured = drawing_intent.measure("TST-0010", part, {}, [], Binding(features, {}, ()), faces)
+        self.assertEqual([c for c in measured.characteristics if c.operation == "depth"], [])
+        (finding,) = [f for f in measured.findings if f.get("feature") == "mark"]
+        self.assertEqual(finding["code"], "measurement_failed")
+        self.assertIn("mark", finding["message"])
+
+    def test_a_groove_bordering_two_terraces_is_refused_whatever_the_face_order(self) -> None:
+        """One groove opens onto planes 5 mm apart: no single plane is the opening, in either numbering."""
+        def flank(index: int, y: float, other: int) -> Face:
+            top, low = ((10.0, y, 10.0), (50.0, y, 10.0)), ((10.0, 0.0, 9.0), (50.0, 0.0, 9.0))
+            return Face(index, "plane", 1.0, (10.0, y, 9.0, 50.0, 0.0, 10.0),
+                        (Edge(0, top), Edge(1, top), Edge(other, low)), (), point=(30.0, y / 2, 9.5),
+                        normal=(0.0, 0.7071, 0.7071))
+        faces = [rectangle(0, 0, -30, 60, 30, 10), rectangle(1, 0, -30, 60, 30, 5), flank(2, -1.0, 3), flank(3, 1.0, 2),
+                 rectangle(6, 0, -30, 60, 30, 0)]
+        for order in ((0, 1), (1, 0)):
+            with self.subTest(opening_faces=order):
+                features = {"bed": ResolvedFeature("bed", "plane_face", (6,)),
+                            "terraces": ResolvedFeature("terraces", "plane_face", order),
+                            "mark": ResolvedFeature("mark", "engraving", (2, 3), relations={"on": ("terraces",)})}
+                part = self.part(features={"bed": {}, "terraces": {}, "mark": {}}, notes=[{"reference": "mark"}])
+                measured = drawing_intent.measure("TST-0012", part, {}, [], Binding(features, {}, ()), faces)
+                self.assertEqual([c for c in measured.characteristics if c.operation == "depth"], [])
+                (finding,) = [f for f in measured.findings if f.get("feature") == "mark"]
+                self.assertEqual(finding["code"], "measurement_failed")
+                self.assertIn("mark", finding["message"])
+
+    def v_cut_with_two_opening_faces(self, second: Face, order: tuple[int, int]) -> drawing_intent.Measured:
+        """A 1 mm V-cut whose flanks border two faces of the named opening: the plane z = 10 and ``second``."""
+        def flank(index: int, y: float, other: int) -> Face:
+            top, low = ((10.0, y, 10.0), (50.0, y, 10.0)), ((10.0, 0.0, 9.0), (50.0, 0.0, 9.0))
+            return Face(index, "plane", 1.0, (10.0, y, 9.0, 50.0, 0.0, 10.0),
+                        (Edge(0, top), Edge(1, top), Edge(other, low)), (), point=(30.0, y / 2, 9.5),
+                        normal=(0.0, 0.7071, 0.7071))
+        faces = [rectangle(0, 0, -30, 60, 30, 10), second, flank(2, -1.0, 3), flank(3, 1.0, 2),
+                 rectangle(6, 0, -30, 60, 30, 0)]
+        features = {"bed": ResolvedFeature("bed", "plane_face", (6,)),
+                    "opening": ResolvedFeature("opening", "plane_face", order),
+                    "mark": ResolvedFeature("mark", "engraving", (2, 3), relations={"on": ("opening",)})}
+        part = self.part(features={"bed": {}, "opening": {}, "mark": {}}, notes=[{"reference": "mark"}])
+        return drawing_intent.measure("TST-0013", part, {}, [], Binding(features, {}, ()), faces)
+
+    def assert_v_cut_refused(self, measured: drawing_intent.Measured) -> None:
+        self.assertEqual([c for c in measured.characteristics if c.operation == "depth"], [])
+        (finding,) = [f for f in measured.findings if f.get("feature") == "mark"]
+        self.assertEqual(finding["code"], "measurement_failed")
+        self.assertIn("mark", finding["message"])
+        self.assertIn("one plane", finding["message"])
+
+    def test_a_v_cut_opening_with_a_face_of_opposite_sense_is_refused_whatever_the_face_order(self) -> None:
+        """A face on the same plane that faces the other way is no part of one opening: 1 mm or none, by order."""
+        back = Face(1, "plane", 3600.0, (0.0, -30.0, 10.0, 60.0, 30.0, 10.0), (), (), point=(30.0, 0.0, 10.0),
+                    normal=(0.0, 0.0, -1.0))
+        for order in ((0, 1), (1, 0)):
+            with self.subTest(opening_faces=order):
+                self.assert_v_cut_refused(self.v_cut_with_two_opening_faces(back, order))
+
+    def test_a_v_cut_opening_with_a_face_tilted_off_the_plane_is_refused_whatever_the_face_order(self) -> None:
+        """Parallel within tolerance and level at the centroid, yet 0.02 mm off the plane at its ends: 1.00 or 1.02 mm."""
+        corners = [(10.0, -30.0, 9.98), (50.0, -30.0, 10.02), (50.0, 30.0, 10.02), (10.0, 30.0, 9.98)]
+        edges = tuple(Edge(None, (corners[k], corners[(k + 1) % 4])) for k in range(4))
+        tilted = Face(1, "plane", 2400.0, (10.0, -30.0, 9.98, 50.0, 30.0, 10.02), edges, (), point=(30.0, 0.0, 10.0),
+                      normal=(-0.001, 0.0, 1.0))
+        self.assertTrue(fg.parallel(tilted.normal, (0.0, 0.0, 1.0)))
+        for order in ((0, 1), (1, 0)):
+            with self.subTest(opening_faces=order):
+                self.assert_v_cut_refused(self.v_cut_with_two_opening_faces(tilted, order))
+
+    def test_a_v_cut_opening_with_a_narrow_tilted_lip_beside_a_broad_face_is_refused_whatever_the_face_order(self) -> None:
+        """The lip is 0.05 mm wide, so it stays on the broad face's plane; the broad face is 0.05 mm off the lip's."""
+        corners = [(50.0, -30.0, 10.0), (50.05, -30.0, 10.00005), (50.05, 30.0, 10.00005), (50.0, 30.0, 10.0)]
+        edges = tuple(Edge(None, (corners[k], corners[(k + 1) % 4])) for k in range(4))
+        lip = Face(1, "plane", 3.0, (50.0, -30.0, 10.0, 50.05, 30.0, 10.00005), edges, (), point=(50.025, 0.0, 10.000025),
+                   normal=(-0.001, 0.0, 1.0))
+        self.assertTrue(fg.parallel(lip.normal, (0.0, 0.0, 1.0)))
+        for order in ((0, 1), (1, 0)):
+            with self.subTest(opening_faces=order):
+                self.assert_v_cut_refused(self.v_cut_with_two_opening_faces(lip, order))
+
+    def test_an_axis_distance_between_a_bound_cylinder_and_a_bound_plane_is_named(self) -> None:
+        features = {"bed": ResolvedFeature("bed", "plane_face", (0,)), "pin": ResolvedFeature("pin", "shaft", (1,))}
+        part = self.part(features={"bed": {}, "pin": {}}, dimensions=[
+            {"id": "pitch", "operation": "axis_distance", "features": ["pin", "bed"]}])
+        measured = drawing_intent.measure("TST-0011", part, {}, [], Binding(features, {0: "bed", 1: "pin"}, ()),
+                                          [self.BED, cylinder(1, (5.0, 5.0, 0.0))])
+        (finding,) = [f for f in measured.findings if f.get("dimension") == "pitch"]
+        self.assertEqual(finding["code"], "measurement_failed")
+        self.assertIn("bed", finding["message"])
 
 
 if __name__ == "__main__":

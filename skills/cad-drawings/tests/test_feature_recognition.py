@@ -23,7 +23,9 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import drawing_intent  # noqa: E402
+import completeness  # noqa: E402
 import feature_coverage  # noqa: E402
+import feature_geometry as fg  # noqa: E402
 import freecad_runtime  # noqa: E402
 from drawing_intent import Characteristic, DatumFrame, Measured  # noqa: E402
 from feature_geometry import Binding, Face, ResolvedFeature  # noqa: E402
@@ -192,6 +194,59 @@ class Recognition_(unittest.TestCase):
         # the dovetail's own length, height and position are other requests; nothing at a plane, no angle, no SR
         self.assertEqual([m for m in left if "at the plane" in m or m.startswith(("angle", "SR", "depth"))], [], left)
         self.assertNotIn(next(t.id for t in targets if t.category == "dish"), {f["feature"] for f in report.findings})
+
+    def test_a_partly_stale_feature_is_named_by_the_gate_and_never_crashes_it(self) -> None:
+        """One of two patches of a feature matches a face, the other no longer does: the feature leaves the binding
+        with its face owners, and the coverage and completeness gates still run and name it."""
+        recognition, faces = self.fixtures["plate"]
+        locators, bound = {}, {}
+        for number, item in enumerate(recognition.features):
+            patches = [{"support_type": faces[i].support_type, "point_mm": list(faces[i].point or (0, 0, 0))}
+                       for i in item.faces]
+            matches = [[i] for i in item.faces]
+            if number == 0:   # a bracket revision moved the second patch off every face
+                patches.append({"support_type": "plane", "point_mm": [500.0, 500.0, 500.0]})
+                matches.append([])
+            locators[item.id] = {"kind": "surface", "patches": patches}
+            bound[item.id] = matches
+        stale = recognition.features[0].id
+        binding = fg.resolve(locators, bound, list(faces.values())).usable()
+        report = completeness.evaluate("TST-0009", {"drawing": {"type": "detail"}}, [], binding, Measured(frame=FRAME),
+                                       None, "0" * 64, recognition=recognition, faces=faces)
+        named = [f for f in report.findings if f.get("feature") == stale and f["code"] == "feature_not_found"]
+        self.assertTrue(named, report.findings)
+
+    def vcut_findings(self, opening: str):
+        """Run the drawing intent on the V-cut plate with the engraving's `on` relation set to ``opening`` (top or under)."""
+        _, faces = self.fixtures["vcut"]
+        planes = {i: f for i, f in faces.items() if f.support_type == "plane"}
+        top = next(i for i, f in planes.items() if f.normal == (0.0, 0.0, 1.0) and abs(f.point[2] - 10.0) < 1e-6)
+        under = next(i for i, f in planes.items() if f.normal == (0.0, 0.0, -1.0))
+        groove = tuple(sorted(i for i, f in planes.items() if 9.0 < f.point[2] < 9.9))
+        self.assertEqual(len(groove), 4, "two flanks and two end triangles")
+        features = {"top": ResolvedFeature("top", "plane_face", (top,)),
+                    "under": ResolvedFeature("under", "plane_face", (under,)),
+                    "mark": ResolvedFeature("mark", "engraving", groove, relations={"on": (opening,)})}
+        part = {"process": "fdm", "drawing": {
+            "type": "detail", "coordinate_frame": {"origin": {"at": "top"}, "z": {"normal_to": "top"}},
+            "notes": [{"reference": "mark"}], "features": {"top": {}, "under": {}, "mark": {}}}}
+        measured = drawing_intent.measure("TST-0008", part, {}, [], Binding(features, {}, ()), list(faces.values()))
+        return measured, groove
+
+    def test_a_v_cut_is_as_deep_as_its_lowest_point_below_the_plane_it_opens_through(self) -> None:
+        measured, groove = self.vcut_findings("top")
+        self.assertEqual(measured.findings, [])
+        depth = next(c for c in measured.characteristics if c.feature == "mark" and c.operation == "depth")
+        self.assertAlmostEqual(depth.value, 1.0, places=6)
+        self.assertEqual(sorted(depth.faces), list(groove))
+
+    def test_a_v_cut_opening_named_as_the_underside_is_refused_naming_the_engraving_and_the_plane(self) -> None:
+        measured, _ = self.vcut_findings("under")   # the 10 mm away face; the cut does not open through it
+        self.assertEqual([c for c in measured.characteristics if c.operation == "depth"], [])
+        (finding,) = [f for f in measured.findings if f.get("feature") == "mark"]
+        self.assertEqual(finding["code"], "measurement_failed")
+        self.assertIn("mark", finding["message"])
+        self.assertIn("under", finding["message"])
 
 
 if __name__ == "__main__":
