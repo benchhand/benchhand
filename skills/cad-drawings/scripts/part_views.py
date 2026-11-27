@@ -16,7 +16,7 @@ viewer, TechDraw's ``Direction``.
 - ``along_axis: R`` / ``parallel_to: R`` looks along axis R; ``toward: F`` puts the viewer on F's side,
   else on the side the frame axis parallel to R points to.
 - ``perpendicular_to: R`` looks across R along the first frame axis (x, y, z) perpendicular to it;
-  ``toward: F`` picks the sense.
+  ``toward: F`` picks the sense. A reference oblique to every frame axis is an invalid_drawing_intent finding.
 - ``opposite: V`` looks from the other side of view V.
 - ``kind: section`` cuts through ``through`` (one axis or plane, or two references) with a plane that
   the principal view sees edge-on; with ``normal_axis: x|y|z`` the plane is normal to that frame axis

@@ -41,7 +41,8 @@ datums. Instances with a missing or extra node keep one location each.
   `parallel_to` a reference with an optional `toward` sense, or `toward` a clocking feature.
 - `views`: the first orthographic view is the principal view; others take the projection method's
   place next to it. `normal_to` looks at a plane from its outward side; `along_axis`, `perpendicular_to`
-  and `opposite` as named. A `section` cuts `through` an axis or plane. With `normal_axis: x|y|z` it
+  and `opposite` as named. A `perpendicular_to` reference that is oblique to every frame axis is an
+  `invalid_drawing_intent` finding; use an `auxiliary` view with `along_axis` or `normal_to`. A `section` cuts `through` an axis or plane. With `normal_axis: x|y|z` it
   cuts normal to that frame axis through the centre of its one `through` reference, such as a pocket,
   an opening or a pair of holes. A `detail` enlarges a `feature`.
 - `sheet: N` on a view draws it on sheet N. The principal view stays on sheet 1 and the sheets are
