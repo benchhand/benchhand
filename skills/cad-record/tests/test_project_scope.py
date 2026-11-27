@@ -192,7 +192,7 @@ class RulesCommandTests(unittest.TestCase):
         """The findings of evidence.obligation_gate for one obligation, as the assessment calls it: an unknown class
         is passed as None."""
         return evidence.obligation_gate([obligation], {obligation["id"]: result}, stage,
-                                        None if service_class == "unknown" else service_class)
+                                        scope.ProjectScope(None if service_class == "unknown" else service_class, None))
 
     def rule_line(self, service_class: str, obligation: dict[str, Any]) -> str:
         rule = scope.obligation_rule(obligation).id
@@ -201,22 +201,26 @@ class RulesCommandTests(unittest.TestCase):
         return next(line for line in self.printed[service_class].splitlines() if line.startswith(f"  {rule} "))
 
     def test_each_rule_line_matches_the_gates_for_an_unresolved_obligation_of_that_rule(self) -> None:
-        """For every class, and every real obligation (product exports included) and one for obligation.other: the
-        release blocks it exactly when the line says so, and a gate before the release blocks it once due."""
+        """For every class, and every real obligation (product exports included) and one for obligation.other: an
+        owed rule blocks at the release and once due, as the line says. A rule that is not owed blocks no gate; every
+        gate names it in a gate.out_of_scope info row."""
         for service_class in self.CLASSES:
             for obligation in self.obligations(service_class):
                 line = self.rule_line(service_class, obligation)
                 release = [f for f in self.gate(service_class, obligation, "unknown", "release") if f.severity == "error"]
-                frozen = [f for f in self.gate(service_class, obligation, "unknown", "design_freeze")
-                          if f.severity == "error"]
+                frozen = self.gate(service_class, obligation, "unknown", "design_freeze")
+                owed = scope.obligation_disposition(obligation, None if service_class == "unknown" else service_class
+                                                    ) != "out_of_scope"
                 with self.subTest(service_class=service_class, obligation=obligation["id"]):
                     self.assertEqual("blocks at release until resolved" in line, bool(release))
-                    self.assertEqual("not owed at release" in line, not release)
-                    self.assertEqual(release == [], scope.obligation_disposition(obligation, None if service_class
-                                                                                == "unknown" else service_class)
-                                     == "out_of_scope")
-                    self.assertTrue(frozen)
-                    self.assertIn("blocks once due", line)
+                    self.assertEqual("not owed at any gate" in line, not owed)
+                    self.assertEqual(bool(release), owed)
+                    if owed:
+                        self.assertIn("blocks once due", line)
+                        self.assertTrue([f for f in frozen if f.severity == "error"])
+                    else:
+                        self.assertIn("gate.out_of_scope", line)
+                        self.assertEqual([(f.code, f.severity) for f in frozen], [("gate.out_of_scope", "info")])
 
     def test_every_rule_is_checked_by_at_least_one_obligation(self) -> None:
         for service_class in self.CLASSES:
@@ -228,9 +232,12 @@ class RulesCommandTests(unittest.TestCase):
         findings = self.gate("production", exports, "unknown", "release")
         self.assertEqual([(f.code, f.severity) for f in findings], [("gate.unresolved", "error")])
 
+    def owed(self, service_class: str, obligation: dict[str, Any]) -> bool:
+        return scope.in_release_scope(obligation, None if service_class == "unknown" else service_class)
+
     def test_a_due_unresolved_check_only_warns_before_layout_and_blocks_from_layout(self) -> None:
         """Header: from LAYOUT on a due unresolved check blocks; before it only warns (intent.use_case at INTENT, for
-        every class including unknown)."""
+        every class including unknown). A check the class does not owe gets an info row at every stage instead."""
         stages = evidence.STAGES
         for service_class in self.CLASSES:
             for obligation in self.obligations(service_class):
@@ -239,8 +246,11 @@ class RulesCommandTests(unittest.TestCase):
                     continue
                 expected = "error" if stages.index(stage) >= stages.index("layout") else "warning"
                 with self.subTest(service_class=service_class, obligation=obligation["id"]):
-                    self.assertEqual({f.severity for f in self.gate(service_class, obligation, "unknown", stage)},
-                                     {expected})
+                    found = self.gate(service_class, obligation, "unknown", stage)
+                    if self.owed(service_class, obligation):
+                        self.assertEqual({f.severity for f in found}, {expected})
+                    else:
+                        self.assertEqual([(f.code, f.severity) for f in found], [("gate.out_of_scope", "info")])
         text = run_rules("--class", "unknown").stdout
         self.assertIn("a due check that is unresolved blocks from LAYOUT on, but before LAYOUT only a known failure blocks", text)
 
@@ -249,7 +259,8 @@ class RulesCommandTests(unittest.TestCase):
         for service_class in self.CLASSES:
             with self.subTest(service_class=service_class):
                 for stage in ("analysis", "design_freeze"):
-                    self.assertEqual(self.gate(service_class, physical, "planned", stage), [])
+                    self.assertEqual({f.severity for f in self.gate(service_class, physical, "planned", stage)} - {"info"},
+                                     set())
                 owed = scope.in_release_scope(physical, None if service_class == "unknown" else service_class)
                 self.assertEqual([f.severity for f in self.gate(service_class, physical, "planned", "release")],
                                  ["error"] if owed else [])
@@ -287,6 +298,11 @@ class RulesCommandTests(unittest.TestCase):
                 if stage == "release":
                     continue
                 with self.subTest(service_class=service_class, obligation=obligation["id"]):
+                    if not self.owed(service_class, obligation):  # a check the class does not owe: an info row, whatever it shows
+                        for result in ("fail", "not_assessed"):
+                            self.assertEqual([(f.code, f.severity) for f in self.gate(service_class, obligation, result, stage)],
+                                             [("gate.out_of_scope", "info")])
+                        continue
                     self.assertEqual([f.severity for f in self.gate(service_class, obligation, "fail", stage)],
                                      ["error"])
                     self.assertEqual([(f.code, f.severity) for f in
@@ -296,6 +312,13 @@ class RulesCommandTests(unittest.TestCase):
         header = run_rules("--class", "production").stdout
         self.assertIn("before LAYOUT only a known failure blocks and any other unresolved check warns", header)
         self.assertIn("A check not assessed is informational at every gate", header)
+
+    def test_the_header_says_a_gate_skips_what_the_class_does_not_owe(self) -> None:
+        for service_class in self.CLASSES:
+            with self.subTest(service_class=service_class):
+                header = run_rules("--class", service_class).stdout
+                self.assertIn("A gate skips an out-of-scope rule and names it in a gate.out_of_scope info row", header)
+                self.assertIn("its result stays as shown", header)
 
     def test_the_first_matching_rule_decides_is_printed(self) -> None:
         self.assertIn("The first rule that matches an obligation decides it", run_rules("--class", "production").stdout)
