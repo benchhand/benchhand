@@ -16,9 +16,14 @@ local files only. SOURCE is an http(s) URL or a local file. The bytes go to
 HW_DIR/parts/PN/sources/FILE_NAME (default HW_DIR "hw"; the name comes from the URL path or the file)
 with a sidecar FILE_NAME.source.json holding origin, sha256, access date, size and kind. Record the
 sha256 in part.yaml where it cites the file. The PN and the sources folder come from cad-record's layout
-(`layout.resolve`, entry `record.part_sources`). No directory below HW_DIR may be a symbolic link, and
-no file is replaced: the content is written to a temporary name and linked into place, the name and
-its sidecar are both reserved, and an existing different file or sidecar is a name_conflict.
+(`layout.resolve`, entry `record.part_sources`). FILE_NAME must be one plain file name (no separator, no
+leading dot). HW_DIR itself and every directory below it are opened with O_NOFOLLOW, so a symbolic link
+anywhere on the output path is refused. No file is replaced: the content is written to a temporary
+name and linked into place, and the name and its sidecar are both reserved. A failure removes only the
+target this run linked itself. An existing target with other content, or a valid sidecar for other
+content, is a name_conflict. An existing identical store is reused only when its whole sidecar (origin,
+sha256, access date, size, kind) is valid and matches; the result then reports the stored origin and
+access date and `reused: true`. A sidecar that is incomplete or invalid is a sidecar_invalid finding.
 
 PDF: text per page (pypdf), as lines. HTML (stdlib parser): every <table> as a full grid, with each
 colspan and rowspan cell repeated in every grid position it covers, so a label that spans two
@@ -33,7 +38,7 @@ and the lead must check the column order against the header line (visually, in t
 stdout: JSON with pn, origin, stored (relative to HW_DIR), sha256, accessed, kind, pages or tables,
 column_order (PDF only), matches and findings. stderr: one line per finding. Exit 0 = read, 1 = at least one finding,
 2 = bad arguments. Findings: http_<status>, network_error, transfer_error, file_not_found, unreadable_file,
-unsupported_type, no_text_layer, unsafe_name, symlink_refused, storage_error, name_conflict, no_match.
+unsupported_type, no_text_layer, unsafe_name, symlink_refused, storage_error, sidecar_invalid, name_conflict, no_match.
 """
 
 from __future__ import annotations
@@ -64,6 +69,7 @@ HTML_MARK = re.compile(r"<\s*(?:table|html)\b", re.IGNORECASE)
 TIMEOUT_SECONDS = 30
 MAX_SPAN = 100
 SIDECAR_SUFFIX = ".source.json"
+SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _cad_record(name: str, path: Path) -> Any:
@@ -324,11 +330,17 @@ def sources_folder(hw: Path, pn: str) -> Path:
 
 
 def check_name(hw: Path, pn: str, name: str) -> None:
-    """The name must be one file name that the layout accepts under the part's sources folder."""
-    match = LAYOUT.classify(sources_folder(hw, pn) / name, hw)
-    if (match is None or match.entry.id != "record.part_sources" or name.startswith(".") or not name.isprintable()
-            or name != name.strip() or name.endswith(SIDECAR_SUFFIX)):
-        raise Finding("unsafe_name", f"{name!r} is not a usable file name under sources/; pass --name")
+    """The name must be one plain file name, and one the layout accepts under the part's sources folder."""
+    unsafe = (not name or name in (".", "..") or "/" in name or "\\" in name or name.startswith(".")
+              or not name.isprintable() or name != name.strip() or name.endswith(SIDECAR_SUFFIX))
+    if not unsafe:
+        try:
+            match = LAYOUT.classify(sources_folder(hw, pn) / name, hw)
+        except LAYOUT.LayoutError:
+            match = None
+        unsafe = match is None or match.entry.id != "record.part_sources"
+    if unsafe:
+        raise Finding("unsafe_name", f"{name!r} is not one usable file name under sources/; pass --name")
 
 
 def _is_link(directory_fd: int, name: str) -> bool:
@@ -356,22 +368,38 @@ def _open_directory(parent_fd: int, name: str) -> int:
         raise Finding("storage_error", f"{name} is not a usable directory: {error}") from error
 
 
-def _link_new(directory_fd: int, name: str, payload: bytes) -> bool:
-    """Write `payload` under a temporary name and link it as `name`, never replacing; False when `name` exists."""
+def _link_new(directory_fd: int, name: str, payload: bytes) -> int | None:
+    """Write `payload` under a temporary name and link it as `name`, never replacing.
+
+    Returns a descriptor of the new file, which the caller closes (an open file keeps its inode number,
+    so `_unlink_if_ours` can tell the entry from another writer's). None when `name` already exists."""
     temp = f".tmp-{uuid.uuid4().hex}"
-    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=directory_fd)
+    fd = os.open(temp, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=directory_fd)
     try:
-        with os.fdopen(fd, "wb") as handle:
+        with os.fdopen(os.dup(fd), "wb") as handle:
             handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        try:
-            os.link(temp, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
-        except FileExistsError:
-            return False
-        return True
+        os.fsync(fd)
+        os.link(temp, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+    except FileExistsError:
+        os.close(fd)
+        return None
+    except BaseException:
+        os.close(fd)
+        raise
     finally:
         os.unlink(temp, dir_fd=directory_fd)
+    return fd
+
+
+def _unlink_if_ours(directory_fd: int, name: str, fd: int) -> None:
+    """Remove `name` only while it is still the file behind `fd`: same device and inode, no link followed."""
+    mine = os.fstat(fd)
+    try:
+        current = os.lstat(name, dir_fd=directory_fd)
+    except FileNotFoundError:
+        return
+    if (current.st_dev, current.st_ino) == (mine.st_dev, mine.st_ino):
+        os.unlink(name, dir_fd=directory_fd)
 
 
 def _read_existing(directory_fd: int, name: str) -> bytes:
@@ -381,48 +409,89 @@ def _read_existing(directory_fd: int, name: str) -> bytes:
         return handle.read()
 
 
-def _sidecar_digest(payload: bytes) -> object:
+def _stored_record(payload: bytes, name: str, wanted: dict[str, Any]) -> dict[str, Any]:
+    """The sidecar `payload` as a record that describes the content in `wanted`, else a finding."""
+    invalid = Finding("sidecar_invalid", f"{name}{SIDECAR_SUFFIX} is incomplete or invalid; remove it or pass --name")
     try:
-        return json.loads(payload).get("sha256")
-    except (ValueError, AttributeError):
-        return None
+        stored = json.loads(payload)
+    except ValueError as error:
+        raise invalid from error
+    if not isinstance(stored, dict) or set(stored) != set(wanted):
+        raise invalid
+    sha, accessed, size = stored["sha256"], stored["accessed"], stored["bytes"]
+    try:
+        dated = isinstance(accessed, str) and date.fromisoformat(accessed).isoformat() == accessed
+    except ValueError:
+        dated = False
+    if not (isinstance(stored["origin"], str) and stored["origin"] and isinstance(sha, str) and SHA256.fullmatch(sha)
+            and dated and isinstance(size, int) and not isinstance(size, bool) and stored["kind"] in ("pdf", "html")):
+        raise invalid
+    if sha != wanted["sha256"]:
+        raise Finding("name_conflict", f"{name}{SIDECAR_SUFFIX} describes other content; pass --name to keep both")
+    if size != wanted["bytes"] or stored["kind"] != wanted["kind"]:
+        raise invalid
+    return stored
 
 
-def _install(directory_fd: int, name: str, data: bytes, record: dict[str, Any]) -> None:
-    """Reserve `name` and its sidecar without replacing either; an earlier identical store is accepted."""
-    sidecar = name + SIDECAR_SUFFIX
-    created = _link_new(directory_fd, name, data)
+def _install(directory_fd: int, name: str, data: bytes, record: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Reserve `name` and its sidecar without replacing either.
+
+    Returns the record that is stored and whether an earlier identical store was reused. A failure removes
+    only the target this call linked itself, never an entry another writer put at that name."""
+    mine = _link_new(directory_fd, name, data)
     try:
-        if not created and _read_existing(directory_fd, name) != data:
+        if mine is None and _read_existing(directory_fd, name) != data:
             raise Finding("name_conflict", f"{name} exists with other content; pass --name to keep both")
         payload = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
-        if not _link_new(directory_fd, sidecar, payload) and _sidecar_digest(_read_existing(directory_fd, sidecar)) != record["sha256"]:
-            raise Finding("name_conflict", f"{sidecar} exists and does not describe this content; pass --name to keep both")
+        placed = _link_new(directory_fd, name + SIDECAR_SUFFIX, payload)
+        if placed is not None:
+            os.close(placed)
+            return record, False
+        return _stored_record(_read_existing(directory_fd, name + SIDECAR_SUFFIX), name, record), True
     except BaseException:
-        if created:
-            os.unlink(name, dir_fd=directory_fd)
+        if mine is not None:
+            _unlink_if_ours(directory_fd, name, mine)
         raise
+    finally:
+        if mine is not None:
+            os.close(mine)
 
 
-def store(data: bytes, hw: Path, pn: str, name: str, record: dict[str, Any]) -> str:
-    """Store `data` as sources/`name` with its sidecar; returns the path relative to `hw`.
+def _open_root(hw: Path) -> int:
+    """Open the project's hw directory itself, creating it when absent, without following a link."""
+    try:
+        os.mkdir(hw, 0o777)
+    except FileExistsError:
+        pass
+    try:
+        return os.open(hw, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as error:
+        if os.path.islink(hw):
+            raise Finding("symlink_refused", f"{hw} is a symbolic link; the output path may contain none") from error
+        raise Finding("storage_error", f"{hw} is not a usable directory: {error}") from error
 
-    Every directory is opened with O_NOFOLLOW below `hw`, and files are linked into place, so a
-    symbolic link anywhere on the output path is refused and no existing file is overwritten."""
+
+def store(data: bytes, hw: Path, pn: str, name: str, record: dict[str, Any]) -> tuple[str, dict[str, Any], bool]:
+    """Store `data` as sources/`name` with its sidecar.
+
+    Returns the path relative to `hw`, the record that is stored and whether an earlier identical store
+    was reused. `hw` is opened with O_NOFOLLOW and every directory below it is opened from that
+    descriptor the same way, and files are linked into place, so a symbolic link anywhere on the output
+    path is refused and no existing file is overwritten."""
     check_name(hw, pn, name)
     folder = sources_folder(hw, pn)
     descriptors: list[int] = []
     try:
-        descriptors.append(os.open(hw.parent, os.O_RDONLY | os.O_DIRECTORY))
-        for part in (hw.name, *folder.relative_to(hw).parts):
+        descriptors.append(_open_root(hw))
+        for part in folder.relative_to(hw).parts:
             descriptors.append(_open_directory(descriptors[-1], part))
-        _install(descriptors[-1], name, data, record)
+        stored, reused = _install(descriptors[-1], name, data, record)
     except OSError as error:
         raise Finding("storage_error", f"cannot store {name} under {folder}: {error}") from error
     finally:
         for descriptor in descriptors:
             os.close(descriptor)
-    return (folder / name).relative_to(hw).as_posix()
+    return (folder / name).relative_to(hw).as_posix(), stored, reused
 
 
 # ---- command line
@@ -459,7 +528,8 @@ def extract(args: argparse.Namespace, result: dict[str, Any]) -> None:
     record = {"origin": args.source, "sha256": digest, "accessed": accessed, "bytes": len(data), "kind": kind}
     name = file_name(args.source, kind, args.name)
     result.update(kind=kind, sha256=digest, accessed=accessed, **({"pages": len(pages), "column_order": "unverified"} if kind == "pdf" else {"tables": len(tables)}))
-    result["stored"] = store(data, hw, args.pn, name, record)
+    result["stored"], used, reused = store(data, hw, args.pn, name, record)
+    result.update(origin=used["origin"], accessed=used["accessed"], reused=reused)
     if args.find is not None:
         matches = find_in_pdf(pages, args.find) if kind == "pdf" else find_in_tables(tables, args.find)
         result["matches"] = matches
