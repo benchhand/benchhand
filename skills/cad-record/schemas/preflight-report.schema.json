@@ -14,9 +14,9 @@
       "additionalProperties": false,
       "required": ["pass", "fail", "warn"],
       "properties": {
-        "pass": {"type": "integer", "minimum": 0},
-        "fail": {"type": "integer", "minimum": 0},
-        "warn": {"type": "integer", "minimum": 0}
+        "pass": {"type": "integer"},
+        "fail": {"type": "integer"},
+        "warn": {"type": "integer"}
       }
     },
     "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}}
@@ -33,7 +33,7 @@
         "required": {"type": "boolean"},
         "detail": {"type": "string"},
         "fix": {"type": "string"},
-        "elapsed_s": {"type": "number", "minimum": 0}
+        "elapsed_s": {"type": "number"}
       }
     }
   }

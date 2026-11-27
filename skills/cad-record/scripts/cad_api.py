@@ -23,7 +23,7 @@
 # schema-sha256 e7a1d4d1233184f1320a1f23f538e0980207f30c9292fa791fe05c0cee538c06 skills/cad-record/schemas/manufacturing.schema.json
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 # schema-sha256 7e31ffb8d6a6abc67e890d6b0543f581a9aa8e23af0d24fbffbbb8a0a1fe79c9 skills/cad-record/schemas/part.schema.json
-# schema-sha256 a925c74c84c3c9b3ef53579fdb4d41f295eef9af85ea8646996db71d5db66b36 skills/cad-record/schemas/preflight-report.schema.json
+# schema-sha256 e9c079d1eea63390b5243c626d053797ae060a9ed1d5c9e5a50fb863c59e0596 skills/cad-record/schemas/preflight-report.schema.json
 # schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
 # schema-sha256 1f824e1afee20c599bd4408606a4584208e22bcc56f626d561604a235c402f3f skills/cad-record/schemas/release-manifest.schema.json
 # schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
@@ -5671,11 +5671,6 @@ class Part(TypedDict):
 #
 # Not expressible as types (see the schema):
 # - additionalProperties: false
-#
-# Field notes:
-# - pass: minimum: 0
-# - fail: minimum: 0
-# - warn: minimum: 0
 PreflightReportCounts = TypedDict(
     "PreflightReportCounts",
     {
@@ -5695,7 +5690,6 @@ class PreflightReportCheck(TypedDict):
     Field notes:
     - id: minLength: 1
     - name: minLength: 1
-    - elapsed_s: minimum: 0
     """
     id: Required[str]
     name: Required[str]
