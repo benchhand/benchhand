@@ -655,9 +655,10 @@ class _Assessor:
 
     @staticmethod
     def stock_conflicts(cpart: CandidatePart, part: Any) -> list[str]:
-        """Each way a candidate step's declared stock differs from the known setup stock of the record operation at
-        the same route position, as "<operation> stock <key> <declared> (now <recorded>)". A candidate on other stock is
-        another route: the approval it passes is not an approval of the stock the record cuts."""
+        """Each way a candidate step's declared stock differs from the setup stock of the record operation at the same
+        route position, as "<operation> stock <key> <declared> (now <recorded>)". A stock the record leaves unknown
+        differs too: a candidate that states it only proposes it. A candidate on other stock is another route: the
+        approval it passes is not an approval of the stock the record cuts."""
         route = part.intent.route
         if mi.is_fact(route) or len(route) != len(cpart.route):
             return []
@@ -666,7 +667,10 @@ class _Assessor:
             stock = (op.setup or {}).get("stock")
             for key, stated in (("thickness", step.stock_thickness), ("coating", step.stock_coating)):
                 held = mi.fact(stock[key]) if isinstance(stock, Mapping) and isinstance(stock.get(key), Mapping) else None
-                if stated is None or held is None or not stated.known or not held.known:
+                if stated is None or held is None or not stated.known:
+                    continue
+                if not held.known:  # the record has not said what the route cuts: a known stock is only a proposal
+                    found.append(f"{op.id} stock {key} {stated.value} (now unknown)")
                     continue
                 same = (_text_key(stated.value) == _text_key(held.value) if isinstance(stated.value, str)
                         and isinstance(held.value, str) else stated.value == held.value)
