@@ -574,6 +574,7 @@ class FailedBindings(unittest.TestCase):
         (finding,) = [f for f in measured.findings if f.get("dimension") == "pitch"]
         self.assertEqual(finding["code"], "measurement_failed")
         self.assertIn("bed", finding["message"])
+        self.assertIn("operation distance", finding["message"])   # the request that does measure an axis to a plane
 
 
 if __name__ == "__main__":
