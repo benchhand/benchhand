@@ -878,6 +878,21 @@ class Sync(ScratchCase):
         self.assertIn("symlink", report["error"])
         self.assertEqual(self.scratch_state(scratch_hw), before)
 
+    def test_a_retained_empty_child_keeps_its_parents_clean_files(self) -> None:
+        (self.hw / "notes").mkdir()
+        (self.hw / "notes" / "a.txt").write_text("lead note\n", encoding="utf-8")
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        (scratch_hw / "notes" / "drafts").mkdir()  # the unit's own empty directory
+        shutil.rmtree(self.hw / "notes")
+        (self.hw / "notes").write_text("the lead now keeps one file\n", encoding="utf-8")
+        before = self.scratch_state(scratch_hw)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"], report["conflicts"]), (1, "conflict", ["notes", "notes/a.txt"]), report)
+        self.assertEqual((report["added"], report["removed"]), ([], []))
+        self.assertEqual((scratch_hw / "notes" / "a.txt").read_text(encoding="utf-8"), "lead note\n")
+        self.assertTrue((scratch_hw / "notes" / "drafts").is_dir())
+        self.assertEqual(self.scratch_state(scratch_hw), before)
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"

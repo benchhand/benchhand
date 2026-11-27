@@ -451,11 +451,13 @@ def drop_collisions(plan: list[str], files: set[str], dirs: set[str], lead: dict
         after = (files - {path for path in plan if path not in lead}) | installs
         parents = {path: [q.as_posix() for q in PurePosixPath(path).parents[:-1]] for path in after}
         directories = {q for found in parents.values() for q in found}
-        directories |= {d for d in dirs if not any(f.startswith(f"{d}/") for f in files)
-                        or any(f.startswith(f"{d}/") for f in after)}
+        empty = {d for d in dirs if not any(f.startswith(f"{d}/") for f in files)}  # kept as they are
+        directories |= empty | {d for d in dirs if any(e.startswith(f"{d}/") for e in empty)}
         clashing = {path for path in installs if path in directories}
         for path, above in parents.items():
             clashing |= {name for parent in above if parent in after for name in (path, parent)}
+        # a directory the lead replaced by a file stays whole: its planned removals wait with the install
+        clashing |= {path for path in plan if path not in lead and any(path.startswith(f"{c}/") for c in clashing)}
         dropped = [path for path in plan if path in clashing]
         if not dropped:
             return plan
