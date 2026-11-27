@@ -50,7 +50,7 @@ def load_entry(ident: str, newtons: float = 30.0, direction: tuple[float, float,
             "requirements": ["REQ-001"]}
 
 
-def documents(contact_load: float | None = None, joint: dict | None = None, kind: str = "other",
+def documents(contact_load: float | dict | None = None, joint: dict | None = None, kind: str = "other",
               limits: dict | None = None, *, joints: list[dict] | None = None, ends: tuple[str, str] = ("TST-0302", "TST-0301"),
               pns: tuple[str, ...] = ("TST-0301", "TST-0302"), loads: str = "known",
               direction: tuple[float, float, float] = (0, 0, -1), load_overrides: Sequence[dict] = ()) -> dict:
@@ -63,7 +63,8 @@ def documents(contact_load: float | None = None, joint: dict | None = None, kind
         functional["loads"] = ["handle_close_at_latched_stop", "handle_open_at_open_stop"]
     if contact_load is not None:
         unknown = {"status": "unknown", "reason": "not needed by the fixture"}
-        functional["contact"] = {"materials": [unknown, unknown], "load": fx.known(fx.quantity(contact_load, "N"))}
+        rating = contact_load if isinstance(contact_load, dict) else fx.known(fx.quantity(contact_load, "N"))
+        functional["contact"] = {"materials": [unknown, unknown], "load": rating}
     entries = [load_entry("handle_close_at_latched_stop", direction=direction),
                load_entry("handle_open_at_open_stop", direction=direction)]
     if loads == "unknown":
@@ -82,6 +83,10 @@ def documents(contact_load: float | None = None, joint: dict | None = None, kind
 
 def validator(definition: str):
     return fx.ref_validator(f"https://srobroek.com/cad/schemas/manufacturing.schema.json#/$defs/{definition}")
+
+
+def refuse_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not valid JSON")
 
 
 def evidence_validator():
@@ -173,7 +178,7 @@ class StopGeometryTests(unittest.TestCase):
         proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), "--hw", str(hw), "--parts-dir",
                                str(geometry / "parts")], capture_output=True, text=True, timeout=1800, check=False)
         self.assertIn(proc.returncode, (0, 1), proc.stdout + proc.stderr)
-        result = json.loads(proc.stdout)
+        result = json.loads(proc.stdout, parse_constant=refuse_constant)  # Infinity and NaN are not JSON
         finding, outcome = validator("finding"), validator("obligation_outcome")
         for item in result["findings"]:
             self.assertEqual(list(finding.iter_errors(item)), [], item["id"])
@@ -561,6 +566,18 @@ class StopGeometryTests(unittest.TestCase):
         self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
         self.assertIn("within 60 degrees of directly against travel", row["uncertainty"])
         self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
+    def test_a_bound_that_overflows_is_a_named_unknown_with_exit_1(self) -> None:
+        # 1e308 N is finite. Over cos 60 deg (0.5) a slide's bound is 2e308, which overflows to infinity, and a pivot's
+        # moment (1e308 N over 80 mm) does too: neither may pass or write Infinity.
+        huge = {"magnitude": fx.known(fx.quantity(1e308, "N"))}
+        for name, options in (("slide", {"joint": self.SLIDE, "variant": "mate60"}), ("pivot", {})):
+            with self.subTest(case=name):
+                code, result = self.run_stop(f"overflow-{name}", load_overrides=[huge, huge], **options)
+                [row] = result["outcomes"]
+                self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
+                self.assertIn("not finite", row["uncertainty"])
+                self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
 
     def test_a_part_frame_direction_is_rotated_into_the_assembly_frame(self) -> None:
         # By hand: a 30 N load along the lever's own +Z, with the lever turned 180 deg about X, acts along the
