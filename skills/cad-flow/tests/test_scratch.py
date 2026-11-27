@@ -824,6 +824,22 @@ class Sync(ScratchCase):
                     code, report = self.scratch(command, "--hw", "hw", "--unit", "unit-a")
                     self.assertEqual((code, report["status"], report["finding"]), (1, "error", "baseline-invalid"), report)
 
+    def test_sync_links_nothing_when_one_cache_destination_is_linked(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        outside = self.outside()
+        cache = scratch_hw / ".cad" / "cache"
+        cache.mkdir(parents=True)
+        (cache / "records").symlink_to(outside)
+        stored = [f".cad/cache/objects/{'d' * 64}", f".cad/cache/records/{'d' * 64}.json"]
+        for rel in stored:
+            (self.hw / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.hw / rel).write_text("lead\n", encoding="utf-8")
+        before = tree(outside)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertEqual(tree(outside), before)
+        self.assertEqual(list((cache / "objects").glob("*")) if (cache / "objects").exists() else [], [])
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
