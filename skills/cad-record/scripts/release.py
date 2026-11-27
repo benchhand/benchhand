@@ -523,7 +523,8 @@ def check_acceptance(release: Release, frozen: Any, sealed: dict[str, Any] | Non
                                                         today=datetime.fromisoformat(release.released_at[:10]).date())
         inventory, digest = evidence.version_acceptance(hw, release.version, assessment.record, packets)
     except (evidence.EvidenceError, layout.LayoutError, OSError, ValueError) as error:
-        release.refuse("hw/product.yaml", "acceptance", f"the acceptance inventory cannot be formed: {error}")
+        release.refuse(getattr(error, "location", None) or "hw/product.yaml", "acceptance",
+                       f"the acceptance inventory cannot be formed: {error}")
         return
     if assessment.record.version != intent.RECORD_VERSION:
         return  # validate.py reports record.version_unsupported, which refuses the release

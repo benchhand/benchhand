@@ -16,14 +16,17 @@ from __future__ import annotations
 import os
 import json
 import hashlib
+import io
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from datetime import date
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -41,6 +44,8 @@ acceptance = load("cad_record_acceptance_fixtures", ACCEPTANCE)
 evidence, fx = acceptance.evidence, acceptance.fx
 DAY = date(2026, 11, 19)  # the fixed UTC day of the gate decisions and of the stamp timestamp below
 LAYOUT_GATE = ("layout", "parts")  # the `gate:` front matter of the decision that approves the layout -> parts advance
+LAYOUT_MANIFEST = '{"label":"v1","files":{}}\n'
+LAYOUT_BUILD = ("v1", hashlib.sha256(LAYOUT_MANIFEST.encode()).hexdigest())
 STAMP_TIME = "2026-11-19T10:00:00Z"
 LEGACY_PRODUCT = "id: test-project\nflow:\n  stage: {stage}\n  recheck_from: {threshold}\n"
 
@@ -196,7 +201,8 @@ class RecheckHookTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot parse staged hw/product.yaml", result.stderr)
 
-    def gate_packet(self, stage: str, *, outcome: str = "pass") -> Path:
+    def gate_packet(self, stage: str, *, outcome: str = "pass", version: str = "v1",
+                    manifest_sha256: str = LAYOUT_BUILD[1]) -> Path:
         """The evidence packet at `stage` of a producer that shows only the checks due at or before `stage`:
         later-stage checks stay unknown, as in a project that has just frozen that stage."""
         order = stamp_module.validate.stages()
@@ -204,7 +210,7 @@ class RecheckHookTests(unittest.TestCase):
         due = [o for o in evidence.mi.required_checks(staged.record) if order.index(o.stage) <= order.index(stage)]
         producer = evidence.ProducerPacket("hw/checks/v1/tst", "0" * 64,
                                            acceptance.producer_packet(staged.record, outcome=outcome, obligations=due))
-        packet = evidence.assess(staged.record, version="v1", manifest_sha256="0" * 64, packets=[producer],
+        packet = evidence.assess(staged.record, version=version, manifest_sha256=manifest_sha256, packets=[producer],
                                  selection_sha256=staged.selection_sha256).packet(stage, staged.record_sha256)
         checks = self.root / ".checks.json"
         checks.write_text(json.dumps(packet), encoding="utf-8")
@@ -219,14 +225,26 @@ class RecheckHookTests(unittest.TestCase):
         self.stage_product(flow_stage, recheck_from)
         if decision is not None:
             write_test_decision(self.root / "hw", "DR-001", status=decision, date=decided, title=title, gate=gate,
+                                gate_build=LAYOUT_BUILD if gate else None,
                                 context="Temporary until the full check: v1 passed fast checks 1-4.")
         self.git("add", "hw")
+        self.stage_manifest("v1", LAYOUT_MANIFEST)
+
+    def stage_manifest(self, version: str, content: str) -> str:
+        relative = f"hw/versions/{version}/manifest.json"
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        self.git("add", "-f", relative)
+        return hashlib.sha256(content.encode()).hexdigest()
 
     def stamp_gate(self, stage: str, *, outcome: str = "pass", passed: bool = True,
-                   timestamp: str | None = STAMP_TIME) -> subprocess.CompletedProcess[str]:
+                   timestamp: str | None = STAMP_TIME, version: str = "v1",
+                   manifest_sha256: str = LAYOUT_BUILD[1]) -> subprocess.CompletedProcess[str]:
         """Stamp `stage` through the public writer, then fix the stamp's timestamp (dropped when None) so no test
         reads the clock. The timestamp sits outside the tree hash, so the staged stamp stays valid."""
-        args = ["--stage", stage, "--checks", str(self.gate_packet(stage, outcome=outcome))]
+        packet = self.gate_packet(stage, outcome=outcome, version=version, manifest_sha256=manifest_sha256)
+        args = ["--stage", stage, "--checks", str(packet)]
         result = self.run_python(STAMP, *(args + (["--passed"] if passed else [])), cwd=self.root)
         if result.returncode == 0:
             self.set_stamp_time(timestamp)
@@ -259,7 +277,7 @@ class RecheckHookTests(unittest.TestCase):
         self.assertIn("layout → parts", result.stderr)
         self.assertIn("hw/decisions", result.stderr)
 
-    def test_an_accepted_decision_dated_on_the_stamp_day_passes_the_advance(self) -> None:
+    def test_an_accepted_decision_for_the_checked_build_passes_the_advance(self) -> None:
         self.provisional_gate("parts", decision="accepted")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.assertEqual(self.verify().returncode, 0)
@@ -320,24 +338,156 @@ class RecheckHookTests(unittest.TestCase):
                 self.git("add", "hw")
                 self.assertEqual(self.stamp_gate("layout").returncode, 0)
                 result = self.verify()
-                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.returncode, 1)
                 self.assertIn("DR-001-", result.stderr)
                 self.assertIn("gate", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
 
     def test_a_gate_decision_among_other_decisions_passes_the_advance(self) -> None:
         self.provisional_gate("parts", decision="accepted", title="Flow profile", gate=None)
-        write_test_decision(self.root / "hw", "DR-002", status="proposed", date=DAY, gate=LAYOUT_GATE)
+        write_test_decision(self.root / "hw", "DR-002", status="proposed", date=DAY, gate=LAYOUT_GATE,
+                            gate_build=LAYOUT_BUILD)
         self.git("add", "hw")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.assertEqual(self.verify().returncode, 0)
 
-    def test_a_decision_dated_before_the_stamp_does_not_pass_the_advance(self) -> None:
-        self.provisional_gate("parts", decided=date(2026, 11, 18))
+    def test_recheck_just_after_midnight_accepts_the_previous_days_gate_decision(self) -> None:
+        self.provisional_gate("parts", decided=DAY)
+        stamped = self.stamp_gate("layout", timestamp="2026-11-20T00:01:00Z")
+        self.assertEqual(stamped.returncode, 0, stamped.stderr)
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_historical_product_without_a_readable_stage_does_not_block_an_advance(self) -> None:
+        product = self.root / "hw/product.yaml"
+        product.write_text("flow: [\n", encoding="utf-8")
+        self.git("add", "hw/product.yaml")
+        self.git("commit", "-qm", "historical malformed product")
+        self.provisional_gate("parts", decision="accepted")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         result = self.verify()
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("layout → parts", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_reopening_a_stage_does_not_let_a_fresh_stamp_reuse_the_old_gate_decision(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.assertEqual(self.verify().returncode, 0)
+        self.git("commit", "-qm", "advance to parts")
+        self.stage_product("layout", "ground")
+        self.git("commit", "-qm", "reopen layout")
+        self.stage_product("parts", "ground")
+        for version, field in (("v2", "gate.version"), ("v1", "gate.version_manifest_sha256")):
+            with self.subTest(version=version, field=field):
+                digest = self.stage_manifest(version, json.dumps({"label": version, "files": {}, "build": "new"}))
+                stamped = self.stamp_gate("layout", version=version, manifest_sha256=digest)
+                self.assertEqual(stamped.returncode, 0, stamped.stderr)
+                result = self.verify()
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(field + ":", result.stderr)
+
+    def test_gate_refuses_a_packet_for_an_older_manifest_at_the_same_version(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.stage_manifest("v1", '{"label":"v1","files":{},"build":"replacement"}\n')
+        (self.root / "hw/versions/v1/manifest.json").write_text(LAYOUT_MANIFEST, encoding="utf-8")
+        stamped = self.stamp_gate("layout")
+        self.assertEqual(stamped.returncode, 0, stamped.stderr)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("version_manifest_sha256:", result.stderr)
+        self.assertIn("hw/versions/v1/manifest.json", result.stderr)
+
+    def test_reopening_refuses_the_old_decision_even_when_the_build_is_unchanged(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.assertEqual(self.verify().returncode, 0)
+        self.git("commit", "-qm", "advance to parts")
+        self.stage_product("layout", "ground")
+        self.git("commit", "-qm", "reopen layout")
+        self.stage_product("parts", "ground")
+        self.assertEqual(self.stamp_gate("layout", timestamp="2026-11-26T10:00:00Z").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("gate.attempt:", result.stderr)
+        self.git("commit", "-qm", "advance again with the stale decision")
+        committed = self.run_python(STAMP, "--verify", "--committed", cwd=self.root)
+        self.assertEqual(committed.returncode, 1, committed.stderr)
+        self.assertIn("gate.attempt:", committed.stderr)
+
+    def test_reopening_accepts_a_new_decision_for_the_same_build(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.git("commit", "-qm", "advance to parts")
+        self.stage_product("layout", "ground")
+        self.git("commit", "-qm", "reopen layout")
+        self.stage_product("parts", "ground")
+        write_test_decision(self.root / "hw", "DR-002", status="accepted", date=DAY, gate=LAYOUT_GATE,
+                            gate_build=LAYOUT_BUILD)
+        self.git("add", "hw/decisions")
+        self.assertEqual(self.stamp_gate("layout", timestamp="2026-11-20T00:01:00Z").returncode, 0)
+        self.git("commit", "-qm", "advance again with a new decision")
+        result = self.run_python(STAMP, "--verify", "--committed", cwd=self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_reopening_blocks_when_git_cannot_read_the_earlier_advance(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.git("commit", "-qm", "advance to parts")
+        previous = self.git("rev-parse", "HEAD").stdout.strip()
+        self.stage_product("layout", "ground")
+        self.git("commit", "-qm", "reopen layout")
+        self.stage_product("parts", "ground")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        real_git = stamp_module.git
+
+        def git(*args: str, cwd: Path) -> bytes:
+            if args == ("show", f"{previous}:./hw/product.yaml"):
+                raise RuntimeError("cannot read object")
+            return real_git(*args, cwd=cwd)
+
+        stderr = io.StringIO()
+        argv = [str(STAMP), "--verify", "--hw", str(self.root / "hw")]
+        with patch.object(stamp_module, "git", side_effect=git), patch.object(sys, "argv", argv), redirect_stderr(stderr):
+            code = stamp_module.main()
+        self.assertEqual(code, 1, stderr.getvalue())
+        self.assertIn("gate.attempt:", stderr.getvalue())
+        self.assertIn(previous, stderr.getvalue())
+        self.assertIn("hw/product.yaml", stderr.getvalue())
+
+    def test_worktree_only_manifest_cannot_authorize_the_advance(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.git("rm", "--cached", "hw/versions/v1/manifest.json")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("version_manifest_sha256:", result.stderr)
+        self.assertIn("missing from the index", result.stderr)
+
+    def test_committed_gate_verifies_with_only_its_manifest_in_a_clean_checkout(self) -> None:
+        self.provisional_gate("parts", decision=None)
+        (self.root / ".gitignore").write_text("/hw/versions/\n", encoding="utf-8")
+        self.git("add", ".gitignore")
+        product_path = self.root / "hw/product.yaml"
+        product = json.loads(product_path.read_text(encoding="utf-8"))
+        product["flow"]["frozen"] = {"version": "v1"}
+        product_path.write_text(json.dumps(product), encoding="utf-8")
+        self.git("add", "hw/product.yaml")
+        artifact = b"STEP fixture\n"
+        (self.root / "hw/versions/v1/assembly.step").write_bytes(artifact)
+        digest = self.stage_manifest("v1", json.dumps({"label": "v1", "files": {
+            "assembly.step": hashlib.sha256(artifact).hexdigest(),
+        }}))
+        write_test_decision(self.root / "hw", "DR-001", status="accepted", date=DAY, gate=LAYOUT_GATE,
+                            gate_build=("v1", digest))
+        self.git("add", "hw/decisions")
+        stamped = self.stamp_gate("layout", manifest_sha256=digest)
+        self.assertEqual(stamped.returncode, 0, stamped.stderr)
+        self.assertEqual(self.verify().returncode, 0)
+        self.git("commit", "-qm", "advance with only the manifest tracked")
+        clean = self.root.parent / "clean"
+        self.git("clone", "-q", ".", str(clean))
+        self.assertFalse((clean / "hw/versions/v1/assembly.step").exists())
+        result = self.run_python(STAMP, "--verify", "--committed", cwd=clean)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_a_malformed_decision_record_is_a_refusal(self) -> None:
         self.provisional_gate("parts")
@@ -345,16 +495,23 @@ class RecheckHookTests(unittest.TestCase):
         self.git("add", "hw")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         result = self.verify()
-        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.returncode, 1)
         self.assertIn("DR-001-", result.stderr)
+
+    def test_a_malformed_gate_digest_reports_the_field_as_a_finding(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        path = decision_path(self.root / "hw", "DR-001")
+        text = path.read_text(encoding="utf-8").replace(LAYOUT_BUILD[1], "not-a-digest")
+        path.write_text(text, encoding="utf-8")
+        self.git("add", "hw")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("gate.version_manifest_sha256", result.stderr)
+        self.assertIn(path.name, result.stderr)
 
     def test_a_stamp_at_the_current_stage_needs_no_decision_record(self) -> None:
         self.provisional_gate("layout", decision=None)
-        self.assertEqual(self.stamp_gate("layout").returncode, 0)
-        self.assertEqual(self.verify().returncode, 0)
-
-    def test_a_decision_dated_after_the_stamp_passes_the_advance(self) -> None:
-        self.provisional_gate("parts", decided=date(2026, 11, 20))
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.assertEqual(self.verify().returncode, 0)
 
@@ -365,17 +522,17 @@ class RecheckHookTests(unittest.TestCase):
                 self.provisional_gate("parts")
                 self.assertEqual(self.stamp_gate("layout", timestamp=stamp).returncode, 0)
                 result = self.verify()
-                self.refused_gate(result)
-                self.assertIn("timestamp", result.stderr)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("timestamp:", result.stderr)
 
-    def test_the_stamp_day_is_its_utc_day(self) -> None:
-        late = "2026-11-19T23:30:00-02:00"  # 2026-11-20 01:30 UTC
-        self.provisional_gate("parts", decided=DAY)
-        self.assertEqual(self.stamp_gate("layout", timestamp=late).returncode, 0)
-        self.refused_gate(self.verify())
+    def test_a_gate_decision_after_the_stamps_utc_date_is_a_named_finding(self) -> None:
         self.provisional_gate("parts", decided=date(2026, 11, 20))
-        self.assertEqual(self.stamp_gate("layout", timestamp=late).returncode, 0)
-        self.assertEqual(self.verify().returncode, 0)
+        stamped = self.stamp_gate("layout", timestamp="2026-11-20T00:01:00+01:00")
+        self.assertEqual(stamped.returncode, 0, stamped.stderr)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("DR-001", result.stderr)
+        self.assertIn("date:", result.stderr)
 
     def test_a_decisions_folder_without_a_decision_record_is_refused(self) -> None:
         self.provisional_gate("parts", decision=None)
@@ -395,7 +552,8 @@ class RecheckHookTests(unittest.TestCase):
 
     def restage_decision(self, decision: str) -> None:
         """The index: the decision at status `decision`, stamped again."""
-        write_test_decision(self.root / "hw", "DR-001", status=decision, date=DAY, gate=LAYOUT_GATE)
+        write_test_decision(self.root / "hw", "DR-001", status=decision, date=DAY, gate=LAYOUT_GATE,
+                            gate_build=LAYOUT_BUILD)
         self.git("add", "hw")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
 
@@ -421,7 +579,7 @@ class RecheckHookTests(unittest.TestCase):
         self.git("add", "hw/extra.txt")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         write_test_decision(self.root / "hw", "DR-001", status="accepted", date=DAY,
-                            gate=LAYOUT_GATE)  # in the work tree, not staged
+                            gate=LAYOUT_GATE, gate_build=LAYOUT_BUILD)  # in the work tree, not staged
         self.refused_gate(self.verify())
         self.refused_gate(self.run_python(STAMP, "--verify", "--committed", cwd=self.root))
 

@@ -233,7 +233,7 @@ def plan_views(drawing: Mapping[str, Any], frame: DatumFrame, features: Mapping[
             if base is None:
                 raise IntentError("invalid_drawing_intent", f"detail {spec['id']} has no base view")
             feature = features.get(spec["feature"])
-            if feature is None:
+            if feature is None or not feature.faces:
                 raise IntentError("feature_not_found", f"detail {spec['id']} names unbound feature {spec['feature']}")
             plan = ViewPlan(spec["id"], "detail", kind, base.direction, base.x_direction, None, base=base.id,
                             detail={"feature": feature.id, "centre": feature_centre(feature, faces)},

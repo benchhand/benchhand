@@ -72,6 +72,8 @@ BOM_COLUMNS = ["level", "PN", "rev", "qty", "title", "material", "process", "mak
 # Appended procurement columns, generated from part.yaml `procurement`; a BOM carries all or none of them.
 BOM_PROCUREMENT_COLUMNS = ["unit", "designation", "manufacturer", "manufacturer_part_number",
                            "supplier_part_number", "specification_ref", "specification_rev"]
+BOM_REGENERATION = ('; regenerate bom.csv with uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" '
+                    'cad-bom/scripts/bom.py ASSEMBLY.step --hw hw')
 CSV_COLUMNS = {
     "bom.csv": (BOM_COLUMNS, BOM_COLUMNS + BOM_PROCUREMENT_COLUMNS),
     "verification.csv": (["requirement_id", "method", "criteria", "result", "evidence"],),
@@ -822,11 +824,16 @@ def check_design_rules(hw: Path, documents: Mapping[str, Any], valid: Mapping[st
         report(hw / "requirements.yaml", design_rules.visibility_findings(requirements, resolve))
 
 
+def _below_hw(hw: Path, located: str) -> str:
+    """A project-relative `hw/...` location, with its optional `#pointer`, made a path below `hw`."""
+    location, _, pointer = located.partition("#")
+    path = str(hw / location.removeprefix("hw/")) if location.startswith("hw/") else location
+    return path + (f"#{pointer}" if pointer else "")
+
+
 def _intent_finding(hw: Path, item: Mapping[str, Any]) -> dict[str, Any]:
     """A manufacturing_intent or evidence finding, its project-relative `hw/...` path made a path below `hw`."""
-    location, _, pointer = str(item["path"]).partition("#")
-    path = str(hw / location.removeprefix("hw/")) if location.startswith("hw/") else location
-    return {**item, "path": path + (f"#{pointer}" if pointer else "")}
+    return {**item, "path": _below_hw(hw, str(item["path"]))}
 
 
 def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
@@ -921,6 +928,7 @@ def check_acceptance_anchor(hw: Path, record: Any, findings: list[dict[str, Any]
     try:
         _, digest = evidence.version_acceptance(hw, frozen["version"], record)
     except evidence.EvidenceError as error:
+        path = _below_hw(hw, error.location) if error.location else path
         findings.append(finding(path, f"flow/frozen/evidence_sha256: the acceptance inventory cannot be formed: {error}",
                                 code="record.evidence_anchor", canonical_location=None,
                                 action="Restore the file, or record the change through an engineering change."))
@@ -934,7 +942,8 @@ def check_acceptance_anchor(hw: Path, record: Any, findings: list[dict[str, Any]
                                        "or open an engineering change."))
 
 
-def check_layout(hw: Path, product: Any, part_records: dict[str, Any], findings: list[dict[str, str]]) -> None:
+def check_layout(hw: Path, product: Any, part_records: dict[str, Any], findings: list[dict[str, str]], *,
+                 version_anchors: frozenset[str] = frozenset()) -> None:
     """Every file and directory under hw/, tracked, untracked or ignored, against cad-record layout.json."""
     references = {}
     for pn, (part, _) in part_records.items():
@@ -942,7 +951,7 @@ def check_layout(hw: Path, product: Any, part_records: dict[str, Any], findings:
         if isinstance(artifact, str):
             references[posixpath.normpath(f"{layout.HW}/{artifact}")] = pn
     strict = layout_strict(product, hw)
-    report = layout.audit(hw, references)
+    report = layout.audit(hw, references, version_anchors=version_anchors)
     for problem in report.problems:
         severity = problem.severity if problem.severity != "stage" else "error" if strict else "warning"
         findings.append(finding(str(layout.locate(hw, problem.path)), problem.message, severity=severity,
@@ -1138,7 +1147,8 @@ def validate_project(project_dir: Path, today: date | None = None) -> list[dict[
             for field, part_value in procurement_cells(part).items():
                 bom_value = row.get(field) or None
                 if bom_value != part_value:
-                    findings.append(finding(row_path, f"{field} {bom_value!r} does not match {part_file} ({part_value!r})"))
+                    findings.append(finding(row_path, f"{field} {bom_value!r} does not match {part_file} ({part_value!r})"
+                                            + (BOM_REGENERATION if field in ("specification_ref", "specification_rev") else "")))
 
     previous_level: int | None = None
     for index, level in enumerate(bom_levels, start=2):

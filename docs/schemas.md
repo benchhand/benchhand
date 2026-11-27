@@ -3,8 +3,10 @@ schema-sha256 803b704fba48b2a02094e09621c12026d71ba7bdefbd5db9cbb2243ac4bd0a14 s
 schema-sha256 cc2ca1a50d093d0dc81975cf82020b5295f7a13043cf0bde3e5e83877f315d6c skills/cad-concept/assets/schemas/handoff.schema.json
 schema-sha256 af028b167db678d5093a25bbf79d480d308da5822719b750532dd50f44f29393 skills/cad-record/schemas/assembly.schema.json
 schema-sha256 cabe6a6c934a7ba10522b6c4f3e47e756c972ed60db881dbe515baf7593a84cb skills/cad-record/schemas/bom-row.schema.json
+schema-sha256 cce7a6387838df08c1043f5828275c9a59f6ccd2867709944ceda31ed2223d79 skills/cad-record/schemas/bom-summary.schema.json
 schema-sha256 6868af6519ab519f02414dc1d860de2b33d3757aa39d78d4960530f0b4dbbe28 skills/cad-record/schemas/bundle-manifest.schema.json
 schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 skills/cad-record/schemas/drawing.schema.json
+schema-sha256 6ffce99afd025a980bb99e691f44813b24e9814209a7ae84e64fa9071e5d55bf skills/cad-record/schemas/evidence-digest.schema.json
 schema-sha256 77d09e3d654eef9c216f6cb70465fbca26689edbdc5bf76c70b850c15143484d skills/cad-record/schemas/evidence-run.schema.json
 schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 skills/cad-record/schemas/fea-case.schema.json
 schema-sha256 078be15a80317b69b47fef81c0bfe83b86e1d5b8d4a775feab87ac5c1e8746dd skills/cad-record/schemas/finding.schema.json
@@ -661,6 +663,55 @@ Constraints not expressed by the type:
 - `qty`: minimum: 1
 - `mass`: maximum: 10000000
 - `mass`: exclusiveMinimum: 0
+
+## bom-summary.schema.json
+
+- File: `skills/cad-record/schemas/bom-summary.schema.json`
+- `$id`: `https://srobroek.com/cad/schemas/bom-summary.schema.json`
+
+EBOM roll-up summary (bom.py stdout)
+
+### BomSummary
+
+Source: schema root
+
+**EBOM roll-up summary (bom.py stdout)**
+
+The JSON summary of bom.py. status is fail (exit 1) when the record and the model disagree: a leaf part without part.yaml, a part.yaml absent from the STEP, a leaf product without a PN, or a part whose structured purchase.designation has an invalid field. bom.csv is written either way, and an invalid designation never drops its row
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `status` | `Literal["pass", "fail"]` | yes |  |  |
+| `bom_csv` | `str` | yes |  |  |
+| `rows` | `list[Mapping[str, str]]` | yes |  | the BOM rows as written to bom.csv (bom-row.schema.json describes the record-side row) |
+| `total_qty` | `Mapping[str, int]` | yes |  | PN -> instances in the whole product |
+| `missing_part_yaml` | `list[str]` | yes |  |  |
+| `missing_in_step` | `list[str]` | yes |  |  |
+| `unidentified` | `list[str]` | yes |  |  |
+| `invalid_designation` | `list[BomSummaryDesignationFinding]` | yes |  | one finding per invalid field of a supplied structured designation |
+| `reconciled_against` | `str` | no |  | the built version the BOM was reconciled against (--version) |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- if {"properties":{"status":{"const":"pass"}}} then {"properties":{"missing_part_yaml":{"maxItems":0},"missing_in_step":{"maxItems":0},"unidentified":{"maxItems":0},"invalid_designation":{"maxItems":0}}} else {"anyOf":[{"properties":{"missing_part_yaml":{"minItems":1}}},{"properties":{"missing_in_step":{"minItems":1}}},{"properties":{"unidentified":{"minItems":1}}},{"properties":{"invalid_designation":{"minItems":1}}}]}
+- `total_qty`: additionalProperties.minimum: 1
+
+### BomSummaryDesignationFinding
+
+Source: `/$defs/designation_finding`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `PN` | `str` | yes |  |  |
+| `field` | `str` | yes |  | the part.yaml field, purchase.designation.<name> |
+| `reason` | `str` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `field`: pattern: "^purchase\\.designation(\\..+)?$"
+- `reason`: minLength: 1
 
 ## bundle-manifest.schema.json
 
@@ -1488,6 +1539,83 @@ Constraints not expressed by the type:
 - if {"properties":{"kind":{"const":"detail"}}} then {"required":["feature"]}
 - if {"properties":{"kind":{"enum":["orthographic","auxiliary"]}}} then {"anyOf":[{"required":["normal_to"]},{"required":["along_axis"]},{"required":["parallel_to"]},{"required":["perpendicular_to"]},{"required":["opposite"]}]}
 - `sheet`: minimum: 1
+
+## evidence-digest.schema.json
+
+- File: `skills/cad-record/schemas/evidence-digest.schema.json`
+- `$id`: `https://srobroek.com/cad/schemas/evidence-digest.schema.json`
+
+CAD evidence digest report (evidence.py digest)
+
+### EvidenceDigest
+
+Source: schema root
+
+**CAD evidence digest report (evidence.py digest)**
+
+What `evidence.py digest` prints. ok (exit 0): the acceptance inventory and its evidence_sha256. refused (exit 1): the inventory cannot be formed, so no digest is given; each finding names the record field that cites the file (hw/manufacturing/evidence.yaml#/entries/<id>/artifacts/<n>/path), or the file itself when no field cites it. error (exit 2): a usage or infrastructure failure only
+
+Alias of `EvidenceDigestOneOf0 | EvidenceDigestOneOf1 | EvidenceDigestOneOf2`
+
+### EvidenceDigestFinding
+
+Source: `/$defs/finding`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `path` | `str` | yes |  | the citing record field, or the file |
+| `message` | `str` | yes |  |  |
+| `severity` | `Literal["error"]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `path`: minLength: 1
+- `message`: minLength: 1
+
+### EvidenceDigestOneOf0
+
+Source: `/oneOf/0`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `version` | `str` | yes |  |  |
+| `evidence_sha256` | `str` | yes |  |  |
+| `inventory` | `Mapping[str, str]` | yes |  | hw/<path> -> sha256 of the file |
+| `status` | `Literal["ok"]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `evidence_sha256`: pattern: "^[0-9a-f]{64}$"
+- `inventory`: additionalProperties.pattern: "^[0-9a-f]{64}$"
+
+### EvidenceDigestOneOf1
+
+Source: `/oneOf/1`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `status` | `Literal["refused"]` | yes |  |  |
+| `findings` | `list[EvidenceDigestFinding]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `findings`: minItems: 1
+
+### EvidenceDigestOneOf2
+
+Source: `/oneOf/2`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `status` | `Literal["error"]` | yes |  |  |
+| `message` | `str` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
 
 ## evidence-run.schema.json
 

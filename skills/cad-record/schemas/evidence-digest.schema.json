@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://srobroek.com/cad/schemas/evidence-digest.schema.json",
+  "title": "CAD evidence digest report (evidence.py digest)",
+  "description": "What `evidence.py digest` prints. ok (exit 0): the acceptance inventory and its evidence_sha256. refused (exit 1): the inventory cannot be formed, so no digest is given; each finding names the record field that cites the file (hw/manufacturing/evidence.yaml#/entries/<id>/artifacts/<n>/path), or the file itself when no field cites it. error (exit 2): a usage or infrastructure failure only",
+  "oneOf": [
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "evidence_sha256", "inventory", "status"],
+      "properties": {
+        "version": {"type": "string"},
+        "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "inventory": {"description": "hw/<path> -> sha256 of the file", "type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "status": {"const": "ok"}
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "findings"],
+      "properties": {
+        "status": {"const": "refused"},
+        "findings": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/finding"}}
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "message"],
+      "properties": {"status": {"const": "error"}, "message": {"type": "string"}}
+    }
+  ],
+  "$defs": {
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "message", "severity"],
+      "properties": {
+        "path": {"description": "the citing record field, or the file", "type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1},
+        "severity": {"const": "error"}
+      }
+    }
+  }
+}

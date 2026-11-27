@@ -41,7 +41,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -128,34 +128,128 @@ def require_profile(root: Path, committed: bool, product: dict[str, Any]) -> Non
         raise RuntimeError(gate.refusal(found))
 
 
-def require_gate_decision(root: Path, committed: bool, previous: str, advanced: str, stamp_time: Any) -> None:
-    """Refuse an advance of flow.stage from the stamped stage `previous` to `advanced` unless a decision record of
-    hw/decisions is the gate of that advance: its front matter says `gate: {from: <previous>, to: <advanced>}`, its
-    status is proposed (provisional) or accepted, it is not superseded and it is dated on or after the stamp's UTC
-    day. Any other record, the flow profile among them, is no gate. Reads the index, or HEAD when `committed`; a
-    record cad-record decision_records refuses is a refusal too."""
-    decision_records = validate.decision_records
-    wanted = f"gate: {{from: {previous}, to: {advanced}}}"
-    problem = (f"flow.stage advanced past the stamped stage (gate {previous} → {advanced}) without a decision record "
-               "of the gate")
+class GateFinding(RuntimeError):
+    """A named field blocks verification of the stage advance."""
+
+
+def _stamp_utc_day(stamp_time: Any) -> date:
     try:
         stamped = datetime.fromisoformat(stamp_time)
     except (TypeError, ValueError) as error:
-        raise RuntimeError(f"{problem}: the recheck stamp has no readable timestamp") from error
+        raise GateFinding("timestamp: the recheck stamp needs an ISO timestamp with a time zone") from error
     if stamped.utcoffset() is None:
-        raise RuntimeError(f"{problem}: the recheck stamp timestamp {stamp_time!r} has no time zone offset")
-    stamped_on = stamped.astimezone(timezone.utc).date()
+        raise GateFinding("timestamp: the recheck stamp has no time zone offset")
+    try:
+        return stamped.astimezone(timezone.utc).date()
+    except OverflowError as error:
+        raise GateFinding("timestamp: the recheck stamp is outside the supported UTC date range") from error
+
+
+def _matching_gate_date(records: list[Any], version: str, digest: str, stamped_on: date) -> None:
+    versions = [r for r in records if r.gate_build and r.gate_build[0] == version]
+    if not versions:
+        raise GateFinding(f"gate.version: no decision for the checked version {version!r}")
+    builds = [r for r in versions if r.gate_build[1] == digest]
+    if not builds:
+        raise GateFinding("gate.version_manifest_sha256: no decision for the checked version's manifest digest")
+    if all(r.date > stamped_on for r in builds):
+        raise GateFinding(f"{builds[0].id} date: gate decision is after the stamp's UTC date {stamped_on}")
+
+
+def _checked_build(root: Path, committed: bool, checks: dict[str, Any]) -> tuple[str, str]:
+    version = checks.get("version")
+    if not isinstance(version, str):
+        raise GateFinding("version: the evidence packet must name a built version")
+    try:
+        path = f"{layout.load().path('version.core', {'V': version})}/{layout.MANIFEST}"
+    except layout.LayoutError as error:
+        raise GateFinding("version: the evidence packet must name a built version") from error
+    try:
+        digest = hashlib.sha256(tree_blob(root, path, committed)).hexdigest()
+    except RuntimeError as error:
+        where = "HEAD" if committed else "the index"
+        raise GateFinding(f"version_manifest_sha256: {path} is missing from {where}; track the manifest even if the "
+                          "other build results are ignored") from error
+    if checks.get("version_manifest_sha256") != digest:
+        raise GateFinding(f"version_manifest_sha256: the evidence packet does not match {path}; check the staged build again")
+    return version, digest
+
+
+def _prior_attempt_decisions(root: Path, previous: str, advanced: str) -> set[str]:
+    """Decision IDs already present before the most recent return to the approved stage."""
+    if git("rev-parse", "--is-shallow-repository", cwd=root).strip() == b"true":
+        raise GateFinding("gate.attempt: stage history is shallow; fetch full history before verifying the advance")
+    try:
+        head = git("rev-parse", "--verify", "--quiet", "HEAD", cwd=root).decode().strip()
+    except RuntimeError:
+        return set()
+    history = git("log", "--first-parent", "--format=%H", head, "--", "hw/product.yaml", cwd=root).decode().splitlines()
+    order: list[str] = validate.stages()
+    entered = None
+    for commit in history:
+        raw = _historical_product(root, commit)
+        if raw is None:
+            continue
+        try:
+            product = yaml_loader.safe_load(raw.decode("utf-8"))
+        except (yaml.YAMLError, ValueError, RecursionError):
+            continue
+        flow = product.get("flow") if isinstance(product, dict) else None
+        stage = flow.get("stage") if isinstance(flow, dict) else None
+        if stage not in order:
+            continue
+        if order.index(stage) <= order.index(previous):
+            entered = commit
+        elif entered is not None and order.index(stage) >= order.index(advanced):
+            paths = git("ls-tree", "-r", "--name-only", "-z", f"{entered}^1", "--", "hw/decisions/", cwd=root)
+            pattern = validate.decision_records.FILE_NAME
+            return {f"DR-{match[1]}" for path in paths.decode(errors="surrogateescape").split("\0")
+                    if (match := pattern.fullmatch(Path(path).name)) is not None}
+    return set()
+
+
+def _historical_product(root: Path, commit: str) -> bytes | None:
+    path = "hw/product.yaml"
+    try:
+        return git("show", f"{commit}:./{path}", cwd=root)
+    except RuntimeError as read_error:
+        message = f"gate.attempt: cannot read {path} at {commit}: {read_error}"
+        try:
+            entries = git("ls-tree", "-z", commit, "--", path, cwd=root)
+        except RuntimeError as lookup_error:
+            raise GateFinding(f"{message}; cannot verify path presence: {lookup_error}") from lookup_error
+        if entries:
+            raise GateFinding(message) from read_error
+        return None
+
+
+def require_gate_decision(root: Path, committed: bool, previous: str, advanced: str,
+                          stamp: dict[str, Any], checks: dict[str, Any]) -> None:
+    """Require an unsuperseded decision for this transition and the build checked by the evidence packet."""
+    decision_records = validate.decision_records
+    wanted = f"gate: {{from: {previous}, to: {advanced}}}"
+    stamped_on = _stamp_utc_day(stamp.get("timestamp"))
     with tempfile.TemporaryDirectory() as scratch:
         tree_decisions(root, committed, Path(scratch))
         try:
             records = decision_records.read_decisions(Path(scratch))
         except decision_records.DecisionRecordError as error:
-            raise RuntimeError(f"cannot read the decision records of hw/decisions: {str(error).replace(scratch + '/', '')}") from error
-    if not any(r.gate == (previous, advanced) and r.status in ("proposed", "accepted") and not r.superseded_by
-               and r.date >= stamped_on for r in records):
-        raise RuntimeError(f"{problem}. Record the decision in hw/decisions as a proposed (provisional) or accepted "
-                           f"record with `{wanted}` in its front matter, not superseded, dated {stamped_on} (UTC) "
-                           "or later.")
+            raise GateFinding(f"hw/decisions: {str(error).replace(scratch + '/', '')}") from error
+    candidates = [r for r in records if r.gate == (previous, advanced) and r.status in ("proposed", "accepted")
+                  and not r.superseded_by]
+    if not candidates:
+        raise RuntimeError(f"flow.stage advanced past the stamped stage (gate {previous} → {advanced}) without a decision "
+                           "record of the gate. Record the decision in hw/decisions as a proposed (provisional) or accepted "
+                           f"record with `{wanted}` in its front matter and no `superseded-by`.")
+    if stamp.get("version") != checks.get("version"):
+        raise GateFinding("version: the recheck stamp does not match its evidence packet")
+    version, digest = _checked_build(root, committed, checks)
+    _matching_gate_date(candidates, version, digest, stamped_on)
+    prior_ids = _prior_attempt_decisions(root, previous, advanced)
+    current = [r for r in candidates if r.id not in prior_ids and r.gate_build == (version, digest)
+               and r.date <= stamped_on]
+    if not current:
+        raise GateFinding("gate.attempt: record a new decision for the reopened stage; its earlier approval cannot be reused")
 
 
 def staged_inputs(root: Path, committed: bool = False) -> dict[str, bytes]:
@@ -233,7 +327,17 @@ def staged_product(root: Path, stage: str | None = None) -> dict[str, Any]:
     return product if isinstance(product, dict) else {}
 
 
-def require_clean_layout(root: Path, product: dict[str, Any]) -> None:
+def _committed_version_anchors(root: Path) -> frozenset[str]:
+    members: dict[str, list[str]] = {}
+    for path in tree_paths(root, committed=True):
+        parts = path.split("/")
+        if len(parts) >= 4 and parts[:2] == ["hw", "versions"]:
+            members.setdefault(parts[2], []).append(path)
+    return frozenset(paths[0] for paths in members.values() if len(paths) == 1
+                     and paths[0].endswith(f"/{layout.MANIFEST}") and paths[0].count("/") == 3)
+
+
+def require_clean_layout(root: Path, product: dict[str, Any], *, committed: bool = False) -> None:
     part_records = {}
     for part_path in sorted((root / "hw" / "parts").glob("*/part.yaml")):
         try:
@@ -243,7 +347,8 @@ def require_clean_layout(root: Path, product: dict[str, Any]) -> None:
         if isinstance(part, dict) and isinstance(part.get("PN"), str):
             part_records[part["PN"]] = (part, str(part_path))
     findings: list[dict[str, str]] = []
-    validate.check_layout(root / "hw", product, part_records, findings)
+    anchors = _committed_version_anchors(root) if committed else frozenset()
+    validate.check_layout(root / "hw", product, part_records, findings, version_anchors=anchors)
     blocking = validate.blocking(findings)
     if blocking:
         first = blocking[0]
@@ -441,7 +546,7 @@ def main() -> int:
                 raise RuntimeError("staged hw/product.yaml has a missing or unknown flow.stage")
             if not isinstance(threshold, str) or threshold not in validate.stages():
                 raise RuntimeError("staged hw/product.yaml has a missing or unknown flow.recheck_from")
-            require_clean_layout(root, product)
+            require_clean_layout(root, product, committed=committed)
             if not committed:
                 require_threshold_kept(root, threshold)
             require_profile(root, committed, product)
@@ -468,13 +573,13 @@ def main() -> int:
                 raise RuntimeError(f"the recheck stamp stage {stamped_stage} is below flow.recheck_from {threshold}")
             if record_data.get("passed") is not True:
                 raise RuntimeError("the recheck stamp does not say passed: true")
-            if stamped_stage != current_stage:
-                require_gate_decision(root, committed, stamped_stage, current_stage, record_data.get("timestamp"))
             if record_data.get("tree_hash") != actual_hash:
                 raise RuntimeError("the recheck stamp is stale for the staged hw/ tree")
             checks = record_data.get("checks")
             blocking = require_evidence(checks, staged, stamped_stage)
             stamped = checks if isinstance(checks, dict) else {}
+            if stamped_stage != current_stage:
+                require_gate_decision(root, committed, stamped_stage, current_stage, record_data, stamped)
             if record_data.get("record_sha256") != staged.record_sha256 or \
                     record_data.get("expected_sha256") != stamped.get("expected_sha256"):
                 raise RuntimeError("the recheck stamp does not record the evidence of the staged record; stamp it again")
@@ -487,6 +592,9 @@ def main() -> int:
         data = record(args.stage, checks_path, args.passed, root)
         write_record(data, root)
         print(json.dumps(data, ensure_ascii=False, indent=2))
+    except GateFinding as error:
+        print(f"cad-recheck stamp: {error}", file=sys.stderr)
+        return 1
     except (OSError, RuntimeError) as error:
         print(f"cad-recheck stamp: {error}", file=sys.stderr)
         return 2

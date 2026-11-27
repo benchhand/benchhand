@@ -25,6 +25,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+BINDING_FAILURES = ("feature_not_found", "feature_ambiguous")   # codes of ``resolve`` that leave a feature unusable
 BIND_TOLERANCE_MM = 1e-3      # witness point to face distance: STEP round trip and kernel noise
 NORMAL_AGREEMENT = 0.999      # cosine between the witness normal and the face normal at the point
 GEOMETRY_EPS = 1e-4           # equal coordinates, radii and axes in measured geometry, mm
@@ -340,6 +341,18 @@ class Binding:
     features: Mapping[str, ResolvedFeature]
     owner: Mapping[int, str]                 # face index -> feature id
     findings: tuple[Mapping[str, Any], ...]
+
+    def failed(self) -> frozenset[str]:
+        """Features whose locator matched no face or an ambiguous one, or that bound no face at all."""
+        named = {f.get("feature") for f in self.findings if f["code"] in BINDING_FAILURES}
+        return frozenset(i for i, feature in self.features.items() if i in named or not feature.faces)
+
+    def usable(self) -> Binding:
+        """The binding without its failed features, so no lookup of a feature's faces meets an empty or partial one.
+        The findings stay: each failed feature is still named there."""
+        failed = self.failed()
+        return Binding({i: f for i, f in self.features.items() if i not in failed},
+                       {face: owner for face, owner in self.owner.items() if owner not in failed}, self.findings)
 
 
 def resolve(locators: Mapping[str, Mapping[str, Any]], bound: Mapping[str, Sequence[Sequence[int]]],

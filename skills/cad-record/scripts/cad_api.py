@@ -6,8 +6,10 @@
 # schema-sha256 cc2ca1a50d093d0dc81975cf82020b5295f7a13043cf0bde3e5e83877f315d6c skills/cad-concept/assets/schemas/handoff.schema.json
 # schema-sha256 af028b167db678d5093a25bbf79d480d308da5822719b750532dd50f44f29393 skills/cad-record/schemas/assembly.schema.json
 # schema-sha256 cabe6a6c934a7ba10522b6c4f3e47e756c972ed60db881dbe515baf7593a84cb skills/cad-record/schemas/bom-row.schema.json
+# schema-sha256 cce7a6387838df08c1043f5828275c9a59f6ccd2867709944ceda31ed2223d79 skills/cad-record/schemas/bom-summary.schema.json
 # schema-sha256 6868af6519ab519f02414dc1d860de2b33d3757aa39d78d4960530f0b4dbbe28 skills/cad-record/schemas/bundle-manifest.schema.json
 # schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 skills/cad-record/schemas/drawing.schema.json
+# schema-sha256 6ffce99afd025a980bb99e691f44813b24e9814209a7ae84e64fa9071e5d55bf skills/cad-record/schemas/evidence-digest.schema.json
 # schema-sha256 77d09e3d654eef9c216f6cb70465fbca26689edbdc5bf76c70b850c15143484d skills/cad-record/schemas/evidence-run.schema.json
 # schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 skills/cad-record/schemas/fea-case.schema.json
 # schema-sha256 078be15a80317b69b47fef81c0bfe83b86e1d5b8d4a775feab87ac5c1e8746dd skills/cad-record/schemas/finding.schema.json
@@ -78,6 +80,8 @@ __all__ = [
     "AssemblyTorquePath",
     "AssemblyVector",
     "BomRow",
+    "BomSummary",
+    "BomSummaryDesignationFinding",
     "BundleManifest",
     "BundleManifestReplacesOneOf1",
     "BundleManifestSha256",
@@ -140,6 +144,11 @@ __all__ = [
     "DrawingTolerancePolicyOneOf0",
     "DrawingTolerancePolicyOneOf1",
     "DrawingView",
+    "EvidenceDigest",
+    "EvidenceDigestFinding",
+    "EvidenceDigestOneOf0",
+    "EvidenceDigestOneOf1",
+    "EvidenceDigestOneOf2",
     "EvidenceRun",
     "EvidenceRunSha256OrNull",
     "EvidenceRunStep",
@@ -1296,6 +1305,49 @@ class BomRow(TypedDict):
     specification_rev: NotRequired[str | None]
 
 
+class BomSummaryDesignationFinding(TypedDict):
+    """Source: skills/cad-record/schemas/bom-summary.schema.json#/$defs/designation_finding
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - field: the part.yaml field, purchase.designation.<name>; pattern: "^purchase\\\\.designation(\\\\..+)?$"
+    - reason: minLength: 1
+    """
+    PN: Required[str]
+    field: Required[str]
+    reason: Required[str]
+
+
+class BomSummary(TypedDict):
+    """EBOM roll-up summary (bom.py stdout)
+
+    The JSON summary of bom.py. status is fail (exit 1) when the record and the model disagree: a leaf part without part.yaml, a part.yaml absent from the STEP, a leaf product without a PN, or a part whose structured purchase.designation has an invalid field. bom.csv is written either way, and an invalid designation never drops its row
+
+    Source: skills/cad-record/schemas/bom-summary.schema.json#
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    - if {"properties":{"status":{"const":"pass"}}} then {"properties":{"missing_part_yaml":{"maxItems":0},"missing_in_step":{"maxItems":0},"unidentified":{"maxItems":0},"invalid_designation":{"maxItems":0}}} else {"anyOf":[{"properties":{"missing_part_yaml":{"minItems":1}}},{"properties":{"missing_in_step":{"minItems":1}}},{"properties":{"unidentified":{"minItems":1}}},{"properties":{"invalid_designation":{"minItems":1}}}]}
+
+    Field notes:
+    - rows: the BOM rows as written to bom.csv (bom-row.schema.json describes the record-side row)
+    - total_qty: PN -> instances in the whole product; additionalProperties.minimum: 1
+    - invalid_designation: one finding per invalid field of a supplied structured designation
+    - reconciled_against: the built version the BOM was reconciled against (--version)
+    """
+    status: Required[Literal["pass", "fail"]]
+    bom_csv: Required[str]
+    rows: Required[list[Mapping[str, str]]]
+    total_qty: Required[Mapping[str, int]]
+    missing_part_yaml: Required[list[str]]
+    missing_in_step: Required[list[str]]
+    unidentified: Required[list[str]]
+    invalid_designation: Required[list[BomSummaryDesignationFinding]]
+    reconciled_against: NotRequired[str]
+
+
 # Source: skills/cad-record/schemas/bundle-manifest.schema.json#/$defs/sha256
 #
 # Not expressible as types (see the schema):
@@ -2199,6 +2251,68 @@ class DrawingProductDrawing(TypedDict):
     default_sheet: Required[DrawingProductDrawingDefaultSheet]
     tolerance_policies: Required[Mapping[str, DrawingTolerancePolicy]]
     general_tolerance_policy: Required[DrawingPolicyName]
+
+
+class EvidenceDigestOneOf0(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-digest.schema.json#/oneOf/0
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - evidence_sha256: pattern: "^[0-9a-f]{64}$"
+    - inventory: hw/<path> -> sha256 of the file; additionalProperties.pattern: "^[0-9a-f]{64}$"
+    """
+    version: Required[str]
+    evidence_sha256: Required[str]
+    inventory: Required[Mapping[str, str]]
+    status: Required[Literal["ok"]]
+
+
+class EvidenceDigestFinding(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-digest.schema.json#/$defs/finding
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - path: the citing record field, or the file; minLength: 1
+    - message: minLength: 1
+    """
+    path: Required[str]
+    message: Required[str]
+    severity: Required[Literal["error"]]
+
+
+class EvidenceDigestOneOf1(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-digest.schema.json#/oneOf/1
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - findings: minItems: 1
+    """
+    status: Required[Literal["refused"]]
+    findings: Required[list[EvidenceDigestFinding]]
+
+
+class EvidenceDigestOneOf2(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-digest.schema.json#/oneOf/2
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    status: Required[Literal["error"]]
+    message: Required[str]
+
+
+# CAD evidence digest report (evidence.py digest)
+#
+# What `evidence.py digest` prints. ok (exit 0): the acceptance inventory and its evidence_sha256. refused (exit 1): the inventory cannot be formed, so no digest is given; each finding names the record field that cites the file (hw/manufacturing/evidence.yaml#/entries/<id>/artifacts/<n>/path), or the file itself when no field cites it. error (exit 2): a usage or infrastructure failure only
+#
+# Source: skills/cad-record/schemas/evidence-digest.schema.json#
+EvidenceDigest = EvidenceDigestOneOf0 | EvidenceDigestOneOf1 | EvidenceDigestOneOf2
 
 
 # Source: skills/cad-record/schemas/evidence-run.schema.json#/$defs/sha256_or_null

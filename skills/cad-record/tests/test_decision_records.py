@@ -177,10 +177,21 @@ class WriteTests(Base):
         self.assertNotIn("gate", yaml.safe_load(path.read_text(encoding="utf-8").split("---\n")[1]))
         self.assertIsNone(dr.read_decision(path).gate)
 
+    def test_gate_build_round_trips_in_front_matter(self) -> None:
+        digest = "a1" * 32
+        path = dr.write_decision(self.dir, **MINIMAL, gate=("layout", "parts"), gate_build=("v12", digest))
+        front = yaml.safe_load(path.read_text(encoding="utf-8").split("---\n")[1])
+        self.assertEqual(front["gate"], {"from": "layout", "to": "parts", "version": "v12",
+                                        "version_manifest_sha256": digest})
+        self.assertEqual(dr.read_decision(path).gate_build, ("v12", digest))
+
     def test_a_malformed_gate_is_refused_naming_the_file_and_the_key(self) -> None:
         for label, value in (("a scalar", "layout"), ("a list", "[layout, parts]"), ("without to", "{from: layout}"),
                              ("an unknown stage", "{from: layout, to: nowhere}"),
                              ("an extra key", "{from: layout, to: parts, via: x}"),
+                             ("only one build field", "{from: layout, to: parts, version: v1}"),
+                             ("bad version", f"{{from: layout, to: parts, version: latest, version_manifest_sha256: '{'a' * 64}'}}"),
+                             ("short digest", "{from: layout, to: parts, version: v1, version_manifest_sha256: abc}"),
                              ("a number", "{from: 3, to: parts}"), ("a null", "null"),
                              ("equal ends", "{from: layout, to: layout}")):
             path = self.put("DR-001-gate.md", document(f"status: accepted\ndate: 2026-10-26\ngate: {value}\n"))

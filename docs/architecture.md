@@ -82,7 +82,7 @@ Host scripts run on Python 3.12 or later. FreeCAD jobs run inside `freecadcmd`, 
 2. **Check.** `evidence.py run --scope commit` runs the fail-fast order: `validate.py`, the form check, `cad_model.py check --changed-only`, the smoke sweep, then `cad-render` with its visibility check. After a provisional gate, `--scope full` runs every pair and the full sweep (`skills/cad-flow/SKILL.md`, step 5).
 3. **Analysis.** At L4 the analyst agent runs the sweep, the stack-up, FEA at the worst pose and motion cases. `cad-motion` supplies the worst-case pose and `cad-analysis` runs the FEA.
 4. **Drawings and BOM.** `cad-bom` rolls up `bom.csv`. At L3 and release `cad-drawings` drafts and publishes drawings through FreeCAD.
-5. **Record and recheck.** The lead keeps gate evidence in `hw/`. `evidence.py check` writes the gate packet, and `cad-recheck` `stamp.py` stamps it into `hw/.cad/recheck.json`. `stamp.py --verify` runs before each commit of `hw/` changes: exit 2 blocks the commit (`skills/cad-recheck/SKILL.md`).
+5. **Record and recheck.** The lead keeps gate evidence in `hw/`. `evidence.py check` writes the gate packet, and `cad-recheck` `stamp.py` stamps it into `hw/.cad/recheck.json`. `stamp.py --verify` runs before each commit of `hw/` changes. Every nonzero result blocks the commit (`skills/cad-recheck/SKILL.md`).
 6. **Release.** `release.py` runs only after the RELEASE gate approves. The result is a CAD-only release: STEP AP242, drawings, EBOM, verification matrix and documentation. The release holds no slicer, CAM or machine output.
 
 Delegation to the agent profiles is in the table of `skills/cad-flow/SKILL.md`. At most three writer units run at once.

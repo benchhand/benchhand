@@ -24,7 +24,8 @@ records = load_module("cad_record_decision_records", SCRIPTS / "decision_records
 
 def write_test_decision(hw: Path, ident: str, *, status: str = "accepted", title: str | None = None,
                         context: str = "A test decision.", date: datetime.date = datetime.date(2026, 1, 1),
-                        superseded_by: tuple[str, ...] = (), gate: tuple[str, str] | None = None) -> Path:
+                        superseded_by: tuple[str, ...] = (), gate: tuple[str, str] | None = None,
+                        gate_build: tuple[str, str] | None = None) -> Path:
     """`hw`/decisions/`ident`-slug.md with the given MADR status and date, replacing an earlier record of that id.
     A record named in `superseded_by` must exist already. `gate` is the (from, to) stage advance it approves."""
     folder = Path(hw) / "decisions"
@@ -33,7 +34,7 @@ def write_test_decision(hw: Path, ident: str, *, status: str = "accepted", title
     return records.write_decision(
         folder, number=int(ident.removeprefix("DR-")), title=title or f"Test decision {ident}", status=status,
         date=date, context=context, options=("The test option",), chosen="The test option",
-        justification="the test needs a record", superseded_by=superseded_by, gate=gate)
+        justification="the test needs a record", superseded_by=superseded_by, gate=gate, gate_build=gate_build)
 
 
 def decision_path(hw: Path, ident: str) -> Path:

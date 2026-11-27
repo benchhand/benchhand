@@ -546,7 +546,7 @@ sys.exit(code)
         model.write_text(original.replace('"length": 30.0,', '"length": 31.0,'), encoding="utf-8")
         try:
             build = run(UV, "run", "--script", str(CAD_MODEL), "run", str(self.hw), "--label", "v2", "--kernel", "auto")
-            self.assertEqual(build.returncode, 0, build.stdout[-2000:])
+            self.assertEqual(build.returncode, 0, build.stdout[-2000:] + build.stderr[-2000:])
             code, result = self.draw("v2", "longer")
         finally:
             model.write_text(original, encoding="utf-8")
@@ -554,6 +554,32 @@ sys.exit(code)
         coverage = json.loads((Path(result["output_dir"]) / "coverage.json").read_text(encoding="utf-8"))
         tip = next(row for row in coverage["rows"] if row["characteristic"] == "tip_face.location")
         self.assertAlmostEqual(abs(tip["value_mm"]), 31.0, places=6)
+
+    def test_stale_locator_on_one_patch_fails_with_a_named_finding_not_an_error(self) -> None:
+        """A bracket revision moved one patch each of the groove and the tip chamfer off every face: exit 1, both named."""
+        model = self.hw / "parts" / "LMP-0005" / "model.py"
+        original = model.read_text(encoding="utf-8")
+        hook = "            features.setdefault(name, []).append(patch)\n"
+        self.assertIn(hook, original)
+        model.write_text(original.replace(hook, hook + (
+            '            if name in ("groove", "tip_chamfer") and len(features[name]) == 1:\n'
+            '                features[name].append({**patch, "point_mm": [c + 100.0 for c in patch["point_mm"]]})\n')),
+            encoding="utf-8")
+        try:
+            build = run(UV, "run", "--script", str(CAD_MODEL), "run", str(self.hw), "--label", "v3", "--kernel", "auto")
+            self.assertEqual(build.returncode, 0, build.stdout[-2000:] + build.stderr[-2000:])
+            code, result = self.draw("v3", "stale")
+        finally:
+            model.write_text(original, encoding="utf-8")
+        self.assertEqual((code, result["status"]), (1, "fail"), result)
+        self.assertEqual(result["error"]["code"], "feature_not_found", result)   # the sheet's detail view of it
+        self.assertIn("groove", result["error"]["message"])
+        named = {f.get("feature") for f in result["coverage"]["findings"] if f["code"] == "feature_not_found"}
+        self.assertLessEqual({"groove", "tip_chamfer"}, named, result["coverage"]["findings"])   # the view error hides none
+        measured = {f["feature"] for f in result["coverage"]["findings"]
+                    if f["code"] == "feature_not_found" and f["message"].startswith("drawing.features names ")}
+        # the measurement findings, not the binding's; their wording on the cause is x6h.18's, not asserted here
+        self.assertLessEqual({"groove", "tip_chamfer"}, measured, result["coverage"]["findings"])
 
     def test_vendor_sheet_controls_only_the_specification_limits(self) -> None:
         code, result = self.draw("v1", "vendor", "LMP-0009")
