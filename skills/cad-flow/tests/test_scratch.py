@@ -1027,6 +1027,34 @@ class Sync(ScratchCase):
         self.assertEqual(list(scratch_hw.parent.glob("sync-*")), [])
         self.assertEqual((scratch_hw / "interfaces.yaml").read_bytes(), original)
 
+    def test_init_with_a_linked_lead_cache_finishes_unseeded_with_a_note(self) -> None:
+        outside = self.outside()
+        stored = outside / "cache" / "objects" / ("a" * 64)
+        stored.parent.mkdir(parents=True)
+        stored.write_text("elsewhere\n", encoding="utf-8")
+        (self.hw / ".cad").mkdir()
+        (self.hw / ".cad" / "cache").symlink_to(outside / "cache")
+        report = self.init("unit-a", "PRT-0001")
+        self.assertEqual((report["status"], report["seeded_store_files"]), ("created", 0), report)
+        self.assertTrue(any("symlink" in note for note in report["info"]), report)
+        scratch_hw = Path(report["scratch_hw"])
+        self.assertTrue((scratch_hw.parent / "baseline.json").is_file())
+        self.assertFalse((scratch_hw / ".cad" / "cache").exists())
+
+    def test_a_refused_init_leaves_nothing_half_made_and_keeps_a_workspace_it_would_replace(self) -> None:
+        module = load_scratch()
+        refuse = mock.patch.object(module, "seed_store", side_effect=module.UsageError("refused"))
+        with refuse, self.assertRaises(module.UsageError):
+            module.init(self.hw.resolve(), "unit-a", ["PRT-0001"], False)
+        work_root = self.project / ".cad-work"
+        self.assertEqual([p.name for p in work_root.iterdir() if p.name != ".gitignore"] if work_root.exists() else [], [])
+        scratch_hw = Path(self.init("unit-b", "PRT-0001")["scratch_hw"])
+        before = self.scratch_state(scratch_hw)
+        with refuse, self.assertRaises(module.UsageError):
+            module.init(self.hw.resolve(), "unit-b", ["PRT-0001"], True)
+        self.assertEqual(self.scratch_state(scratch_hw), before)
+        self.assertEqual(sorted(p.name for p in (self.project / ".cad-work").iterdir() if p.name != ".gitignore"), ["unit-b"])
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
