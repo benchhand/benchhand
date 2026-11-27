@@ -1349,24 +1349,46 @@ def record_inputs(hw: Path) -> dict[str, bytes]:
 CAPABILITIES_REL = "manufacturing/capabilities.yaml"
 
 
+def _typed(node: Any) -> Any:
+    """A YAML node as JSON that keeps what a reader tells apart: each scalar with its resolved tag (a quoted 2026-12-31 is
+    a str, a bare one a timestamp), each mapping as its pairs in document order (a duplicate key stays visible)."""
+    yaml = yaml_loader.yaml
+    if isinstance(node, yaml.ScalarNode):
+        return ["s", node.tag, node.value]
+    if isinstance(node, yaml.SequenceNode):
+        return ["q", node.tag, [_typed(item) for item in node.value]]
+    return ["m", node.tag, [[_typed(key), _typed(value)] for key, value in node.value]]
+
+
 def digest_form(rel: str, data: bytes) -> bytes:
     """The bytes of record input `rel` that a freshness digest covers: its own, except that capabilities.yaml is read
-    as data without any profile's calibration_state, which is wording only (no check reads it, and no outcome moves with
-    it), so recording or editing one never stales a packet or a stamp. Every other edit still changes it. A file that does
-    not parse as a profile mapping stays as it is."""
+    as typed YAML nodes without any profile's calibration_state, which is wording only (no check reads it, and no outcome
+    moves with it), so recording or editing one never stales a packet or a stamp. Every other edit changes it, a quoted
+    date from a bare one and a duplicate key included; only comments and layout do not count. A file that does not parse
+    as a document with a profiles list stays as it is."""
     if rel != CAPABILITIES_REL:
         return data
+    yaml = yaml_loader.yaml
     try:
-        document = yaml_loader.safe_load(data.decode("utf-8"))
-    except (UnicodeError, ValueError, yaml_loader.yaml.YAMLError):
+        root = yaml.compose(data.decode("utf-8"), Loader=yaml.SafeLoader)
+        if not isinstance(root, yaml.MappingNode):
+            return data
+        pairs = []
+        found = False
+        for key, value in root.value:
+            if isinstance(key, yaml.ScalarNode) and key.value == "profiles" and isinstance(value, yaml.SequenceNode):
+                found = True
+                value = yaml.SequenceNode(value.tag, [
+                    yaml.MappingNode(item.tag, [(k, v) for k, v in item.value
+                                                if not (isinstance(k, yaml.ScalarNode) and k.value == "calibration_state")])
+                    if isinstance(item, yaml.MappingNode) else item for item in value.value])
+            pairs.append((key, value))
+        if not found:
+            return data
+        typed = _typed(yaml.MappingNode(root.tag, pairs))
+    except (UnicodeError, ValueError, RecursionError, yaml.YAMLError):
         return data
-    if not isinstance(document, Mapping) or not isinstance(document.get("profiles"), list):
-        return data
-    profiles = [{k: v for k, v in item.items() if k != "calibration_state"} if isinstance(item, Mapping) else item
-                for item in document["profiles"]]
-    neutral = {**document, "profiles": profiles}
-    return b"capabilities-without-calibration-state:" + json.dumps(
-        neutral, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")
+    return b"capabilities-without-calibration-state:" + json.dumps(typed, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 def record_digest(files: Mapping[str, bytes]) -> str:
