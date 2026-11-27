@@ -88,6 +88,32 @@ class Replicas(unittest.TestCase):
             self.assertEqual([f["code"] for f in boss], ["dimension_coverage_incomplete"], boss)
             self.assertIn("not normal to a frame axis", boss[0]["message"])
 
+REAL_UNITS = os.environ.get("CAD_REAL_UNITS")
+REAL_PARTS = os.environ.get("CAD_REAL_UNITS_PARTS", "")
+
+
+@unittest.skipUnless(REAL_UNITS and REAL_PARTS and base.FREECAD_PRESENT and base.UV,
+                     "opt-in: set CAD_REAL_UNITS to a project's hw path and CAD_REAL_UNITS_PARTS to 'PN:label ...' "
+                     "(for example 'GHA-0001:v3 VSE-0005:v6'); needs FreeCAD and uv")
+class RealUnits(unittest.TestCase):
+    """The real units are drawn in place, read only: the output goes to a scratch folder, never into the project.
+
+    Their rows are not goldens (the units move); what must hold is that the tool answers with a result and named
+    findings, never a traceback or exit 2."""
+
+    def test_each_named_unit_is_drawn_without_a_crash_or_an_unnamed_finding(self) -> None:
+        for spec in REAL_PARTS.split():
+            pn, label = spec.split(":")
+            with self.subTest(unit=spec), tempfile.TemporaryDirectory(prefix="cad-real-unit-") as scratch:
+                proc = base.run(base.UV, "run", "--script", str(base.DRAWING), str(REAL_UNITS), "--version", label,
+                                "--part", pn, "--output-dir", str(Path(scratch) / ".cad-work" / "out"), timeout=1800)
+                self.assertIn(proc.returncode, (0, 1), proc.stderr[-3000:])
+                self.assertNotIn("Traceback", proc.stderr)
+                result = json.loads(proc.stdout)["parts"][0]
+                self.assertIn(result["status"], ("pass", "fail"), result)
+                for item in result.get("findings", []):
+                    self.assertTrue(item.get("code"), item)
+
 
 if __name__ == "__main__":
     unittest.main()
