@@ -757,6 +757,28 @@ class Sync(ScratchCase):
         self.assertFalse((scratch_hw.parent / "sync.pending").exists())
         self.deliver_and_expect_no_proposal("unit-a")
 
+    def test_a_lead_file_over_an_untouched_directory_replaces_it_and_deliver_proposes_nothing(self) -> None:
+        (self.hw / "notes").mkdir()
+        (self.hw / "notes" / "a.txt").write_text("lead note\n", encoding="utf-8")
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        shutil.rmtree(self.hw / "notes")
+        (self.hw / "notes").write_text("the lead now keeps one file\n", encoding="utf-8")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"], report["added"], report["removed"]),
+                         (0, "synced", ["notes"], ["notes/a.txt"]), report)
+        self.assertEqual((scratch_hw / "notes").read_text(encoding="utf-8"), "the lead now keeps one file\n")
+        self.deliver_and_expect_no_proposal("unit-a")
+
+    def test_a_lead_file_over_an_empty_scratch_directory_is_a_conflict(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        (scratch_hw / "notes").mkdir()
+        (self.hw / "notes").write_text("the lead's file\n", encoding="utf-8")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"], report["conflicts"]), (1, "conflict", ["notes"]), report)
+        self.assertTrue((scratch_hw / "notes").is_dir())
+        baseline = json.loads((scratch_hw.parent / "baseline.json").read_text(encoding="utf-8"))
+        self.assertNotIn("notes", baseline["files"])
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
