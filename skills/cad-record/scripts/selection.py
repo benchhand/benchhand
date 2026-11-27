@@ -1427,14 +1427,14 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
         statuses.append("blocked")
     report["status"] = ("blocked" if "blocked" in statuses else "conditional" if "conditional" in statuses else "final_ready")
     report["coverage"] = _coverage(record, report["decisions"])
-    if report["status"] == "final_ready" and _unselected_findings(findings, report["coverage"]):
+    if _unselected_findings(findings, report["coverage"]) and report["status"] == "final_ready":
         report["status"] = "conditional"
     return report
 
 
 def _unselected_findings(findings: _Findings, coverage: Mapping[str, Any]) -> bool:
-    """A finding for each made part that no chosen candidate covers: its material and process are not chosen, so the
-    selection is not final. True when one is found."""
+    """A finding for each made part that no chosen candidate covers, whatever the report's status: its material and
+    process are not chosen, so the selection cannot be final. True when one is found."""
     for pn in coverage["unselected"]:
         findings.add("selection.part_unselected", pn, {"PN": pn}, "major", "unknown",
                      measured=_unknown(f"no chosen candidate names {pn}"),
