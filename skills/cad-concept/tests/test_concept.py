@@ -630,7 +630,7 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
 class ViewerOfflineInBrowser(unittest.TestCase):
     """A tab whose server is gone for good goes offline within the reconnect budget, not "Reconnecting" forever."""
 
-    BUDGET_S = 12  # the viewer gives up after five failed reconnects, about five seconds at the 1 s retry delay
+    BUDGET_S = 12  # the viewer gives up after RECONNECT_BUDGET_MS (8 s) of failed reconnects
 
     def setUp(self) -> None:
         require_browser(self)

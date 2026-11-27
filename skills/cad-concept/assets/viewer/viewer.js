@@ -591,15 +591,27 @@ async function load(reason) {
   }
 }
 
+// A stream that has been failing this long with no `hello` is treated as gone for good: the browser's own retry
+// never stops, so without a limit a tab whose server is down reads "Reconnecting" forever. A time budget, not an
+// error count: browsers differ in how many error events a refused reconnect fires.
+const RECONNECT_BUDGET_MS = 8000;
+
 function connectLive() {
   const events = new EventSource("/events");
+  let giveUp = null;
   events.addEventListener("hello", () => {
+    clearTimeout(giveUp);
+    giveUp = null;
     ui.live.dataset.state = "live";
     ui.live.textContent = "Live";
   });
   events.addEventListener("error", () => {
     ui.live.dataset.state = "offline";
     ui.live.textContent = "Reconnecting";
+    giveUp ??= setTimeout(() => {
+      events.close();
+      ui.live.textContent = "Offline";
+    }, RECONNECT_BUDGET_MS);
   });
   events.addEventListener("change", (event) => {
     const { files } = JSON.parse(event.data);
