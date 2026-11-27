@@ -305,7 +305,7 @@ class TierSourceTests(GeneratorCopyCase):
     def test_researcher_is_blocked_only_while_no_readable_local_source_exists(self) -> None:
         self.generate()
         text = (self.cad / "harness/claude/agents/cad-sourcing-researcher.md").read_text(encoding="utf-8")
-        self.assertIn("BLOCKED only while", text)
+        self.assertIn("`RESULT: BLOCKED` only while", text)
         self.assertIn("Once the lead has stored a readable local source", text)
 
     def test_non_cheap_tier_is_allowed_on_a_reviewer(self) -> None:
