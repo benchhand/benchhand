@@ -445,11 +445,13 @@ class RecheckHookTests(unittest.TestCase):
             return real_git(*args, cwd=cwd)
 
         stderr = io.StringIO()
-        with patch.object(stamp_module, "git", side_effect=git), patch.object(sys, "argv", [str(STAMP), "--verify", "--hw", str(self.root / "hw")]), redirect_stderr(stderr):
+        argv = [str(STAMP), "--verify", "--hw", str(self.root / "hw")]
+        with patch.object(stamp_module, "git", side_effect=git), patch.object(sys, "argv", argv), redirect_stderr(stderr):
             code = stamp_module.main()
         self.assertEqual(code, 1, stderr.getvalue())
         self.assertIn("gate.attempt:", stderr.getvalue())
         self.assertIn(previous, stderr.getvalue())
+        self.assertIn("hw/product.yaml", stderr.getvalue())
 
     def test_worktree_only_manifest_cannot_authorize_the_advance(self) -> None:
         self.provisional_gate("parts", decision="accepted")

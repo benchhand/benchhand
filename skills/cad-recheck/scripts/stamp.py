@@ -187,9 +187,12 @@ def _prior_attempt_decisions(root: Path, previous: str, advanced: str) -> set[st
     order: list[str] = validate.stages()
     entered = None
     for commit in history:
+        raw = _historical_product(root, commit)
+        if raw is None:
+            continue
         try:
-            product = yaml_loader.safe_load(git("show", f"{commit}:./hw/product.yaml", cwd=root).decode("utf-8"))
-        except (RuntimeError, yaml.YAMLError, ValueError, RecursionError):
+            product = yaml_loader.safe_load(raw.decode("utf-8"))
+        except (yaml.YAMLError, ValueError, RecursionError):
             continue
         flow = product.get("flow") if isinstance(product, dict) else None
         stage = flow.get("stage") if isinstance(flow, dict) else None
@@ -203,6 +206,21 @@ def _prior_attempt_decisions(root: Path, previous: str, advanced: str) -> set[st
             return {f"DR-{match[1]}" for path in paths.decode(errors="surrogateescape").split("\0")
                     if (match := pattern.fullmatch(Path(path).name)) is not None}
     return set()
+
+
+def _historical_product(root: Path, commit: str) -> bytes | None:
+    path = "hw/product.yaml"
+    try:
+        return git("show", f"{commit}:./{path}", cwd=root)
+    except RuntimeError as read_error:
+        message = f"gate.attempt: cannot read {path} at {commit}: {read_error}"
+        try:
+            entries = git("ls-tree", "-z", commit, "--", path, cwd=root)
+        except RuntimeError as lookup_error:
+            raise GateFinding(f"{message}; cannot verify path presence: {lookup_error}") from lookup_error
+        if entries:
+            raise GateFinding(message) from read_error
+        return None
 
 
 def require_gate_decision(root: Path, committed: bool, previous: str, advanced: str,
