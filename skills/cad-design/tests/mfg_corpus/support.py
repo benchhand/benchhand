@@ -138,7 +138,7 @@ TODAY = date(2026, 6, 1)
 
 def printed_record(supports: Mapping[str, Any] | None = None, *, standard_state: bool = False) -> tuple[Any, Any]:
     """(the record, the process_checks module) of one printed part on the TEST profile, with the support plan the record asks for.
-    `standard_state` empties the profile's calibrations and records calibration_state standard: the shipped guidelines govern."""
+    `standard_state` empties the profile's calibrations, records calibration_state standard and a 0.4 mm nozzle: the shipped guidelines govern."""
     import tempfile
 
     require("yaml")
@@ -160,6 +160,8 @@ def printed_record(supports: Mapping[str, Any] | None = None, *, standard_state:
     if standard_state:
         capabilities[0]["calibrations"] = []
         capabilities[0]["calibration_state"] = fx.calibration_state("standard")
+        capabilities[0]["parameters"] = {"nozzle_diameter": fx.known(fx.quantity(0.4), "supplier_typical",
+                                                                    [fx.source("datasheet", "TEST printer datasheet")])}
     documents = fx.record(parts=[part], capabilities=capabilities, materials=capability_profile.materials())
     with tempfile.TemporaryDirectory() as tmp:
         hw = fx.write_record(Path(tmp) / "project" / "hw", documents)
