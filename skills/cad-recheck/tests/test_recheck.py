@@ -935,6 +935,30 @@ class RecheckHookTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("stamp is stale", result.stderr)
 
+    def stage_capabilities(self, **changes: Any) -> None:
+        profile = {**fx.capability_profile("tst_printer", "fdm"), **changes}
+        path = self.root / "hw" / "manufacturing" / "capabilities.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"profiles": [profile]}, indent=1) + "\n", encoding="utf-8")
+        self.git("add", "hw/manufacturing/capabilities.yaml")
+
+    def test_recording_a_calibration_state_keeps_the_stamp_and_its_packet_current(self) -> None:
+        self.stage_product("detail")
+        self.stage_capabilities()
+        self.stamp(passed=True, stage="detail")
+        self.stage_capabilities(calibration_state=fx.calibration_state("standard"))
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_neighbouring_capability_edit_still_makes_the_stamp_stale(self) -> None:
+        self.stage_product("detail")
+        self.stage_capabilities()
+        self.stamp(passed=True, stage="detail")
+        self.stage_capabilities(calibration_state=fx.calibration_state("standard"), title="Edited printer")
+        result = self.verify()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stale", result.stderr)
+
     def run_report(self, packet: Path | None, status: str = "pass") -> Path:
         """An `evidence.py run` report around the evidence packet in `packet` (null when the run stopped)."""
         report = {"kind": "cad-evidence-run", "schema_version": 1, "status": status, "scope": "commit", "stage": "detail",

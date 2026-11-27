@@ -1713,5 +1713,25 @@ class EvidenceRunCli(BuiltRecord):
         self.assertIsNone(sleeper.poll(), "the run signals no stray")
 
 
+
+class RecordDigestStateTests(unittest.TestCase):
+    """A calibration_state is wording: it never moves the record digest a packet records. Every other edit does."""
+
+    @staticmethod
+    def files(**changes: Any) -> dict[str, bytes]:
+        profile = {**fx.capability_profile("tst_printer", "fdm"), **changes}
+        return {"manufacturing/capabilities.yaml": json.dumps({"profiles": [profile]}).encode("utf-8"),
+                "product.yaml": b"record_version: 2\n"}
+
+    def test_adding_a_calibration_state_keeps_the_record_digest(self) -> None:
+        self.assertEqual(evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard"))),
+                         evidence.record_digest(self.files()))
+
+    def test_any_other_capability_edit_changes_the_record_digest(self) -> None:
+        stated = evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard")))
+        self.assertNotEqual(evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard"), title="Other")), stated)
+        self.assertNotEqual(evidence.record_digest(self.files(provider="outsourced")), evidence.record_digest(self.files()))
+
+
 if __name__ == "__main__":
     unittest.main()
