@@ -917,6 +917,37 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(tree_digest(hw), before)
 
 
+class ReviewedRegressionsThroughTheCli(unittest.TestCase):
+    """The regressions of the review rounds, judged through `selection.py <project> --json` alone: the real exit code and
+    the named finding, evaluation or proposal of the printed report, with expectations worked out from the scenarios."""
+
+    def cli(self, documents: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        hw = write(self, documents)
+        result = subprocess.run([sys.executable, "-B", str(SCRIPT), str(hw.parent), "--json"], capture_output=True, text=True,
+                                check=False)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        return result.returncode, json.loads(result.stdout)
+
+    def test_a_recorded_cut_whose_stock_is_unknown_is_not_the_route_a_candidate_proposes(self) -> None:
+        """The record cuts TST-0501 on stock whose thickness and coating it leaves unknown. sheet_frame declares 3 mm
+        uncoated stock: that is a proposal, never the recorded route, and the proposal names the unknown stock."""
+        documents = scenarios.plate_frame_options()
+        steps = selection_candidate(documents, "sheet_frame")["parts"][0]["route"]
+        part = scenarios.made_part("TST-0501", "Frame", "laser", "tst_metal_q_sheet", "tst_laser")
+        part["intent"]["route"] = [fx.operation("cut", "laser", "tst_laser", setup={"stock": {
+            "thickness": fx.unknown("never measured"), "coating": fx.unknown("never recorded")}})] + [
+            fx.operation(f"step_{index}", step["kind"], step.get("capability")) for index, step in enumerate(steps[1:], 1)]
+        documents["parts/TST-0501/part.yaml"] = part
+        recorded = documents["manufacturing/selection.yaml"]
+        recorded["candidates"] = [c for c in recorded["candidates"] if c["id"] == "sheet_frame"]
+        _, report = self.cli(documents)
+        self.assertEqual(candidate(report, "sheet_frame")["recorded_route"], {"TST-0501": False})
+        changes = [c for c in only_decision(report)["recommendation"].get("proposed_changes", ()) if c.startswith("TST-0501")]
+        self.assertEqual(len(changes), 1, changes)
+        for named in ("stock thickness 3 mm (now unknown)", "stock coating none (now unknown)", "approval gate"):
+            self.assertIn(named, changes[0])
+
+
 class StrictMaterialCriteria(unittest.TestCase):
     """The printed polymer's max_service_temperature is 60 deg_C. A strict `<` or `>` criterion at that limit fails
     where the non-strict one passes, judged through the public assessment."""
