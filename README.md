@@ -17,41 +17,60 @@ This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Ki
 - Chromium. Preflight and setup install it through Playwright.
 - Claude Code, Codex CLI, OpenCode, or Kiro CLI. The installer copies native skills and agent profiles to each harness's project paths. Claude Code also supports plugin marketplace installation.
 
-## Install
+## Quick start
 
-Run the installer from the project where you want to use CAD. Set `BENCHHAND` to the repository checkout path:
+1. Install the requirements above: Python 3.12, uv, FreeCAD 1.1.4 and a supported harness.
+2. Get Benchhand and install it for your harness.
+   - Claude Code, from the marketplace. It needs no clone, and `gh auth` is not needed for this public repository:
 
-```sh
-BENCHHAND=/path/to/benchhand
-python3 "$BENCHHAND/harness/install.py" --harness claude
-```
+     ```text
+     /plugin marketplace add benchhand/benchhand
+     /plugin install benchhand@benchhand
+     ```
 
-Choose `claude`, `codex`, `opencode`, `kiro`, or `all`. Add `--user` for a user-level install:
+   - Codex CLI, OpenCode, Kiro CLI, and Claude Code without the plugin: clone the repository and run the copy installer from your project. Check out the latest release tag first (see the [releases](https://github.com/benchhand/benchhand/releases)):
 
-```sh
-python3 "$BENCHHAND/harness/install.py" --harness all --user
-```
+     ```sh
+     git clone https://github.com/benchhand/benchhand.git
+     git -C benchhand checkout <latest-release-tag>
+     BENCHHAND=$PWD/benchhand
+     python3 "$BENCHHAND/harness/install.py" --harness codex
+     ```
 
-Use `--project DIR` to select a project directory. `--dry-run` previews changes, and `--uninstall` removes installed CAD files. `python3 "$BENCHHAND/harness/install.py" --help` lists the options.
+     Choose `claude`, `codex`, `opencode`, `kiro` or `all`. Run the installer from the project that you want to design in, or pass `--project DIR`. If you cloned elsewhere, set `BENCHHAND` to that path.
+   - Codex keeps the copy installer as the verified route. Codex CLI 0.171 also has `codex plugin add`, but this guide has not verified installing Benchhand that way. pi installs as a package, with no copy route (`install.py` has no `pi` harness); see the command after the installer options.
+3. Start the flow in the project and describe the product:
+   - Claude Code plugin: `/benchhand:cad-flow`.
+   - Installer route: `/cad-flow` in Claude Code, OpenCode and Kiro (V3), or `$cad-flow` in Codex.
+4. The agent checks FreeCAD and runs setup at the first stage. Setup stops if FreeCAD is missing or has the wrong version. To check beforehand, see [Start and prepare a project](#start-and-prepare-a-project).
 
-Alternatively, install Claude Code as a plugin from this public GitHub repository; `gh auth` is not required for public access. Or use a local checkout:
+There is no marketplace route for OpenCode or Kiro yet. If a step fails, see [troubleshooting](docs/troubleshooting.md).
 
-```text
-/plugin marketplace add benchhand/benchhand
-/plugin install benchhand@benchhand
-```
+### Installer options
 
-For a local checkout, add `/plugin marketplace add /path/to/benchhand`. Then install with `/plugin install benchhand@benchhand`. The plugin exposes `/benchhand:cad-flow`. The installer route exposes `/cad-flow`.
+Add `--user` for a user-level install, or `--project DIR` to pick a project (the two exclude each other). `--dry-run` previews changes. `--uninstall` removes only the files that the installer recorded. The [reference](docs/reference.md#installer-flags) lists the flags and the install path for each harness.
 
 In Claude Code, three skills are typable commands: `cad-flow` (the entry point), `cad-viewer` and `cad-fits`. The other twelve `cad-*` skills carry `user-invocable: false`, so the `/` menu omits them in both the installer route and the plugin route, but the model still loads them when a stage needs one. `user-invocable` is a Claude Code extension, not an Agent Skills key, so a strict Agent Skills validator rejects those twelve shared `SKILL.md` files. This is an accepted exception: the plugin route reads `skills/` directly and has no other place to carry the key. `install.py` strips the key for every harness except Claude, so Codex, OpenCode and Kiro get spec-only skills. `harness/test_skill_visibility.py` fails when a skill is not classified as visible or hidden.
 
 Codex CLI reads the same marketplace: `codex plugin marketplace add benchhand/benchhand` registers it. For pi, install the repository as a package with `pi install git:github.com/benchhand/benchhand@vX.Y.Z` (add `-l` for one project); it loads the `cad-*` skills. Without `@vX.Y.Z` pi installs the default branch, not a release. Each release PR bumps the plugin, marketplace and `package.json` versions together, so the manifests of a tagged release carry its version. OpenCode and Kiro have no git marketplace; use the installer.
 
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [Walkthrough](docs/walkthrough.md) | Prompts, reviews, approvals and records, stage by stage |
+| [Manufacturing intent](docs/manufacturing-intent.md) | The version 2 record |
+| [Reference](docs/reference.md) | Environment variables, installer flags, outcome rules, gate key, agent roles |
+| [Troubleshooting](docs/troubleshooting.md) | Setup and runtime failures |
+| [Architecture](docs/architecture.md) | Components and flows |
+| [Engineering guide](docs/engineering.md) | Stack, pins, checks and approved departures |
+| [Schemas](docs/schemas.md) | Generated schema reference |
+
 ## Start and prepare a project
 
-In an interactive Claude Code or OpenCode chat, start with `/cad-flow`. For interactive Kiro, use `/cad-flow` in a V3 session (`kiro-cli chat --v3`). In Codex CLI, invoke the skill with `$cad-flow` or select it from `/skills`. Describe the product or ask to continue the existing design record. For example: `Take this desk lamp arm from concept through a verified CAD release.`
+Start the flow with the command from step 3 of the quick start. For interactive Kiro, use a V3 session (`kiro-cli chat --v3`). In Codex CLI, you can also select `cad-flow` from `/skills`. Describe the product or ask to continue the existing design record. For example: `Take this desk lamp arm from concept through a verified CAD release.`
 
-At the project root, set `$CAD_SKILLS` to the directory containing installed `cad-*` skill folders. For a project install, this is `.claude/skills`, `.agents/skills`, `.opencode/skills`, or `.kiro/skills` for the selected harness. If using a repository checkout directly, set it to `"$BENCHHAND/skills"`.
+The agent resolves `$CAD_SKILLS` itself, as the parent of the skill folder. You set it only when you run a script by hand. See [`CAD_SKILLS`](docs/reference.md#cad_skills) for the directory of each harness.
 
 ### Codex CLI sandbox requirements
 
@@ -179,7 +198,7 @@ uv run --no-project --locked --script scripts/typecheck.py
 uvx slopvac <changed-prose-files>
 ```
 
-The mypy command is development-only. Its PEP 723 lock pins the current verified stable version. `mypy.ini` enumerates all feature-changed/new production modules using an incremental baseline and makes the new pure contracts/handlers strict; type findings are reported in `cad-mfg-intent/U8F-notes.md`. Tests that use FreeCAD skip when FreeCAD 1.1.4 is unavailable. Set `CAD_REQUIRE_FREECAD=1` to make them fail instead, as CI does. Check changed Markdown with `uvx slopvac`.
+The mypy command is development-only. Its PEP 723 lock pins the current verified stable version. `mypy.ini` enumerates all feature-changed/new production modules using an incremental baseline and makes the new pure contracts/handlers strict. Tests that use FreeCAD skip when FreeCAD 1.1.4 is unavailable. Set `CAD_REQUIRE_FREECAD=1` to make them fail instead, as CI does. Check changed Markdown with `uvx slopvac`.
 
 ## Skills and agents
 
@@ -216,6 +235,10 @@ python3 "$BENCHHAND/harness/install.py" --harness all --project . \
 ```
 
 A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:` prefix and a `provider/model[#variant]` value, and never gets `model: inherit`. Rendering adds `model: "<m>"` to Claude (instead of `inherit`) and OpenCode, `model = "<m>"` to Codex, and `"model"` to Kiro. A tier with no entry adds no model line, so a default install matches the committed profiles. `--tier-model` needs PyYAML.
+
+## Releases
+
+release-please opens a release pull request from the conventional commits on `main` (`feat`, `fix`, `perf`, `docs` and so on) and updates `CHANGELOG.md`. Merging it tags `vX.Y.Z`. Never edit the changelog by hand. See `release-please-config.json`.
 
 ## License
 
