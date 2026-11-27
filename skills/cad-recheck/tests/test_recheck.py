@@ -355,6 +355,16 @@ class RecheckHookTests(unittest.TestCase):
         result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_historical_product_without_a_readable_stage_does_not_block_an_advance(self) -> None:
+        product = self.root / "hw/product.yaml"
+        product.write_text("flow: [\n", encoding="utf-8")
+        self.git("add", "hw/product.yaml")
+        self.git("commit", "-qm", "historical malformed product")
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_reopening_a_stage_does_not_let_a_fresh_stamp_reuse_the_old_gate_decision(self) -> None:
         self.provisional_gate("parts", decision="accepted")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
