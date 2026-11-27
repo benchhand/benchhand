@@ -181,6 +181,22 @@ class StopGeometryTests(unittest.TestCase):
         self.assertIn("FEA contact case", unbounded["remedy"])
         self.assertIn("design record", unbounded["remedy"])
 
+    def test_a_revolute_check_reads_and_emits_no_load_direction(self) -> None:
+        # The moment takes the peak force only, so a revolute check keeps the rows it always had: no direction, no frame.
+        _, result = self.run_stop("revolute-rows")
+        rows = result["detail"]["interfaces"]["IF-006"]["loads"]
+        self.assertEqual([set(row) for row in rows], [{"load", "newtons"}] * 2)
+
+    def test_a_load_magnitude_that_overflows_in_newtons_is_a_named_unknown(self) -> None:
+        # 1e308 kN is finite as written and infinite once converted to N.
+        huge = fx.known(fx.quantity(1e308, "kN"))
+        code, result = self.run_stop("slide-overflow", joint=self.SLIDE, variant="disk",
+                                     load_overrides=[{"magnitude": huge}, {"magnitude": huge}])
+        [row] = result["outcomes"]
+        self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
+        self.assertIn("not finite", row["uncertainty"])
+        self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
     def test_a_recorded_240_n_is_understated_against_the_latched_stop(self) -> None:
         code, result = self.run_stop("recorded", contact_load=240.0)
         self.assertEqual((code, result["result"]), (1, "fail"))
