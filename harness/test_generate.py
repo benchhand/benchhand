@@ -309,6 +309,9 @@ class TierSourceTests(GeneratorCopyCase):
         self.assertIn("`RESULT: BLOCKED` while the evidence for an item is unavailable from any source", text)
         self.assertIn("a web search, a fetch, or a readable local file under `hw/parts/<PN>/sources/`", text)
         self.assertEqual(text.count("`RESULT: BLOCKED`"), 1)  # one rule, not two
+        self.assertIn("The item stays BLOCKED until a source establishes the required value", text)
+        self.assertIn("a readable source that lacks the value does not clear it", text)
+        self.assertIn("a value read only from a summary stays unverified", text)
 
     def test_non_cheap_tier_is_allowed_on_a_reviewer(self) -> None:
         result = self.set_tier("cad-mech-reviewer", "strong")
