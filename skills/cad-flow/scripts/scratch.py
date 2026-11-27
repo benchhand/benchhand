@@ -321,27 +321,30 @@ def seed_store(hw: Path, scratch_hw: Path) -> int:
     Where no hard link can be made (another filesystem) seeding stops, and the scratch build builds the
     rest itself; nothing is copied, because the store can be as large as every version together."""
     lay, seeded = layout.load(), 0
+    wanted: list[Path] = []
+    for entry_id in ("cache.part_objects", "cache.part_records"):
+        folder = layout.locate(hw, str(PurePosixPath(lay.entry(entry_id).path).parent))
+        for path in sorted(folder.iterdir()) if folder.is_dir() else []:
+            match = lay.classify(layout.relative(hw, path))
+            if match is not None and match.entry.id == entry_id and not path.is_symlink() and path.is_file():
+                wanted.append(path.relative_to(hw))
     scratch_fd = open_dir(scratch_hw)
+    opened: dict[Path, int] = {}
     try:
-        for entry_id in ("cache.part_objects", "cache.part_records"):
-            folder = layout.locate(hw, str(PurePosixPath(lay.entry(entry_id).path).parent))
-            for path in sorted(folder.iterdir()) if folder.is_dir() else []:
-                match = lay.classify(layout.relative(hw, path))
-                if match is None or match.entry.id != entry_id or path.is_symlink() or not path.is_file():
-                    continue
-                relative = path.relative_to(hw)
-                dest_fd = descend(scratch_fd, relative.parent.parts, create=True)
-                try:
-                    if (scratch_hw / relative).exists():
-                        continue
-                    os.link(path, relative.name, dst_dir_fd=dest_fd, follow_symlinks=False)
-                except OSError:
-                    return seeded
-                finally:
-                    os.close(dest_fd)
-                seeded += 1
+        for relative in wanted:  # every destination is opened (a link refused) before the first file is linked
+            if relative.parent not in opened:
+                opened[relative.parent] = descend(scratch_fd, relative.parent.parts, create=True)
+        for relative in wanted:
+            if (scratch_hw / relative).exists():
+                continue
+            try:
+                os.link(hw / relative, relative.name, dst_dir_fd=opened[relative.parent], follow_symlinks=False)
+            except OSError:
+                return seeded
+            seeded += 1
     finally:
-        os.close(scratch_fd)
+        for fd in (scratch_fd, *opened.values()):
+            os.close(fd)
     return seeded
 
 
