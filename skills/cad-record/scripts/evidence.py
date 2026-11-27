@@ -933,6 +933,20 @@ def _entry_targets(entry: Mapping[str, Any], record: Any, expected: Sequence[Any
     return [o.id for o in expected if o.requirement == requirement and o.family in (f"requirement.{level}", f"policy.{level}")]
 
 
+def _region_problem(subject: Mapping[str, Any], obligation: Any) -> tuple[str, str] | None:
+    """(code, why) when ledger evidence of `subject` is not evidence of `obligation`'s own surface region: it measured
+    another region (evidence.subject), or it names none while the obligation is about one region of a feature that
+    another surface may share (evidence.subject_ambiguous). The anchor of an id holds no region, so it cannot tell."""
+    wanted, stated = obligation.subject.get("region"), subject.get("region")
+    if stated == wanted:
+        return None
+    if stated is None:
+        return ("evidence.subject_ambiguous", f"the evidence names no region, so it may be of another surface than "
+                f"{obligation.id} (region {wanted}); record the region it measured")
+    return ("evidence.subject", f"the evidence is of region {stated}, but {obligation.id} is about "
+            + (f"region {wanted}" if wanted else "the whole feature") + ": evidence covers its own subject only")
+
+
 def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], version: str | None,
            manifest_sha256: str | None, geometry: Mapping[str, str | None], approved: Callable[[str | None], bool],
            today: date, artifact_sha: Callable[[str], str | None] | None = None,
@@ -953,6 +967,10 @@ def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], v
                                 f"{obligation.id} is about {_anchor(obligation.id)}: evidence covers its own subject only",
                                 obligation=obligation.id))
         return "unknown", (f"{ident} is about another subject",), findings
+    region = _region_problem(subject, obligation) if entry.get("obligation") and obligation is not None else None
+    if region is not None:
+        findings.append(Finding(region[0], path, f"{ident}: {region[1]}", obligation=obligation.id))
+        return "unknown", (region[1],), findings
     if result in ("planned", "unknown"):
         return result, (f"{ident} is {result}",), findings
     if result == "waived":

@@ -1234,7 +1234,8 @@ class StackupCliTests(unittest.TestCase):
                 with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
                     stackup.main([str(stack_case), "--hw", str(hw), "--version", "v1"])
                 result = json.loads(out.getvalue())
-                self.assertEqual([row.get("obligation") for row in result["obligations"]], [wanted])
+                self.assertEqual([row["obligation"] for row in result["obligations"]], [wanted] if wanted else [])
+                IntentStackContractTests.assert_schema_valid(self, result)
                 self.assertEqual([code for code in codes(result) if code == "stack.obligation_ambiguous"], ambiguous)
                 if wanted is None:
                     self.assertIsNone(result["check_bundle"])

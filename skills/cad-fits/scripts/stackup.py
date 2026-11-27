@@ -63,7 +63,8 @@ hw/analysis/cases/<case>/case.yaml (the bundle cad-record release.py requires fo
 record snapshot: the interface's variation,
 its requirements, the parts, their route operations and inspections, and the capability profiles'
 calibrations. A bound intent stack whose record version 2 snapshot expects its obligation
-(interface.stack@IF of a critical interface, feature.fit@PN#feature of a critical surface) also
+(interface.stack@IF of a critical interface, feature.fit@PN#feature[~surface] of the one critical surface whose region
+the stack subject names; several surfaces that fit it give stack.obligation_ambiguous and no outcome) also
 publishes that obligation's outcome, findings and governing results as its required-check packet at
 hw/checks/<V>/stack-<case, or id lowercased>/ (cad-record check_packet, beside the analysis bundle it cites), the one
 place cad-record evidence.py reads producer packets; stdout `check_bundle` names it (null when the
@@ -559,10 +560,33 @@ class _IntentStack:
         return data
 
     def obligation_id(self) -> str | None:
+        """The obligation the stack judges. A feature stack bound to a record judges the feature.fit obligation of the
+        one critical surface it measures (its region), which may carry a ~surface qualifier; None when several surfaces
+        on the feature fit its subject, so no single one is judged (stack.obligation_ambiguous)."""
         if self.subject.get("interface"):
             return f"interface.stack@{self.subject['interface']}"
+        plain = self.obligation_base()
+        surfaces = self.surface_obligations(plain)
+        if not surfaces:
+            return plain  # no record, or the record expects no fit of this feature
+        exact = [o.id for o in surfaces if o.subject.get("region") == self.subject.get("region")]
+        return exact[0] if len(exact) == 1 else None
+
+    def obligation_base(self) -> str:
+        """feature.fit@PN[.component]#feature: a feature stack's obligation id without a ~surface qualifier."""
         anchor = self.subject["PN"] + (f".{self.subject['component']}" if self.subject.get("component") else "")
         return f"feature.fit@{anchor}#{self.subject['feature']}"
+
+    def surface_obligations(self, plain: str) -> tuple[Any, ...]:
+        """The record's feature.fit obligations whose id, without its ~qualifier, is `plain`: one per critical surface
+        on the feature. Empty without a record."""
+        if self.record is None:
+            return ()
+        if not hasattr(self, "_surface_obligations"):
+            intent = _intent_module()
+            self._surface_obligations = tuple(o for o in intent.required_checks(self.record)
+                                              if o.family == "feature.fit" and intent.obligation_base(o.id) == plain)
+        return self._surface_obligations
 
     # ---------------------------------------------------------------- qualification and binding
 
@@ -639,6 +663,15 @@ class _IntentStack:
             self.bind_interface(intent, interface_id)
         elif self.subject["PN"] not in record.parts:
             self.mismatch(f"{self.subject['PN']} is not a part of the record")
+        elif self.obligation_id() is None:
+            surfaces = self.surface_obligations(self.obligation_base())
+            region = self.subject.get("region")
+            self.unknown("stack.obligation_ambiguous", None,
+                         f"{len(surfaces)} critical surfaces on {self.subject['feature']} fit the stack subject "
+                         f"({'region ' + region if region else 'no region'}): "
+                         + ", ".join(o.id for o in surfaces) + "; the stack judges none of them",
+                         "give each surface on the feature its own region, and name the measured region in the stack "
+                         "subject", inputs=[f"hw/parts/{self.subject['PN']}/part.yaml"])
         for item in self.contributors:
             if item.known and item.subject and item.subject.get("PN"):
                 self.bind_contributor(intent, item, item.subject)
@@ -996,7 +1029,7 @@ class _IntentStack:
             "requirement": {"min": self.req_min, "max": self.req_max, "method": self.method, "governing": governing,
                             "nominal_pass": nominal_pass, "worst_case_pass": wc_pass, "statistical_pass": stat_pass,
                             "pass": outcome == "pass", "criterion": self.criterion()},
-            "outcome": outcome, "obligations": [outcome_row], "findings": self.findings,
+            "outcome": outcome, "obligations": [outcome_row] if outcome_row["obligation"] is not None else [], "findings": self.findings,
             "required_evidence": self.required_evidence, "limits": self.limits,
             "evaluated_on": None if self.on is None else self.on.isoformat(),
         }
