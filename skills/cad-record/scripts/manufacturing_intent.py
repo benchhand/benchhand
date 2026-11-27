@@ -2082,32 +2082,40 @@ class _Reader:
         no reference, no artifact in the source inventory, nothing that blocks a gate or moves a digest."""
         if data is None:
             return
-
-        def warn(message: str) -> None:
+        for message in self._state_source_faults(data):
             self.problem("intent.calibration_state", path, pointer, f"{ident}: calibration_state source {message}", "warning")
 
+    def _state_source_faults(self, data: Any) -> list[str]:
+        """What is wrong with the provenance `data` of a calibration_state, as messages (none when it checks out)."""
         if not isinstance(data, Mapping):
-            return warn("is not a mapping")
+            return ["is not a mapping"]
         wrong = sorted(name for name in Source.__dataclass_fields__ if data.get(name) is not None and not isinstance(data[name], str))
         if wrong:
-            return warn(f"has non-text {', '.join(wrong)}; its provenance is not checked")
-        decision, artifact, digest = data.get("decision"), data.get("artifact"), data.get("sha256")
+            return [f"has non-text {', '.join(wrong)}; its provenance is not checked"]
+        found: list[str] = []
+        decision = data.get("decision")
         if decision is not None and self.hw is not None and (why := self._decision_problem(decision)) is not None:
-            warn(f"names decision {decision}, which {why}")
-        if artifact is not None and self.hw is not None:
-            relative = Path(artifact)
-            target = self.hw / relative
-            if relative.is_absolute() or ".." in relative.parts:
-                warn(f"names {artifact}, which is outside hw/")
-            elif not target.is_file() or target.is_symlink():
-                warn(f"names hw/{artifact}, which is missing")
-            elif digest is not None:
-                try:
-                    actual = hashlib.sha256(target.read_bytes()).hexdigest()
-                except OSError as error:
-                    return warn(f"names hw/{artifact}, which cannot be read: {error.strerror or error}")
-                if actual != digest:
-                    warn(f"names hw/{artifact}, which does not match its sha256")
+            found.append(f"names decision {decision}, which {why}")
+        if data.get("artifact") is not None and self.hw is not None:
+            found += self._state_artifact_faults(data["artifact"], data.get("sha256"))
+        return found
+
+    def _state_artifact_faults(self, artifact: str, digest: str | None) -> list[str]:
+        """What is wrong with the artifact a calibration_state source names: outside hw/, missing, unreadable or changed."""
+        assert self.hw is not None
+        relative = Path(artifact)
+        target = self.hw / relative
+        if relative.is_absolute() or ".." in relative.parts:
+            return [f"names {artifact}, which is outside hw/"]
+        if not target.is_file() or target.is_symlink():
+            return [f"names hw/{artifact}, which is missing"]
+        if digest is None:
+            return []
+        try:
+            actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        except OSError as error:
+            return [f"names hw/{artifact}, which cannot be read: {error.strerror or error}"]
+        return [] if actual == digest else [f"names hw/{artifact}, which does not match its sha256"]
 
     def materials(self) -> Mapping[str, MaterialProfile]:
         path = "hw/manufacturing/materials.yaml"
