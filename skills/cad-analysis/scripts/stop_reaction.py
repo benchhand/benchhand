@@ -33,8 +33,9 @@ the axis. The record does not say where the force acts, so this arm is a conserv
 Prismatic stop. A slide has no axis to turn about, so no arm, patch or moment is taken. At each limit that is a
 stop (the parts touch within the tolerance, without overlap), the reaction is the component of the use-case
 loads along the slide axis that presses the stop: at `min` the load component against the axis, at `max` along
-it, the largest over the loads, in N. Loads that are not known leave the stop unknown. A load direction is read
-in the assembly frame. A recorded functional.contact.load below that reaction is `understated` (fail, major).
+it, the largest over the loads, in N. Loads that are not known leave the stop unknown. A load direction is stated in
+the model frame of the part its `application` names, else in the assembly frame; it is normalised and rotated into
+the posed assembly frame at the limit, and a frame that cannot be resolved leaves the stop unknown. A recorded functional.contact.load below that reaction is `understated` (fail, major).
 
 Design reaction. stop_statics.py: M over the smallest arm. A smallest arm of zero or less is `unbounded`
 (unknown, critical), and only an FEA contact case approved in a design record can close it. A recorded
@@ -302,8 +303,24 @@ def patch_of(contact: Sequence[tuple[Any, Vec]], origin: Vec, axis: Vec, sign: f
 # --------------------------------------------------------------------------- the record's loads
 
 
-def applied_force(record: Any, interface: Any) -> tuple[float | None, list[dict[str, Any]], str]:
-    """(the peak force in N of the interface's use-case loads, the loads read, why there is none)."""
+def load_frame(chain: Any, ident: str, application: Mapping[str, Any] | None) -> tuple[str | None, str]:
+    """(the occurrence id whose model frame states load `ident`'s direction, "") or (None, "") for the assembly frame,
+    or (None, why) when the frame its application names cannot be resolved. The schema states a direction in the
+    model frame of the part `application` names, else in the assembly frame."""
+    pn, occurrence = (application or {}).get("PN"), (application or {}).get("occurrence")
+    if pn is None and occurrence is None:
+        return None, ""
+    try:
+        found = chain.inventory.endpoint(pn, occurrence) if pn is not None else chain.inventory.resolve(occurrence)
+    except pose.assembly_data.UnresolvedReference as error:
+        return None, f"load {ident} is stated in the frame of {pn or occurrence}, which cannot be placed in the assembly frame: {error}"
+    return found.id, ""
+
+
+def applied_force(record: Any, interface: Any, chain: Any | None = None) -> tuple[float | None, list[dict[str, Any]], str]:
+    """(the peak force in N of the interface's use-case loads, the loads read, why there is none). Each load row
+    names the occurrence whose model frame states its unit direction, or None for the assembly frame. Frames are
+    resolved only with a `chain`: a pivot's moment takes no direction."""
     ids = list(interface.functional.raw.get("loads") or ())
     loads = record.use_case.loads
     if not ids or intent.is_fact(loads):
@@ -321,7 +338,10 @@ def applied_force(record: Any, interface: Any) -> tuple[float | None, list[dict[
         size = math.sqrt(dot(direction, direction)) if direction is not None else 0.0
         if direction is None or not math.isfinite(size) or size <= 0.0:
             return None, read, f"load {ident} has no valid direction"
-        read.append({"load": ident, "newtons": newtons, "direction": list(scale(direction, 1.0 / size))})
+        frame, why = load_frame(chain, ident, by_id[ident].application) if chain is not None else (None, "")
+        if why:
+            return None, read, why
+        read.append({"load": ident, "newtons": newtons, "direction": list(scale(direction, 1.0 / size)), "frame": frame})
     return max(row["newtons"] for row in read), read, ""
 
 
@@ -340,11 +360,21 @@ def force_bounds_n(ident: str, value: Any) -> tuple[float | None, str]:
     return upper, ""
 
 
-def axial_force(loads: Sequence[Mapping[str, Any]], axis: Vec, label: str) -> float:
+def assembly_direction(row: Mapping[str, Any], transforms: Mapping[str, Any]) -> Vec:
+    """The unit direction of a load row in the posed assembly frame: its part frame's rotation applied to it."""
+    direction = tuple(row["direction"])
+    if row["frame"] is None:
+        return (direction[0], direction[1], direction[2])
+    rotation = transforms[row["frame"]].rot
+    return (dot(rotation[0], direction), dot(rotation[1], direction), dot(rotation[2], direction))
+
+
+def axial_force(loads: Sequence[Mapping[str, Any]], axis: Vec, label: str, transforms: Mapping[str, Any]) -> float:
     """The largest component in N of the loads along the slide axis that presses the stop at `label`: the joint
-    pushed down to `min` by the component against the axis, up to `max` by the one along it."""
+    pushed down to `min` by the component against the axis, up to `max` by the one along it. The loads are placed
+    in the assembly frame at the posed limit (`transforms`)."""
     sign = -1.0 if label == "min" else 1.0
-    return float(max(0.0, *(sign * row["newtons"] * dot(tuple(row["direction"]), axis) for row in loads)))
+    return float(max(0.0, *(sign * row["newtons"] * dot(assembly_direction(row, transforms), axis) for row in loads)))
 
 
 def recorded_load_n(interface: Any) -> float | None:
@@ -399,7 +429,7 @@ def end_geometry(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, value
     shapes = {name: pose.placed(definitions[chain.pn(occurrence)].shape, transforms[occurrence])
               for name, occurrence in (("moving", pivot.moving), ("fixed", pivot.fixed))}
     reach = extrema.reach(shapes["moving"], origin, axis) if pivot.joint.type == "revolute" else None
-    return {"origin": origin, "axis": axis, "reach": reach, **shapes}
+    return {"origin": origin, "axis": axis, "reach": reach, "transforms": transforms, **shapes}
 
 
 def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: str, tolerance: float) -> dict[str, Any]:
@@ -419,7 +449,7 @@ def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: 
         faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"], tolerance)
         patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)
     return {"label": label, "value": value, "touching": contact, "gap": gap, "patch": patch, "reach": geometry["reach"],
-            "axis": geometry["axis"], "overlap_volume": volume, "overlap_depth": depth}
+            "axis": geometry["axis"], "transforms": geometry["transforms"], "overlap_volume": volume, "overlap_depth": depth}
 
 
 def patch_report(patch: statics.Patch | None) -> dict[str, Any] | None:
@@ -489,14 +519,14 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         reason = (f"{if_id}: at the {' and '.join(flat)} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, "
                   "but no parallel opposite-facing planar faces are that close, so no contact patch can be taken")
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
-    force, loads, why = applied_force(record, interface)
+    force, loads, why = applied_force(record, interface, chain if pivot.joint.type == "prismatic" else None)
     if force is None:
         reason = f"{if_id} is a stop at the {' and '.join(state['label'] for state in stops)} limit of {pivot.joint.id}, but {why}"
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
     detail.update(loads=loads, peak_force_n=force)
     recorded = recorded_load_n(interface)
     if pivot.joint.type == "prismatic":
-        reactions = {state["label"]: statics.axial_reaction(axial_force(loads, state["axis"], state["label"]), recorded)
+        reactions = {state["label"]: statics.axial_reaction(axial_force(loads, state["axis"], state["label"], state["transforms"]), recorded)
                      for state in stops}
     else:
         reactions = {state["label"]: statics.reaction(force, state["reach"], state["patch"], recorded) for state in stops}
