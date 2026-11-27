@@ -188,14 +188,24 @@ class AccessPlanTests(unittest.TestCase):
                 self.assertEqual(request.tools[0].name, name, "the instruction text is kept")
 
     def test_an_unrecognised_name_is_an_instruction_note_not_an_unknown(self) -> None:
-        for field in ("tools", "tool_access"):
-            with self.subTest(field=field):
-                entry = ["frobnicator"] if field == "tools" else [{"tool": "frobnicator", "approach": [0, 0, -1]}]
-                request = plan({**BRACKET, field: entry})["mount-bracket"]
-                self.assertEqual((request.unknown, request.reaches), ((), ()))
-                self.assertEqual(len(request.notes), 1)
-                self.assertIn("frobnicator", request.notes[0])
-                self.assertIsNone(request.not_applicable, "the part path is still checked")
+        request = plan({**BRACKET, "tools": ["frobnicator"]})["mount-bracket"]
+        self.assertEqual((request.unknown, request.reaches), ((), ()))
+        self.assertEqual(len(request.notes), 1)
+        self.assertIn("frobnicator", request.notes[0])
+        self.assertIsNone(request.not_applicable, "the part path is still checked")
+
+    def test_a_declared_special_tool_without_an_established_envelope_stays_unknown(self) -> None:
+        # A tool_access entry says the tool must reach; with no shipped envelope and no cited solid, nothing
+        # establishes its clearance, so the operation cannot pass on its part path alone.
+        placed = {"tool": "bearing puller", "approach": [0, 0, -1], "contact": [30, 0, 44]}
+        unknown_envelope = {"status": "unknown", "reason": "no supplier CAD"}
+        for label, entry in (("missing", placed), ("explicitly unknown", {**placed, "envelope": unknown_envelope})):
+            with self.subTest(envelope=label):
+                request = plan({**BRACKET, "tool_access": [entry]})["mount-bracket"]
+                self.assertEqual((request.reaches, request.notes, request.not_applicable), ((), (), None))
+                [reason] = request.unknown
+                self.assertIn("tool 'bearing puller'", reason)
+                self.assertIn("envelope", reason)
 
     def test_a_reaching_tool_without_any_direction_stays_unknown(self) -> None:
         request = plan(BRACKET, {**INSPECT, "kind": "adjust", "id": "adjust-bracket",
