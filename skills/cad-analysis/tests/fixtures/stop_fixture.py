@@ -31,6 +31,13 @@ VARIANT changes one thing:
          (x 30..40, y 6..10, z -8..8) carries a block (x 30..40, y -10..10, z 8..12) whose underside is at z 8. A lever
          sliding along +Z rests on the disc's top face at 0 and meets the cap's underside after 5 mm of travel
          (its top face at z 3 rises to 8).
+  mateN  a slide's mating stop turned by N degrees about -Y: a block (x -10..10, y -4..4, z -10..0) and a plate on it
+         (z 0..10), both turned about the origin, so the plate's underside and the block's top face share one plane
+         whose normal is N degrees off the +Z slide axis. A plate sliding along +Z rests on the block at 0 and leaves
+         it by N cos degrees of travel. mate2 is a 2 deg stop, mate3 a 3 deg draft, mate45 a 45 deg chamfer.
+  endstop a slide along +X with an end stop 0.05 mm from the lever's tip at 5 mm of travel: the default latched block
+         (x 7..13, top face at z -3) is a rail under the lever at both limits, and a block (x 85.05..90, y -4..4,
+         z -8..10) is the end face the lever meets at 5 mm, 0.05 mm short (within the 0.15 mm tolerance).
   pieces two separate overlaps of the lever at 0 deg, of different depths. The latched block's top is at z -2.5, so
          the lever's underside (z -3) enters it over x 7..13, y -4..4, z -3..-2.5: depth 0.5 mm, volume 24 mm3. A side
          block at x 30..40, y 2.5..10 cuts the lever's side face over x 30..40, y 2.5..4, z -3..3: depth 1.5 mm
@@ -147,6 +154,12 @@ def shapes(latched_gap: float = 0.0, variant: str = "") -> dict[str, object]:
         return sphere_into_cylinder()
     if variant == "contained":
         return {"TST-0301": compound(box(-20, -20, -20, 120, 20, 110), box(200, 200, 200, 210, 210, 210)),
+                "TST-0302": box(0, -4, -3, 80, 4, 3)}
+    if variant.startswith("mate"):
+        degrees = float(variant[4:])
+        return {"TST-0301": turned(box(-10, -4, -10, 10, 4, 0), degrees), "TST-0302": turned(box(-10, -4, 0, 10, 4, 10), degrees)}
+    if variant == "endstop":
+        return {"TST-0301": fused(box(-30, -14, -16, 95, 14, -8), box(7, -4, -8, 13, 4, -3), box(85.05, -4, -8, 90, 4, 10)),
                 "TST-0302": box(0, -4, -3, 80, 4, 3)}
     base = box(-30, -14, -16, 30, 14, -8)
     if variant == "pieces":

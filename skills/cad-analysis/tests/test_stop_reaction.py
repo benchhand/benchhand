@@ -460,6 +460,40 @@ class StopGeometryTests(unittest.TestCase):
         [row] = result["outcomes"]
         self.assertNotIn("pivot axis", row["method"] + row["coverage"])
 
+    def test_a_face_off_square_reacts_the_normal_force_bound_and_records_its_angle(self) -> None:
+        # By hand, a frictionless face at theta off the slide axis needs 30 / cos(theta) of normal force to react the
+        # 30 N axial component: 2 deg 30.018286, 3 deg 30.041170, 45 deg 42.426407.
+        for variant, angle, bound in (("mate2", 2.0, 30.018286), ("mate3", 3.0, 30.041170), ("mate45", 45.0, 42.426407)):
+            with self.subTest(variant=variant):
+                code, result = self.run_stop(f"slide-{variant}", joint=self.SLIDE, variant=variant)
+                end = result["detail"]["interfaces"]["IF-006"]["ends"]["min"]
+                self.assertTrue(end["blocks_travel"])
+                self.assertAlmostEqual(end["contact_angle_deg"], angle, places=6)
+                self.assertAlmostEqual(end["reaction"]["axial_component_n"], 30.0, places=9)
+                self.assertAlmostEqual(end["reaction"]["design_reaction_n"], bound, places=5)
+                self.assertEqual((code, result["result"]), (0, "pass"))
+
+    def test_a_rating_equal_to_the_axial_load_fails_a_face_that_needs_more_normal_force(self) -> None:
+        # A 30 N rating covers the 30 N axial component of a square stop, not the 30.018 N a 2 deg face carries.
+        code, square = self.run_stop("slide-rated-square", joint=self.SLIDE, variant="disk", contact_load=30.0)
+        self.assertEqual((code, square["result"]), (0, "pass"))
+        code, tilted = self.run_stop("slide-rated-2deg", joint=self.SLIDE, variant="mate2", contact_load=30.0)
+        self.assertEqual((code, tilted["result"]), (1, "fail"))
+        [finding] = tilted["findings"]
+        self.assertAlmostEqual(finding["criterion"]["value"], 30.018286, places=5)
+        for rating, outcome in ((40.0, "fail"), (43.0, "pass")):
+            with self.subTest(rating=rating):
+                _, chamfer = self.run_stop(f"slide-rated-45-{rating}", joint=self.SLIDE, variant="mate45", contact_load=rating)
+                self.assertEqual(chamfer["result"], outcome)
+
+    def test_a_face_steeper_than_60_degrees_gives_no_reaction_and_a_named_unknown(self) -> None:
+        # cos 70 deg = 0.342 is under cos 60 deg: the face ramps the plate more than it blocks it.
+        code, result = self.run_stop("slide-mate70", joint=self.SLIDE, variant="mate70")
+        [row] = result["outcomes"]
+        self.assertEqual((code, row["outcome"]), (1, "unknown"))
+        self.assertIn("60", row["uncertainty"])
+        self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
     def test_a_rail_touching_along_the_travel_is_no_stop_for_an_axial_load(self) -> None:
         # The lever slides along +x from 0 to 5 mm while its underside rests on the block's top face (z -3). The contact
         # normal is +z, square to the travel, so the face can't resist motion along x: a 30 N load along -x finds
