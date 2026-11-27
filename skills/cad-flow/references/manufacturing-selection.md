@@ -18,18 +18,16 @@ Ask these focused questions before selecting material or process:
 
 Separate **requirements**, **preferences**, **assumptions** and **open questions**. Bound and assign each assumption. Give every open question an owner and mark whether it affects choice or safety. A missing fact stays unknown. Do not infer service or loads from illustrative geometry, available equipment, a material label or a capability profile. Resolve safety- or material-critical unknowns before a final recommendation. Otherwise give conditional alternatives with clear limits.
 
-### One use-case classification table
+### Service class and what it owes
 
-Use the user's description to record the service class; ask when the description does not resolve a row. The service class describes intended-use maturity and consequence.
+Use the user's description to record the service class; ask when the description does not resolve one. The service class describes intended-use maturity and consequence. Before the class is chosen, run `uv run --script "$CAD_SKILLS/cad-record/scripts/project_scope.py" rules`. For each class and obligation family it prints whether the rule is required, a check before use, advisory or out of scope, with the reason. Show the user the classes that fit the description. Then ask:
 
-| User's description | `service_class` | Required clarification |
-|---|---|---|
-| Appearance model or concept only | `appearance_concept` | Confirm no fit, functional or service claim is intended. |
-| Fit or assembly prototype | `fit_assembly` | Ask which interfaces and assembly evidence are needed. |
-| Supervised demonstration with limited loads/use | `functional_demo` | Record permitted loads, use limits and supervision. |
-| Prototype representative of intended service | `working_prototype` | Confirm representative loads, environment, duty and life. |
-| Production or end-use product | `production` | Record release purpose, required standards and evidence scope. |
-| Safety-critical, regulated or high-consequence use | `safety_critical` | Identify the governing authority, standards, risk criteria and accountable approver. |
+- Appearance model or concept only: confirm no fit, functional or service claim is intended.
+- Fit or assembly prototype: ask which interfaces and assembly evidence are needed.
+- Supervised demonstration with limited loads/use: record permitted loads, use limits and supervision.
+- Prototype representative of intended service: confirm representative loads, environment, duty and life.
+- Production or end-use product: record release purpose, required standards and evidence scope.
+- Safety-critical, regulated or high-consequence use: identify the governing authority, standards, risk criteria and accountable approver.
 
 If a user says only "prototype", ask whether it is for fit/assembly, a supervised functional demonstration, or representative intended service. Keep the answer open until resolved.
 
@@ -61,4 +59,4 @@ Physical claims need an as-built configuration, suitable protocol and calibrated
 
 For every change, compare impact on use case, loads, environment, duty/life, material, route, capability, setup, tools, orientation, support, finish, geometry, interfaces, tolerance and acceptance evidence. Recheck dependent plans/results from the earliest affected stage. Missing dependency metadata stays unknown and requires rerun or assessed carry-forward. Prior PASS does not carry by default.
 
-The use-case **service class** (`appearance_concept`, `fit_assembly`, `functional_demo`, `working_prototype`, `production`, `safety_critical`) describes use maturity and consequence. A prototype is a service class. Fit prototypes need interface, stack and assembly evidence. Supervised demos need evidence for claimed loads/use limits. Working prototypes need representative service evidence. Production and high-consequence/regulated use need governing requirements, qualified route/material evidence, inspection and accountable authority. Unknown service blocks final selection and new manufacturing freeze/release. A permitted trial waiver must be safe, approved and scoped; it remains waived and untested.
+The use-case **service class** describes use maturity and consequence. `uv run --script "$CAD_SKILLS/cad-record/scripts/project_scope.py" rules` prints what each class owes; do not restate it here. A prototype is a service class. Unknown service blocks final selection and new manufacturing freeze/release. A permitted trial waiver must be safe, approved and scoped; it remains waived and untested.

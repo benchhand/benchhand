@@ -14,8 +14,10 @@ schema evidence level and every service class, with `unknown` for an unrecorded 
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -153,6 +155,210 @@ class ProfileTests(unittest.TestCase):
             human_approval="key", fea={"enabled": False}, critique="light", fdm={"print_in_place": False}))).profile
         self.assertEqual((profile.human_approval, profile.fea, profile.stack_up, profile.critique, profile.fdm_planned,
                           profile.pip), ("key", (False, None), "auto", "light", True, False))
+
+
+RULES_DIR = HERE / "fixtures" / "rules"
+
+
+def run_rules(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, "-B", str(SCRIPTS / "project_scope.py"), "rules", *args],
+                          capture_output=True, text=True, check=False)
+
+
+class RulesCommandTests(unittest.TestCase):
+    def test_rules_prints_the_golden_text_for_each_service_class(self) -> None:
+        for service_class in scope.SERVICE_CLASSES:
+            with self.subTest(service_class=service_class):
+                done = run_rules("--class", service_class)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(done.stdout, (RULES_DIR / f"{service_class}.txt").read_text(encoding="utf-8"))
+    CLASSES = (*scope.SERVICE_CLASSES, "unknown")
+    OTHER = {"id": "unlisted.family@X", "family": "unlisted.family", "level": "cad_valid", "stage": "parts",
+             "subject": {"product": True}, "basis": "a family no other rule names"}
+
+    def obligations(self, service_class: str) -> list[dict[str, Any]]:
+        """The real obligations of a record of `service_class` (an unrecorded class for `unknown`), plus one for
+        obligation.other, which the record never owes."""
+        if service_class not in self.cache:
+            rec = record(None if service_class == "unknown" else service_class)
+            self.cache[service_class] = [o.as_dict() for o in mi.required_checks(rec)] + [self.OTHER]
+        return self.cache[service_class]
+
+    cache: dict[str, list[dict[str, Any]]] = {}
+    printed: dict[str, str] = {}
+
+    @staticmethod
+    def gate(service_class: str, obligation: dict[str, Any], result: str, stage: str) -> list[Any]:
+        """The findings of evidence.obligation_gate for one obligation, as the assessment calls it: an unknown class
+        is passed as None."""
+        return evidence.obligation_gate([obligation], {obligation["id"]: result}, stage,
+                                        None if service_class == "unknown" else service_class)
+
+    def rule_line(self, service_class: str, obligation: dict[str, Any]) -> str:
+        rule = scope.obligation_rule(obligation).id
+        if service_class not in self.printed:
+            self.printed[service_class] = run_rules("--class", service_class).stdout
+        return next(line for line in self.printed[service_class].splitlines() if line.startswith(f"  {rule} "))
+
+    def test_each_rule_line_matches_the_gates_for_an_unresolved_obligation_of_that_rule(self) -> None:
+        """For every class, and every real obligation (product exports included) and one for obligation.other: the
+        release blocks it exactly when the line says so, and a gate before the release blocks it once due."""
+        for service_class in self.CLASSES:
+            for obligation in self.obligations(service_class):
+                line = self.rule_line(service_class, obligation)
+                release = [f for f in self.gate(service_class, obligation, "unknown", "release") if f.severity == "error"]
+                frozen = [f for f in self.gate(service_class, obligation, "unknown", "design_freeze")
+                          if f.severity == "error"]
+                with self.subTest(service_class=service_class, obligation=obligation["id"]):
+                    self.assertEqual("blocks at release until resolved" in line, bool(release))
+                    self.assertEqual("not owed at release" in line, not release)
+                    self.assertEqual(release == [], scope.obligation_disposition(obligation, None if service_class
+                                                                                == "unknown" else service_class)
+                                     == "out_of_scope")
+                    self.assertTrue(frozen)
+                    self.assertIn("blocks once due", line)
+
+    def test_every_rule_is_checked_by_at_least_one_obligation(self) -> None:
+        for service_class in self.CLASSES:
+            used = {scope.obligation_rule(o).id for o in self.obligations(service_class)}
+            self.assertEqual(used, {rule.id for rule in scope.RULES}, service_class)
+
+    def test_a_required_release_error_for_the_product_export_check_is_not_suppressed(self) -> None:
+        exports = next(o for o in self.obligations("production") if o["id"] == "cad.product_exports@product")
+        findings = self.gate("production", exports, "unknown", "release")
+        self.assertEqual([(f.code, f.severity) for f in findings], [("gate.unresolved", "error")])
+
+    def test_a_due_unresolved_check_only_warns_before_layout_and_blocks_from_layout(self) -> None:
+        """Header: from LAYOUT on a due unresolved check blocks; before it only warns (intent.use_case at INTENT, for
+        every class including unknown)."""
+        stages = evidence.STAGES
+        for service_class in self.CLASSES:
+            for obligation in self.obligations(service_class):
+                stage = obligation["stage"]
+                if stage == "release":  # the release gate is checked by the rule-line test
+                    continue
+                expected = "error" if stages.index(stage) >= stages.index("layout") else "warning"
+                with self.subTest(service_class=service_class, obligation=obligation["id"]):
+                    self.assertEqual({f.severity for f in self.gate(service_class, obligation, "unknown", stage)},
+                                     {expected})
+        text = run_rules("--class", "unknown").stdout
+        self.assertIn("a due check that is unresolved blocks from LAYOUT on, but before LAYOUT only a known failure blocks", text)
+
+    def test_a_planned_physical_check_clears_the_gates_before_the_release_and_not_the_release(self) -> None:
+        physical = next(o for o in self.obligations("production") if o["level"] == "physically_validated")
+        for service_class in self.CLASSES:
+            with self.subTest(service_class=service_class):
+                for stage in ("analysis", "design_freeze"):
+                    self.assertEqual(self.gate(service_class, physical, "planned", stage), [])
+                owed = scope.in_release_scope(physical, None if service_class == "unknown" else service_class)
+                self.assertEqual([f.severity for f in self.gate(service_class, physical, "planned", "release")],
+                                 ["error"] if owed else [])
+        self.assertIn("A planned physical check may stay planned until the release", run_rules().stdout)
+
+    def test_not_assessed_blocks_nothing_at_any_gate_and_the_header_says_so(self) -> None:
+        for service_class in self.CLASSES:
+            for obligation in self.obligations(service_class):
+                with self.subTest(service_class=service_class, obligation=obligation["id"]):
+                    for stage in ("analysis", "release"):
+                        self.assertFalse([f for f in self.gate(service_class, obligation, "not_assessed", stage)
+                                          if f.severity == "error"])
+            self.assertIn("A check not assessed is informational at every gate", run_rules("--class", service_class).stdout)
+
+    def test_an_unknown_class_blocks_the_release_by_itself_and_the_output_says_so(self) -> None:
+        """Release eligibility, apart from scope: on one assessment whose every obligation is resolved, the release of
+        an unknown class still has a blocking finding, and a known class has none for the class."""
+        for service_class in self.CLASSES:
+            assessment = evidence.assess(record(None if service_class == "unknown" else service_class))
+            resolved = dataclasses.replace(assessment, statuses={
+                ident: dataclasses.replace(status, result="pass") for ident, status in assessment.statuses.items()})
+            blocking = {f.code for f in resolved.release().blocking}
+            with self.subTest(service_class=service_class):
+                self.assertNotIn("gate.unresolved", blocking)
+                self.assertEqual("release.service_class" in blocking, service_class == "unknown")
+                self.assertEqual("An unknown service class blocks the release by itself".lower()
+                                 in run_rules("--class", service_class).stdout.lower(), service_class == "unknown")
+
+    def test_a_known_failure_blocks_before_layout_and_not_assessed_is_informational_at_every_stage(self) -> None:
+        """Exceptions in the header: before LAYOUT a known failure still errors, and not_assessed is an info finding,
+        never an error and never a pass."""
+        for service_class in self.CLASSES:
+            for obligation in self.obligations(service_class):
+                stage = obligation["stage"]
+                if stage == "release":
+                    continue
+                with self.subTest(service_class=service_class, obligation=obligation["id"]):
+                    self.assertEqual([f.severity for f in self.gate(service_class, obligation, "fail", stage)],
+                                     ["error"])
+                    self.assertEqual([(f.code, f.severity) for f in
+                                      self.gate(service_class, obligation, "not_assessed", stage)],
+                                     [("gate.not_assessed", "info")])
+        self.assertNotIn("not_assessed", evidence.RESOLVED)
+        header = run_rules("--class", "production").stdout
+        self.assertIn("before LAYOUT only a known failure blocks and any other unresolved check warns", header)
+        self.assertIn("A check not assessed is informational at every gate", header)
+
+    def test_the_first_matching_rule_decides_is_printed(self) -> None:
+        self.assertIn("The first rule that matches an obligation decides it", run_rules("--class", "production").stdout)
+
+    EXCEPTION = re.compile(r"^  exception: (\S+) at (.+) is decided by (\S+) \[(\w+)\], not (\S+)"
+                           r" \[(\w+)\]$")
+
+    def exceptions(self, service_class: str) -> list[tuple[str, list[str], str, str]]:
+        found = []
+        for line in run_rules("--class", service_class).stdout.splitlines():
+            if line.startswith("  exception:"):
+                match = self.EXCEPTION.match(line)
+                self.assertIsNotNone(match, line)
+                family, levels, rule, disposition = match.group(1, 2, 3, 4)
+                found.append((family, list(scope.LEVELS) if levels == "every schema level" else levels.split(", "), rule,
+                              disposition))
+        return found
+
+    def test_overlapping_families_print_the_rule_and_levels_that_decide_them(self) -> None:
+        """For appearance_concept the two optical.route lines differ by level: make owes the CAD, geometry and
+        process levels, make_evidence is out of scope above them. Each printed level resolves as printed."""
+        lines = run_rules("--class", "appearance_concept").stdout
+        self.assertIn("  exception: optical.route at cad_valid, geometrically_manufacturable, process_planned is "
+                      "decided by obligation.make [required], not obligation.function [out_of_scope]\n", lines)
+        self.assertIn("  exception: optical.route at simulation_supported, physically_validated is decided by "
+                      "obligation.make_evidence [out_of_scope], not obligation.function [out_of_scope]\n", lines)
+        for service_class in scope.SERVICE_CLASSES:
+            exceptions = self.exceptions(service_class)
+            self.assertEqual({family for family, *_ in exceptions}, {"optical.route", "motion.play"})
+            for family, levels, _rule, disposition in exceptions:
+                for level in levels:
+                    with self.subTest(service_class=service_class, family=family, level=level):
+                        self.assertEqual(scope.obligation_disposition({"family": family, "level": level},
+                                                                      service_class), disposition)
+
+    def test_every_level_of_an_overlapping_family_is_printed_once(self) -> None:
+        for service_class in scope.SERVICE_CLASSES:
+            for family in ("optical.route", "motion.play"):
+                printed = [level for fam, levels, *_ in self.exceptions(service_class) if fam == family
+                           for level in levels]
+                with self.subTest(service_class=service_class, family=family):
+                    self.assertCountEqual(printed, scope.LEVELS)
+
+    def test_rules_without_a_class_prints_every_class_in_order(self) -> None:
+        done = run_rules()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout, "\n".join((RULES_DIR / f"{cls}.txt").read_text(encoding="utf-8")
+                                                for cls in scope.SERVICE_CLASSES))
+
+    def test_the_unknown_class_owes_every_rule(self) -> None:
+        done = run_rules("--class", "unknown")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout, (RULES_DIR / "unknown.txt").read_text(encoding="utf-8"))
+        rule_lines = [line for line in done.stdout.splitlines() if line.startswith("  obligation.")]
+        self.assertEqual(len(rule_lines), len(scope.RULES))
+        self.assertTrue(all("[required]" in line for line in rule_lines))
+
+    def test_an_invalid_class_exits_2_and_names_the_choices(self) -> None:
+        done = run_rules("--class", "bespoke")
+        self.assertEqual(done.returncode, 2)
+        self.assertEqual(done.stdout, "")
+        for service_class in (*scope.SERVICE_CLASSES, "unknown"):
+            self.assertIn(service_class, done.stderr)
 
 
 if __name__ == "__main__":
