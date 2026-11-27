@@ -176,7 +176,7 @@ def overlap_depth(moving: Any, fixed: Any) -> float:
     common.SetArguments(pose.shape_list([moving]))
     common.SetTools(pose.shape_list([fixed]))
     common.SetNonDestructive(True)
-    common.SetFuzzyValue(pose.FUZZY_MM)
+    common.SetFuzzyValue(pose.OVERLAP_FUZZY_MM)
     common.Build()
     if not common.IsDone():
         raise pose.MotionError("overlap computation failed")
