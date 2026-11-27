@@ -286,6 +286,40 @@ class Gate(unittest.TestCase):
         self.assertEqual([item.path for item in found], ["flow/profile", "manufacturing/processes"])
         self.assertIn("fmd", found[1].message)
 
+    def test_malformed_applicability_inputs_are_reported_before_the_profile_is_due(self) -> None:
+        for stage in ("ground", "intent"):
+            for name, processes in (("a misspelled process", ["fmd"]), ("an explicit null", None), ("a scalar plan", "fdm")):
+                with self.subTest(stage=stage, plan=name):
+                    product = self.with_profile(None, stage)
+                    product["manufacturing"] = {"processes": processes}
+                    _stage, found = gate_module.gate(product, self.parts, approved)
+                    self.assertEqual([(item.code, item.path) for item in found],
+                                     [("flow.applicability", "manufacturing/processes")])
+        clean = self.with_profile(None, "intent")
+        clean["manufacturing"] = {"processes": ["cnc"]}
+        self.assertEqual(gate_module.gate(clean, self.parts, approved)[1], [])
+
+    def test_inputs_that_do_not_fit_their_schema_never_rule_fdm_out(self) -> None:
+        unknown = {"status": "unknown", "reason": "not planned"}
+        for name, product, parts, field in (
+                ("a duplicate plan entry", {"manufacturing": {"processes": ["cnc", "cnc"]}}, {}, "manufacturing/processes"),
+                ("a manufacturing block that is a list", {"manufacturing": ["cnc"]}, {}, "manufacturing"),
+                ("a null manufacturing block", {"manufacturing": None}, {}, "manufacturing"),
+                ("a part process that does not exist", {}, {"A": {"process": "fmd"}}, "parts/A/process"),
+                ("a part process that is a list", {}, {"A": {"process": ["fdm"]}}, "parts/A/process"),
+                ("an intent that is a string", {}, {"A": {"process": "cnc", "intent": "route"}}, "parts/A/intent"),
+                ("a route that is a string", {}, {"A": {"process": "cnc", "intent": {"route": "cnc"}}}, "parts/A/intent/route"),
+                ("an empty route", {}, {"A": {"process": "cnc", "intent": {"route": []}}}, "parts/A/intent/route"),
+                ("a route entry that is not a mapping", {}, {"A": {"process": "cnc", "intent": {"route": ["cnc"]}}},
+                 "parts/A/intent/route"),
+                ("a route fact with another status", {}, {"A": {"process": "cnc", "intent": {"route": {
+                    **unknown, "status": "known"}}}}, "parts/A/intent/route")):
+            with self.subTest(name):
+                base = {"manufacturing": {"processes": ["cnc"]}} if not product else {}
+                found = gate_module.fdm_applicability({**base, **product}, parts)
+                self.assertEqual((found.state, [item.path for item in found.malformed]), ("unknown", [field]))
+                self.assertTrue(found.asks)
+
     def test_the_gate_blocks_on_a_malformed_plan_and_names_the_field(self) -> None:
         product = self.with_profile(fx.flow_profile(), "specify")
         product["manufacturing"] = {"processes": "fdm"}

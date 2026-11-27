@@ -156,6 +156,18 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual((profile.human_approval, profile.fea, profile.stack_up, profile.critique, profile.fdm_planned,
                           profile.pip), ("key", (False, None), "auto", "light", True, False))
 
+    def test_fdm_planned_maps_yes_no_and_unknown_and_never_reads_unknown_as_no(self) -> None:
+        profile = fx.flow_profile()
+        for name, product, parts, expected in (
+                ("an fdm plan", {"manufacturing": {"processes": ["fdm"]}}, {}, True),
+                ("a cnc plan", {"manufacturing": {"processes": ["cnc"]}}, {}, False),
+                ("no plan and no part", {}, {}, None),
+                ("a part whose route is unknown", {}, {"A": {"process": "cnc", "intent": {"route": {
+                    "status": "unknown", "reason": "not planned"}}}}, None)):
+            with self.subTest(name):
+                view = scope.ProjectProfile.of({**product, "flow": {"profile": profile}}, parts)
+                self.assertIs(view.fdm_planned, expected)
+
 
 RULES_DIR = HERE / "fixtures" / "rules"
 
