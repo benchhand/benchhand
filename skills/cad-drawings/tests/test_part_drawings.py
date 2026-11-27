@@ -576,6 +576,10 @@ sys.exit(code)
         self.assertIn("groove", result["error"]["message"])
         named = {f.get("feature") for f in result["coverage"]["findings"] if f["code"] == "feature_not_found"}
         self.assertLessEqual({"groove", "tip_chamfer"}, named, result["coverage"]["findings"])   # the view error hides none
+        measured = {f["feature"] for f in result["coverage"]["findings"]
+                    if f["code"] == "feature_not_found" and f["message"].startswith("drawing.features names ")}
+        # the measurement findings, not the binding's; their wording on the cause is x6h.18's, not asserted here
+        self.assertLessEqual({"groove", "tip_chamfer"}, measured, result["coverage"]["findings"])
 
     def test_vendor_sheet_controls_only_the_specification_limits(self) -> None:
         code, result = self.draw("v1", "vendor", "LMP-0009")
