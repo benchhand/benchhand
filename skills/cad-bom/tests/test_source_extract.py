@@ -75,7 +75,8 @@ class ExtractTests(unittest.TestCase):
         code, result = run(*self.args(PDF, "--find", "M4 x"))
         self.assertEqual(code, 0)
         self.assertEqual(result["kind"], "pdf")
-        self.assertEqual(result["matches"], [{"page": 2, "line": "M4 x 8.1 6.3 5.7", "previous_line": "M3 x 5.7 4.6 4.0"}])
+        self.assertEqual(result["matches"], [{"page": 2, "line": "M4 x 8.1 6.3 5.7", "previous_line": "M3 x 5.7 4.6 4.0",
+                                              "column_order": "unverified"}])
 
     def test_pdf_page_without_the_text_is_not_matched_on_the_wrong_page(self) -> None:
         _, result = run(*self.args(PDF, "--find", "Outside diameter"))

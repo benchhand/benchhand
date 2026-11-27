@@ -15,7 +15,10 @@ The lead runs this for each URL or file a sourcing researcher names; the researc
 local files only. SOURCE is an http(s) URL or a local file. The bytes go to
 HW_DIR/parts/PN/sources/FILE_NAME (default HW_DIR "hw"; the name comes from the URL path or the file)
 with a sidecar FILE_NAME.source.json holding origin, sha256, access date, size and kind. Record the
-sha256 in part.yaml where it cites the file. A different file under an existing name is refused.
+sha256 in part.yaml where it cites the file. The PN and the sources folder come from cad-record's layout
+(`layout.resolve`, entry `record.part_sources`). No directory below HW_DIR may be a symbolic link, and
+no file is replaced: the content is written to a temporary name and linked into place, the name and
+its sidecar are both reserved, and an existing different file or sidecar is a name_conflict.
 
 PDF: text per page (pypdf), as lines. HTML (stdlib parser): every <table> as a full grid, with each
 colspan and rowspan cell repeated in every grid position it covers, so a label that spans two
@@ -24,36 +27,59 @@ columns cannot shift a value under the neighbouring size. The header of a column
 
 --find TEXT matches case-insensitively. An HTML match is a grid row, printed whole with each cell's
 column header, its table number and row number (both 1-based); a PDF match is a line with its page
-and the line above it. A PDF has no grid: check the column order against the header line yourself.
+and the line above it. A PDF has no grid: its result and each match carry `column_order: "unverified"`,
+and the lead must check the column order against the header line (visually, in the stored PDF) before adopting a value.
 
 stdout: JSON with pn, origin, stored (relative to HW_DIR), sha256, accessed, kind, pages or tables,
-matches and findings. stderr: one line per finding. Exit 0 = read, 1 = at least one finding,
-2 = bad arguments. Findings: http_<status>, network_error, file_not_found, unreadable_file,
-unsupported_type, no_text_layer, name_conflict, no_match.
+column_order (PDF only), matches and findings. stderr: one line per finding. Exit 0 = read, 1 = at least one finding,
+2 = bad arguments. Findings: http_<status>, network_error, transfer_error, file_not_found, unreadable_file,
+unsupported_type, no_text_layer, unsafe_name, symlink_refused, storage_error, name_conflict, no_match.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
+import importlib.util
 import io
 import json
+import os
 import re
+import stat
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-PN = re.compile(r"^[A-Z]{2,5}-\d{4}$")
+LAYOUT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "layout.py"
 URL = re.compile(r"^https?://", re.IGNORECASE)
 HTML_MARK = re.compile(r"<\s*(?:table|html)\b", re.IGNORECASE)
 TIMEOUT_SECONDS = 30
 MAX_SPAN = 100
+SIDECAR_SUFFIX = ".source.json"
+
+
+def _cad_record(name: str, path: Path) -> Any:
+    """A cad-record module under `name`, loaded once per process."""
+    module = sys.modules.get(name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{path} not found")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return module
+
+
+LAYOUT = _cad_record("cad_record_layout", LAYOUT_PATH)
 
 
 class Finding(Exception):  # noqa: N818 - named for the report it becomes
@@ -75,10 +101,10 @@ def read_source(source: str) -> bytes:
         return fetch(source)
     try:
         return Path(source).read_bytes()
-    except FileNotFoundError:
-        raise Finding("file_not_found", f"no file {source}") from None
+    except FileNotFoundError as error:
+        raise Finding("file_not_found", f"no file {source}") from error
     except OSError as error:
-        raise Finding("unreadable_file", f"{source}: {error}") from None
+        raise Finding("unreadable_file", f"{source}: {error}") from error
 
 
 def fetch(url: str) -> bytes:
@@ -88,9 +114,11 @@ def fetch(url: str) -> bytes:
             data: bytes = response.read()
             return data
     except urllib.error.HTTPError as error:
-        raise Finding(f"http_{error.code}", f"{url} answered {error.code} {error.reason}") from None
+        raise Finding(f"http_{error.code}", f"{url} answered {error.code} {error.reason}") from error
+    except http.client.HTTPException as error:
+        raise Finding("transfer_error", f"{url}: the response was cut short or malformed ({error!r})") from error
     except (urllib.error.URLError, TimeoutError, OSError) as error:
-        raise Finding("network_error", f"{url}: {error}") from None
+        raise Finding("network_error", f"{url}: {error}") from error
 
 
 def classify(data: bytes, name: str) -> str:
@@ -115,7 +143,7 @@ def pdf_pages(data: bytes) -> list[list[str]]:
         reader = PdfReader(io.BytesIO(data))
         pages = [(page.extract_text() or "").splitlines() for page in reader.pages]
     except (PyPdfError, ValueError, KeyError, TypeError, OSError) as error:
-        raise Finding("unreadable_file", f"the PDF cannot be read: {error}") from None
+        raise Finding("unreadable_file", f"the PDF cannot be read: {error}") from error
     result = [[line for line in map(squeeze, lines) if line] for lines in pages]
     if not any(result):
         raise Finding("no_text_layer", "the PDF has no text layer (scanned or image only); supply a text PDF")
@@ -125,7 +153,7 @@ def pdf_pages(data: bytes) -> list[list[str]]:
 def find_in_pdf(pages: list[list[str]], needle: str) -> list[dict[str, Any]]:
     wanted = needle.lower()
     return [
-        {"page": number, "line": line, "previous_line": lines[index - 1] if index else ""}
+        {"page": number, "line": line, "previous_line": lines[index - 1] if index else "", "column_order": "unverified"}
         for number, lines in enumerate(pages, 1)
         for index, line in enumerate(lines)
         if wanted in line.lower()
@@ -147,16 +175,31 @@ class RawTable:
     rows: list[list[Cell]]
     header_rows: int = 0
     in_head: bool = False
+    cell: tuple[list[str], int, int] | None = None  # the open cell: text parts, colspan, rowspan
+
+    def close_cell(self) -> None:
+        """End the open cell, as `</td>`, `</th>`, the next cell, the next row or the end of the table does."""
+        if self.cell is not None:
+            parts, colspan, rowspan = self.cell
+            self.cell = None
+            self.rows[-1].append(Cell(squeeze("".join(parts)), colspan, rowspan))
+
+    def end_head(self) -> None:
+        if self.in_head:
+            self.header_rows = len(self.rows)
+            self.in_head = False
 
 
 class TableParser(HTMLParser):
-    """Collects every <table> (nested ones too) as rows of cells with their spans."""
+    """Collects every <table> (nested ones too) as rows of cells with their spans.
+
+    Cells and rows close implicitly the way the HTML parsing rules say: a new cell, a new row, a row
+    group or the end of the table ends the open cell, so a page that omits </td> and </tr> keeps every value."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.tables: list[RawTable] = []
         self._open: list[RawTable] = []
-        self._cell: list[tuple[list[str], int, int]] = []
         self._skip = 0
 
     @staticmethod
@@ -171,35 +214,42 @@ class TableParser(HTMLParser):
             table = RawTable(rows=[])
             self.tables.append(table)
             self._open.append(table)
-        elif not self._open:
-            return
-        elif tag == "thead":
-            self._open[-1].in_head = True
+        elif self._open:
+            self._start_in_table(self._open[-1], tag, attrs)
+
+    @staticmethod
+    def _start_in_table(table: RawTable, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in ("thead", "tbody", "tfoot", "tr", "td", "th"):
+            table.close_cell()
+        if tag == "thead":
+            table.in_head = True
+        elif tag in ("tbody", "tfoot"):
+            table.end_head()
         elif tag == "tr":
-            self._open[-1].rows.append([])
+            table.rows.append([])
         elif tag in ("td", "th"):
-            if not self._open[-1].rows:
-                self._open[-1].rows.append([])
-            self._cell.append(([], self._span(attrs, "colspan"), self._span(attrs, "rowspan")))
-        elif tag == "br" and self._cell:
-            self._cell[-1][0].append(" ")
+            if not table.rows:
+                table.rows.append([])
+            table.cell = ([], TableParser._span(attrs, "colspan"), TableParser._span(attrs, "rowspan"))
+        elif tag == "br" and table.cell is not None:
+            table.cell[0].append(" ")
 
     def handle_endtag(self, tag: str) -> None:
         if tag in ("script", "style"):
             self._skip = max(0, self._skip - 1)
-        elif tag == "table" and self._open:
-            self._open.pop()
-        elif tag == "thead" and self._open:
-            self._open[-1].in_head = False
-        elif tag == "tr" and self._open and self._open[-1].in_head:
-            self._open[-1].header_rows += 1
-        elif tag in ("td", "th") and self._cell and self._open:
-            parts, colspan, rowspan = self._cell.pop()
-            self._open[-1].rows[-1].append(Cell(squeeze("".join(parts)), colspan, rowspan))
+        elif not self._open:
+            return
+        elif tag == "table":
+            self._open.pop().close_cell()
+        elif tag in ("thead", "tr", "td", "th"):
+            table = self._open[-1]
+            table.close_cell()
+            if tag == "thead":
+                table.end_head()
 
     def handle_data(self, data: str) -> None:
-        if self._cell and not self._skip:
-            self._cell[-1][0].append(data)
+        if self._open and self._open[-1].cell is not None and not self._skip:
+            self._open[-1].cell[0].append(data)
 
 
 def expand(table: RawTable) -> list[list[str]]:
@@ -258,26 +308,121 @@ def find_in_tables(tables: list[tuple[list[list[str]], list[str]]], needle: str)
 
 
 def file_name(source: str, kind: str, override: str | None) -> str:
+    """The file name under sources/: the one given, else the last segment of the URL path or file path."""
     if override:
         name = override
     elif URL.match(source):
-        name = Path(urllib.parse.urlparse(source).path).name or "index"
+        name = urllib.parse.unquote(Path(urllib.parse.urlparse(source).path).name) or "index"
     else:
         name = Path(source).name
-    name = re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "source"
     return name if "." in name else f"{name}.{'pdf' if kind == 'pdf' else 'html'}"
 
 
+def sources_folder(hw: Path, pn: str) -> Path:
+    """The part's sources folder, by the shared layout entry (it checks the PN against its grammar)."""
+    return Path(LAYOUT.resolve(hw, "record.part_sources", PN=pn))
+
+
+def check_name(hw: Path, pn: str, name: str) -> None:
+    """The name must be one file name that the layout accepts under the part's sources folder."""
+    match = LAYOUT.classify(sources_folder(hw, pn) / name, hw)
+    if (match is None or match.entry.id != "record.part_sources" or name.startswith(".") or not name.isprintable()
+            or name != name.strip() or name.endswith(SIDECAR_SUFFIX)):
+        raise Finding("unsafe_name", f"{name!r} is not a usable file name under sources/; pass --name")
+
+
+def _is_link(directory_fd: int, name: str) -> bool:
+    try:
+        return stat.S_ISLNK(os.lstat(name, dir_fd=directory_fd).st_mode)
+    except OSError:
+        return False
+
+
+def _refuse_link(directory_fd: int, name: str) -> None:
+    if _is_link(directory_fd, name):
+        raise Finding("symlink_refused", f"{name} is a symbolic link; the output path may contain none")
+
+
+def _open_directory(parent_fd: int, name: str) -> int:
+    """Open (creating when absent) directory `name` below `parent_fd` without following a link."""
+    try:
+        os.mkdir(name, 0o777, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    try:
+        return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    except OSError as error:
+        _refuse_link(parent_fd, name)
+        raise Finding("storage_error", f"{name} is not a usable directory: {error}") from error
+
+
+def _link_new(directory_fd: int, name: str, payload: bytes) -> bool:
+    """Write `payload` under a temporary name and link it as `name`, never replacing; False when `name` exists."""
+    temp = f".tmp-{uuid.uuid4().hex}"
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=directory_fd)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temp, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        os.unlink(temp, dir_fd=directory_fd)
+
+
+def _read_existing(directory_fd: int, name: str) -> bytes:
+    _refuse_link(directory_fd, name)
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+    with os.fdopen(fd, "rb") as handle:
+        return handle.read()
+
+
+def _sidecar_digest(payload: bytes) -> object:
+    try:
+        return json.loads(payload).get("sha256")
+    except (ValueError, AttributeError):
+        return None
+
+
+def _install(directory_fd: int, name: str, data: bytes, record: dict[str, Any]) -> None:
+    """Reserve `name` and its sidecar without replacing either; an earlier identical store is accepted."""
+    sidecar = name + SIDECAR_SUFFIX
+    created = _link_new(directory_fd, name, data)
+    try:
+        if not created and _read_existing(directory_fd, name) != data:
+            raise Finding("name_conflict", f"{name} exists with other content; pass --name to keep both")
+        payload = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        if not _link_new(directory_fd, sidecar, payload) and _sidecar_digest(_read_existing(directory_fd, sidecar)) != record["sha256"]:
+            raise Finding("name_conflict", f"{sidecar} exists and does not describe this content; pass --name to keep both")
+    except BaseException:
+        if created:
+            os.unlink(name, dir_fd=directory_fd)
+        raise
+
+
 def store(data: bytes, hw: Path, pn: str, name: str, record: dict[str, Any]) -> str:
-    folder = hw / "parts" / pn / "sources"
-    target = folder / name
-    if target.exists() and target.read_bytes() != data:
-        raise Finding("name_conflict", f"{target} exists with other content; pass --name to keep both")
-    folder.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-    sidecar = folder / f"{name}.source.json"
-    sidecar.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return target.relative_to(hw).as_posix()
+    """Store `data` as sources/`name` with its sidecar; returns the path relative to `hw`.
+
+    Every directory is opened with O_NOFOLLOW below `hw`, and files are linked into place, so a
+    symbolic link anywhere on the output path is refused and no existing file is overwritten."""
+    check_name(hw, pn, name)
+    folder = sources_folder(hw, pn)
+    descriptors: list[int] = []
+    try:
+        descriptors.append(os.open(hw.parent, os.O_RDONLY | os.O_DIRECTORY))
+        for part in (hw.name, *folder.relative_to(hw).parts):
+            descriptors.append(_open_directory(descriptors[-1], part))
+        _install(descriptors[-1], name, data, record)
+    except OSError as error:
+        raise Finding("storage_error", f"cannot store {name} under {folder}: {error}") from error
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+    return (folder / name).relative_to(hw).as_posix()
 
 
 # ---- command line
@@ -285,8 +430,10 @@ def store(data: bytes, hw: Path, pn: str, name: str, record: dict[str, Any]) -> 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     def part_number(text: str) -> str:
-        if not PN.match(text):
-            raise argparse.ArgumentTypeError(f"{text!r} is not a part number such as PIN-0001")
+        try:
+            LAYOUT.load().path("record.part_sources", {"PN": text})
+        except LAYOUT.LayoutError as error:
+            raise argparse.ArgumentTypeError(f"{text!r} is not a part number such as PIN-0001") from error
         return text
 
     parser = argparse.ArgumentParser(description="store a source for a part and read table rows exactly")
@@ -302,6 +449,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def extract(args: argparse.Namespace, result: dict[str, Any]) -> None:
     """Fill `result` from the source; a Finding stops the run."""
     data = read_source(args.source)
+    hw = Path(os.path.abspath(args.hw))
     name_hint = file_name(args.source, "html", args.name)
     kind = classify(data, name_hint)
     pages = pdf_pages(data) if kind == "pdf" else []
@@ -310,8 +458,8 @@ def extract(args: argparse.Namespace, result: dict[str, Any]) -> None:
     digest = hashlib.sha256(data).hexdigest()
     record = {"origin": args.source, "sha256": digest, "accessed": accessed, "bytes": len(data), "kind": kind}
     name = file_name(args.source, kind, args.name)
-    result.update(kind=kind, sha256=digest, accessed=accessed, **({"pages": len(pages)} if kind == "pdf" else {"tables": len(tables)}))
-    result["stored"] = store(data, args.hw, args.pn, name, record)
+    result.update(kind=kind, sha256=digest, accessed=accessed, **({"pages": len(pages), "column_order": "unverified"} if kind == "pdf" else {"tables": len(tables)}))
+    result["stored"] = store(data, hw, args.pn, name, record)
     if args.find is not None:
         matches = find_in_pdf(pages, args.find) if kind == "pdf" else find_in_tables(tables, args.find)
         result["matches"] = matches
