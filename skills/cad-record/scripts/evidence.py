@@ -100,6 +100,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 
 mi = _load_module("cad_record_manufacturing_intent", SCRIPTS / "manufacturing_intent.py")
+yaml_loader = _load_module("cad_record_yaml_loader", SCRIPTS / "yaml_loader.py")
 impact = _load_module("cad_record_impact", SCRIPTS / "impact.py")
 layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
@@ -1345,10 +1346,33 @@ def record_inputs(hw: Path) -> dict[str, bytes]:
     return found
 
 
+CAPABILITIES_REL = "manufacturing/capabilities.yaml"
+
+
+def digest_form(rel: str, data: bytes) -> bytes:
+    """The bytes of record input `rel` that a freshness digest covers: its own, except that capabilities.yaml is read
+    as data without any profile's calibration_state, which is wording only (no check reads it, and no outcome moves with
+    it), so recording or editing one never stales a packet or a stamp. Every other edit still changes it. A file that does
+    not parse as a profile mapping stays as it is."""
+    if rel != CAPABILITIES_REL:
+        return data
+    try:
+        document = yaml_loader.safe_load(data.decode("utf-8"))
+    except (UnicodeError, ValueError, yaml_loader.yaml.YAMLError):
+        return data
+    if not isinstance(document, Mapping) or not isinstance(document.get("profiles"), list):
+        return data
+    profiles = [{k: v for k, v in item.items() if k != "calibration_state"} if isinstance(item, Mapping) else item
+                for item in document["profiles"]]
+    neutral = {**document, "profiles": profiles}
+    return b"capabilities-without-calibration-state:" + json.dumps(
+        neutral, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")
+
+
 def record_digest(files: Mapping[str, bytes]) -> str:
-    """sha256 of record inputs (relative path -> bytes) as path-framed canonical JSON."""
-    return _canonical_sha({"record": sorted([rel, hashlib.sha256(data).hexdigest()] for rel, data in files.items()
-                                            if is_record_input(rel))})
+    """sha256 of record inputs (relative path -> bytes) as path-framed canonical JSON (digest_form of each)."""
+    return _canonical_sha({"record": sorted([rel, hashlib.sha256(digest_form(rel, data)).hexdigest()]
+                                            for rel, data in files.items() if is_record_input(rel))})
 
 
 def _safe_file(hw: Path, rel: str) -> Path:

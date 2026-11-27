@@ -408,9 +408,15 @@ def staged_tree_hash(root: Path, committed: bool = False) -> str:
     entries = tree_entries(root, committed)
     digest = hashlib.sha256()
     for entry in entries.splitlines(keepends=True):
-        _, separator, path = entry.partition(b"\t")
+        meta, separator, path = entry.partition(b"\t")
         if not separator or path.startswith(b"hw/.cad/"):
             continue
+        if path.rstrip(b"\r\n") == f"hw/{evidence.CAPABILITIES_REL}".encode():
+            # a calibration_state is wording: hash the blob without it (evidence.digest_form), so it never stales a stamp
+            mode, sha, stage = meta.split(b" ")
+            blob = git("cat-file", "blob", sha.decode(), cwd=root)
+            neutral = hashlib.sha256(evidence.digest_form(evidence.CAPABILITIES_REL, blob)).hexdigest().encode()
+            entry = mode + b" " + neutral + b" " + stage + separator + path
         digest.update(entry)
     return digest.hexdigest()
 
