@@ -248,11 +248,6 @@ class Normalization(unittest.TestCase):
                                                 "intent.units"),
             "accuracy as a parameter": (lambda d: capability(d, 0)["parameters"].update(hole_accuracy=fx.known(fx.quantity(0.1))), "intent.profile"),
             "text parameter as a quantity": (lambda d: capability(d, 0)["parameters"].update(enclosure=fx.known(fx.quantity(1))), "intent.units"),
-            "calibration state citing an undeclared decision": (lambda d: capability(d, 1).update(
-                calibration_state={"status": "standard", "source": fx.source("decision", decision="DR-009")}), "intent.reference"),
-            "calibration state citing a missing artifact": (lambda d: capability(d, 1).update(
-                calibration_state={"status": "standard", "source": fx.source("datasheet", artifact="manufacturing/sources/none.pdf",
-                                                                             sha256="0" * 64)}), "intent.source_artifact"),
             "template used as a capability": (lambda d: capability(d, 0).update(template=True, guidance=["x"], calibrations=[]), "intent.profile"),
             "laser profile on a print": (lambda d: route(d)[0].update(capability="tst_laser"), "intent.profile"),
             "calibration from an estimate": (lambda d: capability(d, 0)["calibrations"][0].update(source=fx.source("estimate")), "intent.profile"),
@@ -296,19 +291,56 @@ class Normalization(unittest.TestCase):
                 self.assertEqual(severity, "warning" if code == "intent.coverage" else "error")
 
     def test_a_calibration_state_is_read_as_a_typed_status_and_a_malformed_one_as_unknown_with_a_warning(self) -> None:
+        absent = object()
         for label, state, status, warned in (
-                ("absent", None, None, False), ("standard", fx.calibration_state("standard"), "standard", False),
+                ("absent", absent, None, False), ("explicit null", None, "unknown", True),
+                ("standard", fx.calibration_state("standard"), "standard", False),
                 ("a scalar", "standard", "unknown", True), ("a list", ["standard"], "unknown", True),
                 ("an unknown status", {"status": "factory", "source": {}}, "unknown", True),
                 ("an unhashable status", {"status": ["standard"]}, "unknown", True)):
             with self.subTest(label):
                 documents = fx.tst_record()
-                if state is not None:
+                if state is not absent:
                     documents["manufacturing/capabilities.yaml"]["profiles"][1]["calibration_state"] = state
                 record = mi.normalize_record(documents)
                 self.assertEqual(record.capabilities["tst_laser"].calibration_state, status)
                 found = [p for p in record.problems if p.code == "intent.calibration_state"]
                 self.assertEqual([p.severity for p in found], ["warning"] if warned else [])
+
+    def state_record(self, source: Any, sources: dict[str, bytes] | None = None) -> Any:
+        documents = fx.tst_record()
+        documents["_sources"].update(sources or {})
+        documents["manufacturing/capabilities.yaml"]["profiles"][1]["calibration_state"] = {"status": "standard", "source": source}
+        return mi.normalize_record(documents, hw=fx.write_record(temp_hw(self), documents))
+
+    def test_a_calibration_state_source_with_a_dangling_provenance_is_an_advisory_never_an_error(self) -> None:
+        for label, source in (("an undeclared decision", fx.source("decision", decision="DR-009")),
+                              ("a missing artifact", fx.source("datasheet", artifact="manufacturing/sources/none.pdf", sha256="0" * 64)),
+                              ("changed bytes", fx.source("datasheet", artifact="manufacturing/sources/tst-sheet.pdf", sha256="1" * 64))):
+            with self.subTest(label):
+                record = self.state_record(source)
+                self.assertEqual([p for p in record.problems if p.severity == "error"], [])
+                found = [p for p in record.problems if p.code == "intent.calibration_state"]
+                self.assertEqual([(p.severity, p.pointer) for p in found], [("warning", "profiles/1/calibration_state/source")])
+
+    def test_an_artifact_cited_only_by_a_calibration_state_stays_out_of_the_source_inventory(self) -> None:
+        extra = b"%PDF-1.4 only the state cites this\n"
+        baseline = mi.source_artifacts(mi.normalize_record(fx.tst_record()))
+        source = fx.source("datasheet", artifact="manufacturing/sources/extra.pdf", sha256=fx.sha256(extra))
+        record = self.state_record(source, {"manufacturing/sources/extra.pdf": extra})
+        self.assertEqual(dict(mi.source_artifacts(record)), dict(baseline))
+        self.assertEqual([p for p in record.problems if p.code == "intent.calibration_state"], [])
+
+    def test_a_malformed_calibration_state_source_is_reported_and_never_aborts_loading(self) -> None:
+        for label, source in (("a list artifact", {"kind": "datasheet", "reference": "x", "artifact": ["a"], "sha256": "0" * 64}),
+                              ("a list decision", {"kind": "decision", "reference": "x", "decision": ["DR-001"]}),
+                              ("a mapping sha256", {"kind": "datasheet", "reference": "x", "artifact": "a.pdf", "sha256": {"a": 1}}),
+                              ("a scalar source", "DR-001")):
+            with self.subTest(label):
+                record = self.state_record(source)
+                found = [p for p in record.problems if p.code == "intent.calibration_state"]
+                self.assertEqual([p.severity for p in found][:1], ["warning"] if label != "a scalar source" else [])
+                self.assertEqual([p for p in record.problems if p.severity == "error" and "calibration_state" in p.pointer], [])
 
     def test_a_custom_calibration_state_without_a_measured_calibration_is_a_warning_that_blocks_nothing(self) -> None:
         documents = fx.tst_record()
