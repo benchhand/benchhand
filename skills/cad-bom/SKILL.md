@@ -20,11 +20,12 @@ TRIGGER
 
 1. Export the assembly as STEP AP242 with product names that start with the PN
    (`PIN-0001` or `PIN-0001 Dowel pin`).
-2. `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-bom/scripts/bom.py ASSEMBLY.step --hw hw [--version vN|latest]` writes `hw/bom.csv` by default and prints JSON summary fields `status`, `rows`, `total_qty`, `missing_part_yaml`, `missing_in_step`, `unidentified`. With `--version`, `reconciled_against` names the selected version. The command reads metadata from that version's snapshot.
+2. `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-bom/scripts/bom.py ASSEMBLY.step --hw hw [--version vN|latest]` writes `hw/bom.csv` by default and prints JSON summary fields `status`, `rows`, `total_qty`, `missing_part_yaml`, `missing_in_step`, `unidentified`, `invalid_designation` (schema: `cad-record/schemas/bom-summary.schema.json`). With `--version`, `reconciled_against` names the selected version. The command reads metadata from that version's snapshot.
 3. Exit 1 means the record and the model disagree; bom.csv is still written. Resolve each list:
    `missing_part_yaml` → create the part.yaml or rename the product;
    `missing_in_step` → remove the stale part or add it to the model;
-   `unidentified` → give the leaf product a PN.
+   `unidentified` → give the leaf product a PN;
+   `invalid_designation` → each item names the PN, the `purchase.designation.<field>` (or `purchase.designation` for a value that is no mapping) and the reason (a blank field, a size that embeds the length, a length that is not a finite positive number, a property class the YAML reads as a number): correct that field in the part.yaml, quoting `"8.8"`. The row stays in the BOM with its designation column empty until the field is valid.
 4. Rerun until exit 0, then COMMIT records the bom.csv change with the stage.
    Without `--version`, the current `hw/parts` records are reconciled; with it, BOM metadata and reconciliation use the selected version's snapshot, not current records.
 

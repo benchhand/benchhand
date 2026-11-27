@@ -59,6 +59,69 @@ class Eligibility(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(word, ci.designation_problem(designation) or "")
 
+    def test_each_invalid_field_of_a_supplied_designation_is_named_with_its_reason(self) -> None:
+        cases = {
+            "a blank standard": ({**SCREW, "standard": "  \t"}, [("standard", "missing or blank")]),
+            "a size that embeds the length": ({**SCREW, "size": "M4x20"}, [("size", "embeds a length")]),
+            "a zero length": ({**SCREW, "length": 0}, [("length", "positive number")]),
+            "an infinite length": ({**SCREW, "length": float("inf")}, [("length", "positive number")]),
+            "an integer length beyond float range": ({**SCREW, "length": 10**400}, [("length", "positive number")]),
+            "a huge integer length beside an invalid standard": ({**SCREW, "standard": " ", "length": 10**400},
+                                                                  [("standard", "missing or blank"), ("length", "positive number")]),
+            "an unhashable family": ({**INSERT, "family": ["heat_set_insert"]}, [("family", "not a known commodity family")]),
+            "a mapping family": ({**INSERT, "family": {"a": 1}}, [("family", "not a known commodity family")]),
+            "a not-a-number length": ({**SCREW, "length": float("nan")}, [("length", "positive number")]),
+            "a numeric property class": ({**SCREW, "property_class": 8.8}, [("property_class", "must be text")]),
+            "two bad fields, in record order": ({**SCREW, "property_class": 8.8, "standard": " "},
+                                                [("standard", "missing or blank"), ("property_class", "must be text")]),
+            "an insert with a zero outside diameter": ({**INSERT, "outside_diameter": 0}, [("outside_diameter", "positive number")]),
+            "a feature standard": ({**SCREW, "standard": "ISO 965-1"}, [("standard", "feature standard")]),
+        }
+        for name, (designation, expected) in cases.items():
+            with self.subTest(name):
+                issues = ci.designation_issues(designation)
+                self.assertEqual([field for field, _ in issues], [field for field, _ in expected])
+                for (_, reason), (_, word) in zip(issues, expected):
+                    self.assertIn(word, reason)
+                self.assertIsNotNone(ci.designation_problem(designation))
+
+    def test_a_supplied_scalar_designation_is_an_issue_but_an_omitted_one_is_not(self) -> None:
+        def purchase(**extra: Any) -> dict[str, Any]:
+            return {"intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"identity": {"status": "unknown", "reason": "x"}, **extra}}]}}
+
+        for name, value in {"text": "ISO 4762 M4x20", "number": 5, "list": [1], "empty text": ""}.items():
+            with self.subTest(name):
+                issues = ci.part_designation_issues(purchase(designation=value))
+                self.assertEqual([field for field, _ in issues], [""])
+                self.assertIn("mapping", issues[0][1])
+        for name, record in {"omitted": purchase(), "no route": {}}.items():
+            with self.subTest(name):
+                self.assertEqual(ci.part_designation_issues(record), [])
+
+    def test_an_explicit_null_designation_is_an_issue_because_the_schema_allows_only_an_object(self) -> None:
+        record = {"intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"designation": None}}]}}
+        issues = ci.part_designation_issues(record)
+        self.assertEqual([field for field, _ in issues], [""])
+        self.assertIn("NoneType", issues[0][1])
+
+    def test_a_value_too_large_to_render_is_reported_by_type_without_raising(self) -> None:
+        huge = 10**5000  # beyond Python's integer-to-text limit
+        record = {"intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"designation": huge}}]}}
+        for name, issues in {
+            "a scalar designation": ci.part_designation_issues(record),
+            "a family": ci.designation_issues({**INSERT, "family": [huge]}),
+            "a kind": ci.designation_issues({**SCREW, "kind": huge}),
+            "a property class": ci.designation_issues({**SCREW, "property_class": huge}),
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(len(issues), 1)
+                self.assertIn("list" if name == "a family" else "int", issues[0][1])
+                self.assertLess(len(issues[0][1]), 300)
+
+    def test_an_eligible_designation_has_no_issue(self) -> None:
+        for designation in (SCREW, NUT, INSERT):
+            self.assertEqual(ci.designation_issues(designation), [])
+
     def test_a_nut_may_omit_its_length_and_a_dowel_may_not(self) -> None:
         dowel = {**NUT, "standard": "ISO 8734", "size": "6"}
         self.assertIsNone(ci.designation_problem(NUT))

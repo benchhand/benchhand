@@ -1479,6 +1479,21 @@ class Acceptance(ReleaseCase):
         self.assertIn("record.version_unsupported", [item.get("code") for item in report["findings"]])
         self.assertEqual(tree(hw), before)
 
+    def test_a_cited_artifact_that_is_gone_is_refused_at_its_ledger_field_by_both_cli_entry_points(self) -> None:
+        hw = self.project()
+        ledger = yaml.safe_load((hw / "manufacturing" / "evidence.yaml").read_text(encoding="utf-8"))
+        (hw.parent / ledger["entries"][0]["artifacts"][0]["path"]).unlink()  # the file EV-001 cites
+        pointer = "#/entries/EV-001/artifacts/0/path"
+        code, report = cli(hw)
+        self.assertEqual((code, report["status"]), (1, "refused"))
+        self.assertEqual([item["path"] for item in report["findings"] if item.get("code") == "release.acceptance"],
+                         ["hw/manufacturing/evidence.yaml" + pointer])
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["validate.py", str(hw.parent), "--json"]), contextlib.redirect_stdout(out):
+            code = validate.main()
+        anchored = [item["path"] for item in json.loads(out.getvalue())["findings"] if item.get("code") == "record.evidence_anchor"]
+        self.assertEqual((code, anchored), (1, [str(hw / "manufacturing" / "evidence.yaml") + pointer]))
+
     def test_a_freeze_without_an_acceptance_anchor_refuses(self) -> None:
         hw = self.project(anchor=False)
         self.assertEqual(validate.blocking(validate.validate_project(hw)), [], "readable: only the release refuses an unanchored freeze")

@@ -156,7 +156,15 @@ SERVICE_POLICY: Mapping[str, Any] = project_scope.SERVICE_POLICY
 
 
 class EvidenceError(ValueError):
-    """An acceptance inventory that cannot be formed: a missing, linked, escaping or unnormalized path."""
+    """An acceptance inventory that cannot be formed: a missing, linked, escaping or unnormalized path.
+    `findings` are (location, message) pairs, a location being the record field that cites the file
+    (hw/...#/entries/<id>/artifacts/<n>/path) or the file itself; `location` is the first one."""
+
+    def __init__(self, message: str, location: str | None = None,
+                 findings: Sequence[tuple[str, str]] = ()) -> None:
+        super().__init__(message)
+        self.findings: tuple[tuple[str, str], ...] = tuple(findings) or ((location or "hw/", message),)
+        self.location: str | None = location or (self.findings[0][0] if findings else None)
 
 
 @dataclass(frozen=True)
@@ -882,8 +890,17 @@ def project_paths(hw: Path) -> Any:
     return cited_paths.ProjectPaths.for_hw(hw, layout.bundle_kinds())
 
 
-def _path_findings(problems: Iterable[Any], where: str, ident: Any, obligation: str | None = None) -> list[Finding]:
-    return [Finding(problem.code, where, f"{ident}: {problem.message}", obligation=obligation) for problem in problems]
+def _field_pointer(where: str) -> str:
+    """The JSON pointer of a path problem's field: `artifacts[0]` -> /artifacts/0/path, `producer.bundle` -> /producer/bundle."""
+    pointer = re.sub(r"\[(\d+)\]", r"/\1", where).replace(".", "/")
+    return "/" + pointer + ("/path" if re.fullmatch(r"artifacts/\d+|bundle", pointer) else "")
+
+
+def _path_findings(problems: Iterable[Any], where: str, ident: Any, obligation: str | None = None,
+                   *, field: bool = False) -> list[Finding]:
+    """Findings for path problems; with `field` each is located at the cited field, not the whole entry."""
+    return [Finding(problem.code, where + _field_pointer(problem.where) if field else where, f"{ident}: {problem.message}",
+                    obligation=obligation) for problem in problems]
 
 
 _PATH_CODES = frozenset({"evidence.scratch_path", "evidence.uncited_artifact"})
@@ -1104,19 +1121,20 @@ def ledger_findings(record: Any, *, approved: Callable[[str | None], bool], toda
     return findings
 
 
-def _ledger_path_findings(record: Any, paths: Any) -> list[Finding]:
+def _ledger_path_findings(record: Any, paths: Any, *, field: bool = False) -> list[Finding]:
     findings = []
     refused = set()
     for entry in record.evidence:
         problems = cited_paths.entry_problems(paths, entry)
         if problems:
             refused.add(str(entry.get("id")))
-        findings += _path_findings(problems, f"hw/manufacturing/evidence.yaml#/entries/{entry.get('id')}", entry.get("id"))
+        findings += _path_findings(problems, f"hw/manufacturing/evidence.yaml#/entries/{entry.get('id')}", entry.get("id"),
+                                   field=field)
     findings += [_reliant_finding(ident, names) for ident, names in _reliant(record, refused).items()]
     for disposition in record.dispositions:
         findings += _path_findings(cited_paths.disposition_problems(paths, disposition),
                                    f"hw/manufacturing/findings.yaml#/dispositions/{disposition.get('finding')}",
-                                   f"finding {disposition.get('finding')}")
+                                   f"finding {disposition.get('finding')}", field=field)
     return findings
 
 
@@ -1251,6 +1269,21 @@ def _hw_relative(value: Any) -> str:
     return value[3:]
 
 
+def _cited_rel(value: Any, location: str) -> str:
+    """`_hw_relative`, a refusal carrying the ledger field `location` that cites the value."""
+    try:
+        return _hw_relative(value)
+    except EvidenceError as error:
+        raise EvidenceError(str(error), location) from error
+
+
+def _location_of(cited_at: Mapping[str, str], rel: str) -> str:
+    """The ledger field that cites `rel`, or a file below it (a link met on the way), else the file itself."""
+    if rel in cited_at:
+        return cited_at[rel]
+    return next((location for cited, location in cited_at.items() if cited.startswith(f"{rel}/")), f"hw/{rel}")
+
+
 def acceptance_inventory(hw: Path, record: Any, packets: Iterable[ProducerPacket] = ()) -> dict[str, str]:
     """The acceptance inventory: `hw/<path>` -> sha256 of the verification table, the evidence ledger and
     finding dispositions, every relied-on bundle manifest (cited evidence bundles, dispositioned producer
@@ -1259,32 +1292,48 @@ def acceptance_inventory(hw: Path, record: Any, packets: Iterable[ProducerPacket
     EvidenceError when a path is unnormalized, escapes hw/, is a link or is missing, or when a ledger
     entry or disposition cites scratch, outside or unlisted files (evidence_paths)."""
     hw = Path(hw)
-    refused = _ledger_path_findings(record, project_paths(hw))
+    refused = _ledger_path_findings(record, project_paths(hw), field=True)
     if refused:
-        raise EvidenceError("; ".join(f"{item.path}: {item.message}" for item in refused))
+        raise EvidenceError("; ".join(f"{item.path}: {item.message}" for item in refused),
+                            findings=[(item.path, item.message) for item in refused])
     rels = {rel for rel in LEDGER_FILES if (hw / rel).is_file() or (hw / rel).is_symlink()}
+    cited_at: dict[str, str] = {}  # rel -> the ledger field that first cites it
     for entry in record.evidence:
-        for artifact in entry.get("artifacts") or ():
-            rels.add(_hw_relative(artifact.get("path")))
+        field = f"hw/manufacturing/evidence.yaml#/entries/{entry.get('id')}"
+        for index, artifact in enumerate(entry.get("artifacts") or ()):
+            location = f"{field}/artifacts/{index}/path"
+            rel = _cited_rel(artifact.get("path"), location)
+            rels.add(rel)
+            cited_at.setdefault(rel, location)
         if isinstance(entry.get("bundle"), Mapping):
-            rels.add(f"{_hw_relative(entry['bundle'].get('path'))}/{layout.MANIFEST}")
+            location = f"{field}/bundle/path"
+            rel = f"{_cited_rel(entry['bundle'].get('path'), location)}/{layout.MANIFEST}"
+            rels.add(rel)
+            cited_at.setdefault(rel, location)
     for disposition in record.dispositions:
-        rels.add(f"{_hw_relative((disposition.get('producer') or {}).get('bundle'))}/{layout.MANIFEST}")
+        location = f"hw/manufacturing/findings.yaml#/dispositions/{disposition.get('finding')}/producer/bundle"
+        rel = f"{_cited_rel((disposition.get('producer') or {}).get('bundle'), location)}/{layout.MANIFEST}"
+        rels.add(rel)
+        cited_at.setdefault(rel, location)
     for packet in packets:
         rels.add(f"{_hw_relative(packet.bundle)}/{layout.MANIFEST}")
     rels.update(record.artifacts)
     sources = hw / SOURCES_DIR
     if sources.is_symlink():
-        raise EvidenceError(f"hw/{SOURCES_DIR} is a symbolic link")
+        raise EvidenceError(f"hw/{SOURCES_DIR} is a symbolic link", _location_of(cited_at, SOURCES_DIR))
     for directory, folders, files in os.walk(sources, followlinks=False):
         for name in folders + files:
             path = Path(directory) / name
             if path.is_symlink():
-                raise EvidenceError(f"hw/{path.relative_to(hw).as_posix()} is a symbolic link")
+                where = path.relative_to(hw).as_posix()
+                raise EvidenceError(f"hw/{where} is a symbolic link", _location_of(cited_at, where))
         rels.update((Path(directory) / name).relative_to(hw).as_posix() for name in files)
     inventory = {}
     for rel in sorted(rels):
-        inventory[f"hw/{rel}"] = _sha256(_safe_file(hw, rel))
+        try:
+            inventory[f"hw/{rel}"] = _sha256(_safe_file(hw, rel))
+        except EvidenceError as error:
+            raise EvidenceError(str(error), _location_of(cited_at, rel)) from error
     return inventory
 
 
@@ -1719,7 +1768,12 @@ def main(argv: list[str] | None = None) -> int:
             return code
         assessment, packets = build_assessment(hw, args.version)
         if args.command == "digest":
-            inventory, evidence_sha256 = version_acceptance(hw, str(assessment.version), assessment.record, packets)
+            try:
+                inventory, evidence_sha256 = version_acceptance(hw, str(assessment.version), assessment.record, packets)
+            except EvidenceError as error:  # a record finding (as validate.py and release.py report it), not a usage error
+                print(json.dumps({"status": "refused", "findings": [
+                    {"path": path, "message": message, "severity": "error"} for path, message in error.findings]}, indent=2))
+                return 1
             print(json.dumps({"version": assessment.version, "evidence_sha256": evidence_sha256,
                               "inventory": inventory, "status": "ok"}, indent=2))
             return 0

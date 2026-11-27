@@ -38,7 +38,8 @@ imported inside the readers so `roll_up` stays importable by plain unit tests.
 
 stdout: JSON summary. stderr: diagnostics (OCCT translator output included).
 Exit 0 = BOM complete, 1 = record mismatch (leaf part without part.yaml,
-part.yaml absent from STEP, or a leaf product without a part number; bom.csv
+part.yaml absent from STEP, a leaf product without a part number, or an invalid field in a
+structured purchase.designation, reported as `invalid_designation` items {PN, field, reason}; bom.csv
 is still written), 2 = usage or infrastructure error.
 """
 
@@ -239,6 +240,17 @@ def _cell(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def designation_findings(rows: list[dict[str, str]], parts: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
+    """One finding per invalid field of each BOM row's supplied structured designation: its PN, the
+    `purchase.designation.<field>` and the reason. The row itself stays in the BOM."""
+    identity = commodity_identity()
+    findings: list[dict[str, str]] = []
+    for pn in dict.fromkeys(row["PN"] for row in rows):
+        for field, reason in identity.part_designation_issues(parts.get(pn) or {}):
+            findings.append({"PN": pn, "field": "purchase.designation" + (f".{field}" if field else ""), "reason": reason})
+    return findings
+
+
 def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Flatten the product tree into indented BOM rows and record mismatches."""
     rows: list[dict[str, str]] = []
@@ -347,20 +359,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"bom: STEP file not found: {args.step}", file=sys.stderr)
         return 2
     try:
-        result = roll_up(read_step_tree(args.step), load_parts(args.hw, record_hw))
+        parts = load_parts(args.hw, record_hw)
+        result = roll_up(read_step_tree(args.step), parts)
+        result["invalid_designation"] = designation_findings(result["rows"], parts)
         write_csv(out, result["rows"])
     except (BomError, OSError) as error:
         print(f"bom: {error}", file=sys.stderr)
         return 2
-    failed = bool(result["missing_part_yaml"] or result["missing_in_step"] or result["unidentified"])
+    return report(result, out, version)
+
+
+def report(result: dict[str, Any], out: Path, version: str | None) -> int:
+    """Print the JSON summary on stdout and each finding on stderr; the exit code (1 when the record and the model disagree)."""
+    keys = ("missing_part_yaml", "missing_in_step", "unidentified")
+    failed = any(result[key] for key in keys) or bool(result["invalid_designation"])
     summary = {"status": "fail" if failed else "pass", "bom_csv": str(out), **result}
     if version:
         summary["reconciled_against"] = version
     json.dump(summary, sys.stdout, indent=2)
     sys.stdout.write("\n")
-    for key in ("missing_part_yaml", "missing_in_step", "unidentified"):
+    for key in keys:
         if result[key]:
             print(f"bom: {key}: {', '.join(result[key])}", file=sys.stderr)
+    for item in result["invalid_designation"]:
+        print(f"bom: invalid_designation: {item['PN']} {item['field']} {item['reason']}", file=sys.stderr)
     return 1 if failed else 0
 
 

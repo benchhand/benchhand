@@ -1323,6 +1323,101 @@ class EvidenceRunProducers(BuiltRecord):
                                                               "open": [{"obligation": parts, "outcome": "fail"}]}}, "layout")
 
 
+class EvidenceDigestCli(BuiltRecord):
+    """`evidence.py digest` on a ledger that cites a file the project cannot hold: a refusal finding, never exit 2."""
+
+    FIELD = "hw/manufacturing/evidence.yaml#/entries/EV-001/artifacts/0/path"
+
+    def digest(self, cited: str) -> tuple[int, dict[str, Any]]:
+        record = impact.read_record(self.hw)
+        entry = acceptance.entry(record, "EV-001", {"product": True, "requirements": ["REQ-001"]}, "cad_valid",
+                                 requirement="REQ-001", version="v1", manifest_sha256=V1, artifacts=["hw/verification.csv"])
+        entry["artifacts"][0]["path"] = cited
+        acceptance.write_ledger(self.hw, [entry])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = evidence.main(["digest", "--hw", str(self.hw), "--version", "v1"])
+        return code, json.loads(out.getvalue())
+
+    def schema_errors(self, report: Any) -> list[str]:
+        schema = json.loads((HERE.parent / "schemas" / "evidence-digest.schema.json").read_text(encoding="utf-8"))
+        return [e.message for e in Draft202012Validator(schema).iter_errors(report)]
+
+    def run_digest(self, version: str) -> tuple[int, Any]:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = evidence.main(["digest", "--hw", str(self.hw), "--version", version])
+        return code, json.loads(out.getvalue())
+
+    def test_the_schema_accepts_a_successful_digest_and_an_infrastructure_error(self) -> None:
+        code, report = self.run_digest("v1")
+        self.assertEqual((code, report["status"]), (0, "ok"), report)
+        self.assertEqual(self.schema_errors(report), [])
+        code, report = self.run_digest("v9")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertEqual(self.schema_errors(report), [])
+
+    def test_the_schema_rejects_malformed_digest_reports(self) -> None:
+        sha = "a" * 64
+        finding = {"path": "hw/", "message": "m", "severity": "error"}
+        malformed = {
+            "ok without its digest": {"status": "ok", "version": "v1", "inventory": {}},
+            "ok with a short digest": {"status": "ok", "version": "v1", "evidence_sha256": "abc", "inventory": {}},
+            "ok that carries findings": {"status": "ok", "version": "v1", "evidence_sha256": sha, "inventory": {},
+                                         "findings": [finding]},
+            "refused without findings": {"status": "refused", "findings": []},
+            "refused that carries a digest": {"status": "refused", "findings": [finding], "evidence_sha256": sha},
+            "a finding without its path": {"status": "refused", "findings": [{"message": "m", "severity": "error"}]},
+            "an error without its message": {"status": "error"},
+        }
+        for name, report in malformed.items():
+            with self.subTest(name):
+                self.assertNotEqual(self.schema_errors(report), [])
+
+    def test_a_cited_file_the_project_cannot_hold_is_a_refusal_naming_the_entry_and_field(self) -> None:
+        manufacturing = self.hw / "manufacturing"
+        sources = manufacturing / "sources"
+        sources.mkdir(parents=True, exist_ok=True)
+        link, loop, real = sources / "link.pdf", sources / "loop.pdf", manufacturing / "sources-real"
+
+        def linked() -> None:
+            link.symlink_to(self.hw / "verification.csv")
+
+        def looped() -> None:
+            loop.symlink_to(loop.name)
+
+        def linked_directory() -> None:
+            sources.rename(real)
+            sources.symlink_to(real)
+
+        cases = {
+            "missing": ("hw/manufacturing/sources/absent.pdf", "is missing", lambda: None),
+            "linked": ("hw/manufacturing/sources/link.pdf", "symbolic link", linked),
+            "a symbolic link loop": ("hw/manufacturing/sources/loop.pdf", "symbolic link", looped),
+            "behind a linked directory": ("hw/manufacturing/sources/a.pdf", "symbolic link", linked_directory),
+            "escaping": ("hw/../../outside.txt", "outside the project root", lambda: None),
+            "unnormalized": ("hw/manufacturing/./sources/a.pdf", "not a normalized path", lambda: None),
+            "without the hw/ prefix": ("manufacturing/sources/a.pdf", "not a project-relative hw/ path", lambda: None),
+            "NUL": ("hw/manufacturing/sources/a\x00b.pdf", "not a valid path", lambda: None),
+        }
+        for name, (cited, text, arrange) in cases.items():
+            with self.subTest(name):
+                arrange()
+                try:
+                    code, report = self.digest(cited)
+                finally:
+                    link.unlink(missing_ok=True)
+                    loop.unlink(missing_ok=True)
+                    if sources.is_symlink():
+                        sources.unlink()
+                        real.rename(sources)
+                self.assertEqual((code, report["status"]), (1, "refused"))
+                self.assertNotIn("evidence_sha256", report)
+                self.assertNotIn("inventory", report)
+                self.assertEqual([f["path"] for f in report["findings"]], [self.FIELD], report)
+                self.assertIn(text, report["findings"][0]["message"])
+
+
 class EvidenceRunCli(BuiltRecord):
     """`evidence.py run` through its command line."""
 
