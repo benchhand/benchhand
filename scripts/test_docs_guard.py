@@ -253,7 +253,6 @@ ALLOWED = [
     Allow('skills/cad-record/tests/test_release.py', 'frozen_lamp', 'docs', HW),
     Allow('skills/cad-record/tests/test_release.py', 'frozen_lamp', 'hw/docs/inspection.md', HW, 2),
     Allow('skills/cad-record/tests/test_release.py', 'frozen_lamp', 'inspection.md', HW),
-    Allow('skills/cad-record/tests/test_release.py', 'waive_fdm_trials', 'hw/docs/inspection.md', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Refusal.test_a_missing_decision_refuses', 'DR-099 has no record: expected hw/decisions/DR-099-<slug>.md', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Refusal.test_only_an_accepted_decision_approves_a_release', 'hw/decisions/DR-006-test-decision-dr-006.md', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Refusal.test_a_release_decision_the_reader_refuses_or_in_the_old_form_is_no_approval', 'DR-006.md', HW),
