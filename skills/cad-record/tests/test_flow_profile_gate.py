@@ -240,7 +240,7 @@ class Gate(unittest.TestCase):
                 ("fdm planned at intent", {}, ["fdm"], 1), ("no parts and no plan", {}, None, 2),
                 ("a plan without fdm and no parts", {}, ["cnc"], 0),
                 ("a part whose route is unknown", {"A": {"process": "cnc", "intent": {"route": UNKNOWN_ROUTE}}}, None, 2),
-                ("an fdm route operation", {"TST-0009": {"process": "cnc", "intent": {"route": [{"kind": "fdm"}]}}}, None, 1)):
+                ("an fdm route operation", {"TST-0009": {"process": "cnc", "intent": {"route": [{"id": "print", "kind": "fdm", "capability": UNKNOWN_ROUTE}]}}}, None, 1)):
             with self.subTest(name):
                 self.parts = parts
                 product = self.with_profile(profile, "parts")
@@ -250,7 +250,7 @@ class Gate(unittest.TestCase):
                 self.assertEqual(len(found), expected)
 
     def test_fdm_applicability_separates_unknown_from_known_non_fdm(self) -> None:
-        cnc = {"process": "cnc", "intent": {"route": [{"kind": "cnc"}]}}
+        cnc = {"process": "cnc", "intent": {"route": [{"id": "mill", "kind": "cnc", "capability": UNKNOWN_ROUTE}]}}
         for name, parts, processes, state, field in (
                 ("no plan and no part", {}, None, "unknown", "manufacturing/processes"),
                 ("a route that is unknown", {"A": {"process": "cnc", "intent": {"route": UNKNOWN_ROUTE}}}, None, "unknown",

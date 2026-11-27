@@ -180,6 +180,14 @@ class FdmApplicability:
         return self.state != NO
 
 
+ROUTE_REF = "https://srobroek.com/cad/schemas/part.schema.json#/$defs/intent/properties/route"
+
+
+def _route_validator() -> Any:
+    """The part schema's own validator for intent.route: the single definition of a route."""
+    return schema_registry.ref_validator(SCHEMAS, ROUTE_REF)
+
+
 def _bad(path: str, message: str, action: str) -> Problem:
     return Problem(path, message, action, APPLICABILITY)
 
@@ -212,12 +220,12 @@ def _part_problem(number: str, part: Any) -> Problem | None:
     intent = part["intent"]
     if not isinstance(intent, Mapping):
         return _bad(f"parts/{number}/intent", f"{number} intent is not a mapping", f"correct {number} intent")
-    route = intent.get("route")
-    fits = ((isinstance(route, list) and route and all(isinstance(op, Mapping) and isinstance(op.get("kind"), str) for op in route))
-            or (isinstance(route, Mapping) and route.get("status") == "unknown") or "route" not in intent)
-    if not fits:
-        return _bad(f"parts/{number}/intent/route", f"{number} intent.route is not a route of operations or an unknown fact",
-                    f"correct {number} intent.route")
+    if "route" in intent:
+        errors = sorted(_route_validator().iter_errors(intent["route"]), key=lambda error: [str(p) for p in error.absolute_path])
+        if errors:
+            where = "/".join(str(step) for step in errors[0].absolute_path)
+            return _bad(f"parts/{number}/intent/route", f"{number} intent.route does not fit the part schema"
+                        f"{' at ' + where if where else ''}: {errors[0].message[:120]}", f"correct {number} intent.route")
     return None
 
 
@@ -242,7 +250,7 @@ def fdm_applicability(product: Any, parts: Mapping[str, Any]) -> FdmApplicabilit
                                   APPLICABILITY))
     for number, part in parts.items():
         route = _mapping(_mapping(part).get("intent")).get("route")
-        if isinstance(route, Mapping) and route.get("status") == "unknown":
+        if _part_problem(number, part) is None and isinstance(route, Mapping) and route.get("status") == "unknown":
             unresolved.append(Problem(f"parts/{number}/intent/route", f"{number} intent.route is unknown, so FDM cannot "
                                       "be ruled out", f"plan the route of {number}, or declare manufacturing.processes",
                                       APPLICABILITY))

@@ -547,7 +547,7 @@ class Check(unittest.TestCase):
         part = copy.deepcopy(self.documents["parts/TST-0001/part.yaml"])
         part["process"] = process
         if process != "fdm":
-            part["intent"]["route"] = [{"id": "mill", "kind": "cnc"}]  # the fixture's route prints the part
+            part["intent"]["route"] = [{"id": "mill", "kind": "cnc", "capability": {"status": "unknown", "reason": "no profile yet"}}]  # the fixture's route prints the part
         target = self.hw / "parts" / "TST-0001" / "part.yaml"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(yaml.safe_dump(part, sort_keys=False), encoding="utf-8")
