@@ -24,6 +24,7 @@ schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf s
 schema-sha256 1f824e1afee20c599bd4408606a4584208e22bcc56f626d561604a235c402f3f skills/cad-record/schemas/release-manifest.schema.json
 schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
 schema-sha256 3f66dcd1ef22b8b40aa94f0c95919cf0f90b6b848bb0e36bffb772fa506292c1 skills/cad-record/schemas/stackup.schema.json
+schema-sha256 30861089b70bfb3a33cf47b270ee67943f9b5788f3c86a1f4632050209355006 skills/cad-record/schemas/stop-reaction-evidence.schema.json
 schema-sha256 60c50ec2df3452d6896b33d1d2c344b7ada20e0df00ce56a800c520b9e34571f skills/cad-record/schemas/tool-settings.schema.json
 schema-sha256 f003a68b4ecf2e68ace4112d4a5636e44f6387d2915ba94cdc4969ddc8230037 skills/cad-record/schemas/verification-row.schema.json
 -->
@@ -6865,6 +6866,188 @@ Constraints not expressed by the type:
 
 - `coverage_factor`: minimum: 1
 - `coverage_factor`: maximum: 6
+
+## stop-reaction-evidence.schema.json
+
+- File: `skills/cad-record/schemas/stop-reaction-evidence.schema.json`
+- `$id`: `https://srobroek.com/cad/schemas/stop-reaction-evidence.schema.json`
+
+Stop reaction evidence (cad-analysis stop_reaction.py, hw/checks/<V>/stop-reaction/evidence/stop-reaction.json)
+
+### StopReactionEvidence
+
+Source: schema root
+
+**Stop reaction evidence (cad-analysis stop_reaction.py, hw/checks/<V>/stop-reaction/evidence/stop-reaction.json)**
+
+The evidence file of the engineering.stop_reaction check: the assessment of each interface it was asked about. cad-analysis fea_reaction.py reads `ends.<limit>.reaction.design_reaction_n` and `status` from it to size an FEA load. A revolute pivot's design reaction is the applied moment over the smallest contact arm. A prismatic slide's design reaction is the axial load component over cos(theta) of the contact face, a frictionless normal-force bound; its ends record `blocks_travel` and `contact_angle_deg`, and its `loads` rows carry the direction and frame
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `interfaces` | `Mapping[str, StopReactionEvidenceAssessment]` | yes |  | The assessment of each obligation's interface, by interface id |
+| `limits` | `list[str]` | yes |  | What the check does not cover, as text |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `interfaces`: propertyNames: {"pattern":"^IF-[0-9]{3}$"}
+
+### StopReactionEvidenceAssessment
+
+Source: `/$defs/assessment`
+
+One interface: its outcome and the reason it stopped early (a non-stop, an overlap, an unknown), or the pivot, its ends and its loads
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `outcome` | `Literal["pass", "fail", "unknown", "not_applicable"]` | yes |  |  |
+| `reason` | `str` | no |  |  |
+| `pivot` | `str` | no |  | The id of the joint between the interface's two parts |
+| `joint_type` | `Literal["revolute", "prismatic"]` | no |  |  |
+| `moving` | `str` | no |  |  |
+| `fixed` | `str` | no |  |  |
+| `contact_tolerance` | `StopReactionEvidenceAssessmentContactTolerance` | no |  |  |
+| `ends` | `StopReactionEvidenceAssessmentEnds` | no |  |  |
+| `loads` | `list[StopReactionEvidenceLoad]` | no |  | The use-case loads read for the interface. A slide's rows also hold each unit direction and the occurrence whose part frame states it (null for the assembly frame); a revolute pivot takes the force alone |
+| `peak_force_n` | `float` | no |  |  |
+| `recorded_contact_load_n` | `StopReactionEvidenceNullableNumber` | no |  | The recorded functional.contact.load in N, or null when none is known |
+| `unresolved_limits` | `StopReactionEvidenceAssessmentUnresolvedLimits` | no |  | A slide's limit with contact but no face that blocks travel, by limit, with the reason. The other limit keeps its own reaction |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### StopReactionEvidenceAssessmentContactTolerance
+
+Source: `/$defs/assessment/properties/contact_tolerance`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `mm` | `float` | yes |  |  |
+| `source` | `str` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### StopReactionEvidenceAssessmentEnds
+
+Source: `/$defs/assessment/properties/ends`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `min` | `StopReactionEvidenceEnd` | no |  |  |
+| `max` | `StopReactionEvidenceEnd` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### StopReactionEvidenceAssessmentUnresolvedLimits
+
+Source: `/$defs/assessment/properties/unresolved_limits`
+
+A slide's limit with contact but no face that blocks travel, by limit, with the reason. The other limit keeps its own reaction
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `min` | `str` | no |  |  |
+| `max` | `str` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### StopReactionEvidenceEnd
+
+Source: `/$defs/end`
+
+One joint limit: the pose, the contact there and, when it is a stop, the reaction
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `joint_value` | `float` | yes |  |  |
+| `touching` | `bool` | yes |  |  |
+| `gap_mm` | `float` | yes |  |  |
+| `overlap_volume_mm3` | `float` | yes |  |  |
+| `overlap_depth_mm` | `float` | yes |  |  |
+| `farthest_point_from_axis_mm` | `StopReactionEvidenceNullableNumber` | yes |  | A revolute pivot's reach; null for a slide |
+| `patch` | `StopReactionEvidencePatch \| None` | yes |  | A revolute stop's contact patch, null for a slide or without contact |
+| `blocks_travel` | `bool` | no |  | A slide only: whether a contact face has its normal within 60 degrees of directly against travel beyond this limit |
+| `contact_angle_deg` | `float \| None` | no |  | A slide only: theta, the angle between the blocking face's normal and directly against travel (the largest of the blocking faces); null when no face blocks |
+| `reaction` | `StopReactionEvidenceReaction` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### StopReactionEvidenceLoad
+
+Source: `/$defs/load`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `load` | `str` | yes |  |  |
+| `newtons` | `float` | yes |  |  |
+| `direction` | `StopReactionEvidenceVector` | no |  | The unit direction of the load, as stated in `frame` |
+| `frame` | `str \| None` | no |  | The occurrence id whose model frame states the direction, or null for the assembly frame |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### StopReactionEvidenceNullableNumber
+
+Source: `/$defs/nullable_number`
+
+Alias of `float | None`
+
+### StopReactionEvidencePatch
+
+Source: `/$defs/patch`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `min_arm_mm` | `float` | yes |  |  |
+| `max_arm_mm` | `float` | yes |  |  |
+| `area_mm2` | `float` | yes |  |  |
+| `integral_arm_mm3` | `float` | yes |  |  |
+| `integral_arm_squared_mm4` | `float` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### StopReactionEvidenceReaction
+
+Source: `/$defs/reaction`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `status` | `Literal["bounded", "unbounded", "understated"]` | yes |  |  |
+| `moment_n_mm` | `float` | yes |  | The applied moment; 0 for a slide |
+| `design_reaction_n` | `StopReactionEvidenceNullableNumber` | yes |  | The design reaction in N, the value FEA takes as a force minimum; null when unbounded |
+| `rigid_lower_bound_n` | `StopReactionEvidenceNullableNumber` | yes |  |  |
+| `uniform_pressure_n` | `StopReactionEvidenceNullableNumber` | yes |  |  |
+| `compliant_stop_n` | `StopReactionEvidenceNullableNumber` | yes |  |  |
+| `pin_load_bound_n` | `StopReactionEvidenceNullableNumber` | yes |  |  |
+| `axial_component_n` | `float` | no |  | A slide only: the load component along the slide axis, in N. The design reaction is this over cos(theta) |
+| `message` | `str` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### StopReactionEvidenceVector
+
+Source: `/$defs/vector`
+
+Alias of `list[float]`
+
+Constraints not expressed by the type:
+
+- minItems: 3
+- maxItems: 3
 
 ## tool-settings.schema.json
 

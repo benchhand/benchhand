@@ -590,7 +590,8 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         reason = f"{if_id}: at the {' and '.join(unusable)} " + next(iter(unusable.values())).split(" ", 1)[1]
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
     stops = [state for state in stops if state["label"] not in unusable]  # a slide's other limits keep their own verdicts
-    detail["unresolved_limits"] = {label: f"{if_id}: at the {why}" for label, why in unusable.items()}
+    if unusable:
+        detail["unresolved_limits"] = {label: f"{if_id}: at the {why}" for label, why in unusable.items()}
     force, loads, why = applied_force(record, interface, chain if pivot.joint.type == "prismatic" else None)
     if force is None:
         reason = f"{if_id} is a stop at the {' and '.join(state['label'] for state in stops)} limit of {pivot.joint.id}, but {why}"

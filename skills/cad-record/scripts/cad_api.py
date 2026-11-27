@@ -27,6 +27,7 @@
 # schema-sha256 1f824e1afee20c599bd4408606a4584208e22bcc56f626d561604a235c402f3f skills/cad-record/schemas/release-manifest.schema.json
 # schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
 # schema-sha256 3f66dcd1ef22b8b40aa94f0c95919cf0f90b6b848bb0e36bffb772fa506292c1 skills/cad-record/schemas/stackup.schema.json
+# schema-sha256 30861089b70bfb3a33cf47b270ee67943f9b5788f3c86a1f4632050209355006 skills/cad-record/schemas/stop-reaction-evidence.schema.json
 # schema-sha256 60c50ec2df3452d6896b33d1d2c344b7ada20e0df00ce56a800c520b9e34571f skills/cad-record/schemas/tool-settings.schema.json
 # schema-sha256 f003a68b4ecf2e68ace4112d4a5636e44f6387d2915ba94cdc4969ddc8230037 skills/cad-record/schemas/verification-row.schema.json
 """Typed shapes of the CAD record and concept JSON Schemas.
@@ -457,6 +458,17 @@ __all__ = [
     "Stackup",
     "StackupContributorsItems",
     "StackupStatistics",
+    "StopReactionEvidence",
+    "StopReactionEvidenceAssessment",
+    "StopReactionEvidenceAssessmentContactTolerance",
+    "StopReactionEvidenceAssessmentEnds",
+    "StopReactionEvidenceAssessmentUnresolvedLimits",
+    "StopReactionEvidenceEnd",
+    "StopReactionEvidenceLoad",
+    "StopReactionEvidenceNullableNumber",
+    "StopReactionEvidencePatch",
+    "StopReactionEvidenceReaction",
+    "StopReactionEvidenceVector",
     "ToolSettings",
     "ToolSettingsAccess",
     "ToolSettingsFormCheck",
@@ -6577,6 +6589,173 @@ StackupContributorsItems = Mapping[str, Any]
 # Field notes:
 # - coverage_factor: k of a justified RSS. The default 2 follows the GUM convention (JCGM 100:2008, ISO/IEC Guide 98-3, section 6.3.3): k = 2 gives about 95 percent coverage for a normal distribution. stackup.py still requires an explicit k with an approving decision, so the default is the loader's starting value; default 2; minimum: 1; maximum: 6
 StackupStatistics = Mapping[str, Any]
+
+
+class StopReactionEvidenceAssessmentContactTolerance(TypedDict):
+    """Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/assessment/properties/contact_tolerance
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    mm: Required[float]
+    source: Required[str]
+
+
+# Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/nullable_number
+StopReactionEvidenceNullableNumber = float | None
+
+
+class StopReactionEvidencePatch(TypedDict):
+    """Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/patch
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    min_arm_mm: Required[float]
+    max_arm_mm: Required[float]
+    area_mm2: Required[float]
+    integral_arm_mm3: Required[float]
+    integral_arm_squared_mm4: Required[float]
+
+
+class StopReactionEvidenceReaction(TypedDict):
+    """Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/reaction
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - moment_n_mm: The applied moment; 0 for a slide
+    - design_reaction_n: The design reaction in N, the value FEA takes as a force minimum; null when unbounded
+    - axial_component_n: A slide only: the load component along the slide axis, in N. The design reaction is this over cos(theta)
+    """
+    status: Required[Literal["bounded", "unbounded", "understated"]]
+    moment_n_mm: Required[float]
+    design_reaction_n: Required[StopReactionEvidenceNullableNumber]
+    rigid_lower_bound_n: Required[StopReactionEvidenceNullableNumber]
+    uniform_pressure_n: Required[StopReactionEvidenceNullableNumber]
+    compliant_stop_n: Required[StopReactionEvidenceNullableNumber]
+    pin_load_bound_n: Required[StopReactionEvidenceNullableNumber]
+    axial_component_n: NotRequired[float]
+    message: Required[str]
+
+
+class StopReactionEvidenceEnd(TypedDict):
+    """One joint limit: the pose, the contact there and, when it is a stop, the reaction
+
+    Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/end
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - farthest_point_from_axis_mm: A revolute pivot's reach; null for a slide
+    - patch: A revolute stop's contact patch, null for a slide or without contact
+    - blocks_travel: A slide only: whether a contact face has its normal within 60 degrees of directly against travel beyond this limit
+    - contact_angle_deg: A slide only: theta, the angle between the blocking face's normal and directly against travel (the largest of the blocking faces); null when no face blocks
+    """
+    joint_value: Required[float]
+    touching: Required[bool]
+    gap_mm: Required[float]
+    overlap_volume_mm3: Required[float]
+    overlap_depth_mm: Required[float]
+    farthest_point_from_axis_mm: Required[StopReactionEvidenceNullableNumber]
+    patch: Required[StopReactionEvidencePatch | None]
+    blocks_travel: NotRequired[bool]
+    contact_angle_deg: NotRequired[float | None]
+    reaction: NotRequired[StopReactionEvidenceReaction]
+
+
+class StopReactionEvidenceAssessmentEnds(TypedDict):
+    """Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/assessment/properties/ends
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    min: NotRequired[StopReactionEvidenceEnd]
+    max: NotRequired[StopReactionEvidenceEnd]
+
+
+# Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/vector
+#
+# Not expressible as types (see the schema):
+# - minItems: 3
+# - maxItems: 3
+StopReactionEvidenceVector = list[float]
+
+
+class StopReactionEvidenceLoad(TypedDict):
+    """Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/load
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - direction: The unit direction of the load, as stated in `frame`
+    - frame: The occurrence id whose model frame states the direction, or null for the assembly frame
+    """
+    load: Required[str]
+    newtons: Required[float]
+    direction: NotRequired[StopReactionEvidenceVector]
+    frame: NotRequired[str | None]
+
+
+class StopReactionEvidenceAssessmentUnresolvedLimits(TypedDict):
+    """A slide's limit with contact but no face that blocks travel, by limit, with the reason. The other limit keeps its own reaction
+
+    Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/assessment/properties/unresolved_limits
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    min: NotRequired[str]
+    max: NotRequired[str]
+
+
+class StopReactionEvidenceAssessment(TypedDict):
+    """One interface: its outcome and the reason it stopped early (a non-stop, an overlap, an unknown), or the pivot, its ends and its loads
+
+    Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#/$defs/assessment
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - pivot: The id of the joint between the interface's two parts
+    - loads: The use-case loads read for the interface. A slide's rows also hold each unit direction and the occurrence whose part frame states it (null for the assembly frame); a revolute pivot takes the force alone
+    - recorded_contact_load_n: The recorded functional.contact.load in N, or null when none is known
+    - unresolved_limits: A slide's limit with contact but no face that blocks travel, by limit, with the reason. The other limit keeps its own reaction
+    """
+    outcome: Required[Literal["pass", "fail", "unknown", "not_applicable"]]
+    reason: NotRequired[str]
+    pivot: NotRequired[str]
+    joint_type: NotRequired[Literal["revolute", "prismatic"]]
+    moving: NotRequired[str]
+    fixed: NotRequired[str]
+    contact_tolerance: NotRequired[StopReactionEvidenceAssessmentContactTolerance]
+    ends: NotRequired[StopReactionEvidenceAssessmentEnds]
+    loads: NotRequired[list[StopReactionEvidenceLoad]]
+    peak_force_n: NotRequired[float]
+    recorded_contact_load_n: NotRequired[StopReactionEvidenceNullableNumber]
+    unresolved_limits: NotRequired[StopReactionEvidenceAssessmentUnresolvedLimits]
+
+
+class StopReactionEvidence(TypedDict):
+    """Stop reaction evidence (cad-analysis stop_reaction.py, hw/checks/<V>/stop-reaction/evidence/stop-reaction.json)
+
+    The evidence file of the engineering.stop_reaction check: the assessment of each interface it was asked about. cad-analysis fea_reaction.py reads `ends.<limit>.reaction.design_reaction_n` and `status` from it to size an FEA load. A revolute pivot's design reaction is the applied moment over the smallest contact arm. A prismatic slide's design reaction is the axial load component over cos(theta) of the contact face, a frictionless normal-force bound; its ends record `blocks_travel` and `contact_angle_deg`, and its `loads` rows carry the direction and frame
+
+    Source: skills/cad-record/schemas/stop-reaction-evidence.schema.json#
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - interfaces: The assessment of each obligation's interface, by interface id; propertyNames: {"pattern":"^IF-[0-9]{3}$"}
+    - limits: What the check does not cover, as text
+    """
+    interfaces: Required[Mapping[str, StopReactionEvidenceAssessment]]
+    limits: Required[list[str]]
 
 
 class ToolSettingsAccess(TypedDict):
