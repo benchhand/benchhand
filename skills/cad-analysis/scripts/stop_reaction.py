@@ -564,27 +564,11 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
     states = [assess_end(chain, definitions, pivot, label, tolerance) for label in ("min", "max")]
     detail: dict[str, Any] = {"pivot": pivot.joint.id, "joint_type": pivot.joint.type, "moving": chain.ref(pivot.moving), "fixed": chain.ref(pivot.fixed),
                               "contact_tolerance": {"mm": tolerance, "source": source}, "ends": {}}
-    for state in states:
-        detail["ends"][state["label"]] = {"joint_value": state["value"], "touching": state["touching"],
-                                          "gap_mm": state["gap"], "overlap_volume_mm3": state["overlap_volume"],
-                                          "overlap_depth_mm": state["overlap_depth"],
-                                          "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"])}
-        if pivot.joint.type == "prismatic":
-            blocking = state["blocking"]
-            detail["ends"][state["label"]].update(blocks_travel=blocking is not None,
-                                                  contact_angle_deg=blocking["angle_deg"] if blocking else None)
+    detail["ends"] = {state["label"]: end_detail(state, pivot) for state in states}
     stops = [state for state in states if state["touching"]]
-    if not stops:
-        gaps = ", ".join(f"{state['label']} {state['gap']:.4g} mm" for state in states)
-        reason = (f"{if_id}: the parts are not in contact at either limit of {pivot.joint.id} "
-                  f"(gaps: {gaps}; tolerance {tolerance:.4g} mm): not a stop")
-        return Assessment(if_id, "not_applicable", [reason], {}, {"outcome": "not_applicable", "reason": reason, **detail})
-    overlapping = [state for state in stops if state["overlap_volume"] > 0.0]
-    if overlapping:
-        where = " and ".join(f"at the {state['label']} limit ({state['value']:g} {pivot.joint.unit})" for state in overlapping)
-        depth = max(state["overlap_depth"] for state in overlapping)
-        reason = f"{if_id}: the parts overlap by {depth:.3g} mm {where}: a design defect, not a stop"
-        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
+    not_a_stop = no_stop_assessment(if_id, states, stops, pivot, tolerance, detail)
+    if not_a_stop is not None:
+        return not_a_stop
     unusable = unusable_contact(stops, pivot, tolerance)
     if unusable and (pivot.joint.type == "revolute" or len(unusable) == len(stops)):
         reason = f"{if_id}: at the {' and '.join(unusable)} " + next(iter(unusable.values())).split(" ", 1)[1]
@@ -598,12 +582,44 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
     detail.update(loads=loads, peak_force_n=force)
     recorded = recorded_load_n(interface)
+    return judge_stops(if_id, stops, stop_reactions(pivot, stops, loads, force, recorded), recorded, detail)
+
+
+def end_detail(state: Mapping[str, Any], pivot: Pivot) -> dict[str, Any]:
+    """The evidence of one joint limit before any reaction: its pose and contact, and for a slide whether a face blocks."""
+    end = {"joint_value": state["value"], "touching": state["touching"], "gap_mm": state["gap"],
+           "overlap_volume_mm3": state["overlap_volume"], "overlap_depth_mm": state["overlap_depth"],
+           "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"])}
     if pivot.joint.type == "prismatic":
-        reactions = {state["label"]: statics.axial_reaction(axial_force(loads, state["axis"], state["label"], state["transforms"]),
-                                                            state["blocking"]["cos"], recorded) for state in stops}
-    else:
-        reactions = {state["label"]: statics.reaction(force, state["reach"], state["patch"], recorded) for state in stops}
-    return judge_stops(if_id, stops, reactions, recorded, detail)
+        blocking = state["blocking"]
+        end.update(blocks_travel=blocking is not None, contact_angle_deg=blocking["angle_deg"] if blocking else None)
+    return end
+
+
+def no_stop_assessment(if_id: str, states: Sequence[Mapping[str, Any]], stops: Sequence[Mapping[str, Any]], pivot: Pivot,
+                       tolerance: float, detail: Mapping[str, Any]) -> Assessment | None:
+    """The assessment that ends the check when no limit is a stop (not applicable) or the parts overlap at one (unknown)."""
+    if not stops:
+        gaps = ", ".join(f"{state['label']} {state['gap']:.4g} mm" for state in states)
+        reason = (f"{if_id}: the parts are not in contact at either limit of {pivot.joint.id} "
+                  f"(gaps: {gaps}; tolerance {tolerance:.4g} mm): not a stop")
+        return Assessment(if_id, "not_applicable", [reason], {}, {"outcome": "not_applicable", "reason": reason, **detail})
+    overlapping = [state for state in stops if state["overlap_volume"] > 0.0]
+    if not overlapping:
+        return None
+    where = " and ".join(f"at the {state['label']} limit ({state['value']:g} {pivot.joint.unit})" for state in overlapping)
+    depth = max(state["overlap_depth"] for state in overlapping)
+    reason = f"{if_id}: the parts overlap by {depth:.3g} mm {where}: a design defect, not a stop"
+    return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
+
+
+def stop_reactions(pivot: Pivot, stops: Sequence[Mapping[str, Any]], loads: Sequence[Mapping[str, Any]], force: float,
+                   recorded: float | None) -> dict[str, statics.Reaction]:
+    """The reaction at each stop: a slide's axial normal-force bound, or a pivot's moment over its smallest arm."""
+    if pivot.joint.type == "prismatic":
+        return {state["label"]: statics.axial_reaction(axial_force(loads, state["axis"], state["label"], state["transforms"]),
+                                                       state["blocking"]["cos"], recorded) for state in stops}
+    return {state["label"]: statics.reaction(force, state["reach"], state["patch"], recorded) for state in stops}
 
 
 def judge_stops(if_id: str, stops: Sequence[Mapping[str, Any]], reactions: Mapping[str, statics.Reaction],

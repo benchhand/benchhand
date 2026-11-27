@@ -149,18 +149,26 @@ def sphere_into_cylinder() -> dict[str, object]:
     return {"TST-0301": cylinder_, "TST-0302": BRepPrimAPI_MakeSphere(gp_Pnt(40, 0, 0), 5).Shape()}
 
 
-def shapes(latched_gap: float = 0.0, variant: str = "") -> dict[str, object]:
-    if variant == "curved":
-        return sphere_into_cylinder()
-    if variant == "contained":
-        return {"TST-0301": compound(box(-20, -20, -20, 120, 20, 110), box(200, 200, 200, 210, 210, 210)),
-                "TST-0302": box(0, -4, -3, 80, 4, 3)}
+def slide_shapes(variant: str) -> dict[str, object] | None:
+    """The parts of a slide variant (mateN, endstop), or None for any other variant."""
     if variant.startswith("mate"):
         degrees = float(variant[4:])
         return {"TST-0301": turned(box(-10, -4, -10, 10, 4, 0), degrees), "TST-0302": turned(box(-10, -4, 0, 10, 4, 10), degrees)}
     if variant == "endstop":
         return {"TST-0301": fused(box(-30, -14, -16, 95, 14, -8), box(7, -4, -8, 13, 4, -3), box(85.05, -4, -8, 90, 4, 10)),
                 "TST-0302": box(0, -4, -3, 80, 4, 3)}
+    return None
+
+
+def shapes(latched_gap: float = 0.0, variant: str = "") -> dict[str, object]:
+    if variant == "curved":
+        return sphere_into_cylinder()
+    if variant == "contained":
+        return {"TST-0301": compound(box(-20, -20, -20, 120, 20, 110), box(200, 200, 200, 210, 210, 210)),
+                "TST-0302": box(0, -4, -3, 80, 4, 3)}
+    slide = slide_shapes(variant)
+    if slide is not None:
+        return slide
     base = box(-30, -14, -16, 30, 14, -8)
     if variant == "pieces":
         return {"TST-0301": fused(base, box(7, -4, -8, 13, 4, -2.5), box(30, 2.5, -8, 40, 10, 10)),
