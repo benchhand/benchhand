@@ -671,6 +671,52 @@ class Sync(ScratchCase):
         self.assertEqual(sorted(report["conflicts"]), ["cfg", "cfg/x.txt"])
         self.assertEqual((scratch_hw / "cfg").read_text(encoding="utf-8"), "my edit\n")
 
+    def test_sync_refuses_a_linked_workspace_directory_and_writes_nothing_through_it(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        work = scratch_hw.parent
+        outside = self.outside()
+        moved = outside / "moved-workspace"
+        shutil.move(str(work), str(moved))
+        work.symlink_to(moved)
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        before = tree(outside)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertIn("symlink", report["error"])
+        self.assertEqual(tree(outside), before)
+
+    def test_sync_refuses_a_linked_baseline_and_writes_nothing_through_it(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        baseline = scratch_hw.parent / "baseline.json"
+        outside = self.outside()
+        (outside / "baseline.json").write_text(baseline.read_text(encoding="utf-8"), encoding="utf-8")
+        baseline.unlink()
+        baseline.symlink_to(outside / "baseline.json")
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        before = tree(outside)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertEqual(tree(outside), before)
+
+    def test_a_directory_swapped_for_a_link_after_the_checks_is_not_written_through(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        outside = self.outside()
+        (self.hw / "manufacturing" / "lead-note.yaml").write_text("lead\n", encoding="utf-8")
+        module = load_scratch()
+        real = module.drop_collisions
+
+        def swap(*args):
+            shutil.rmtree(scratch_hw / "manufacturing")  # the unit's own process swaps it after the checks
+            (scratch_hw / "manufacturing").symlink_to(outside)
+            return real(*args)
+
+        before = tree(outside)
+        with mock.patch.object(module, "drop_collisions", swap), self.assertRaises(module.UsageError):
+            module.sync(self.hw.resolve(), "unit-a")
+        self.assertEqual(tree(outside), before)
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
