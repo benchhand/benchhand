@@ -1408,6 +1408,51 @@ def packet_dependencies(hw: Path, stack_path: Path, stack: Mapping[str, Any],
     return found
 
 
+def _publish_versioned(args: argparse.Namespace, stack_path: Path, stack: dict[str, Any], result: dict[str, Any],
+                       status: str, record: Any, case: Any, version: str, calibration: bool) -> tuple[dict[str, Any], str]:
+    """Seal and publish (or reuse) the versioned analysis bundle and its check packet; returns the result and status."""
+    result["status"] = status
+    stack_id = result.get("id")
+    if not isinstance(stack_id, str) or not stack_id:
+        raise StackError("stack id is required for versioned publication")
+    subject = case if case is not None else stack_id
+    params = {"V": version, "S": subject}
+    if args.out is not None:
+        raise StackError("--out is only allowed for standalone scratch output")
+    options: dict[str, Any] = {"result_decimals": RESULT_DECIMALS, "intent_version": INTENT_VERSION, "case": case,
+                               "method": (stack.get("requirement") or {}).get("method", "worst_case"),
+                               "basis_revision": BASIS_REVISION}
+    recipe = {"source_yaml_sha256": hashlib.sha256(stack_path.read_bytes()).hexdigest(), "options": options,
+              **GUIDELINES.calibration_recipe(calibration)}  # sealed on or off: another setting never reuses a bundle
+    reused = LAYOUT.reusable(args.hw, "bundle.analysis", params, recipe, replace=args.replace)
+    if reused is not None:
+        cached = json.loads((reused / "results.json").read_text(encoding="utf-8"))
+        stale = sorted({row.get("obligation") for row in cached.get("obligations") or ()}
+                       ^ {row["obligation"] for row in result.get("obligations") or ()}, key=str)
+        if stale:  # a cached outcome that no longer binds to the surface this run measures is never published again
+            raise StackError(f"the reused bundle judged {', '.join(map(str, stale))}, which is not the obligation "
+                             "this run binds to the measured surface; rerun with --replace")
+        result = cached
+        result["bundle"] = str(reused)
+        result["reused"] = True
+        status = result["status"]
+    else:
+        stage = LAYOUT.staging(args.hw, "bundle.analysis")
+        output = stage / "results.json"
+        output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        published = LAYOUT.publish(args.hw, "bundle.analysis", params, stage,
+                                   recipe=recipe, producer=PRODUCER, status=status,
+                                   replace=args.replace)
+        result["bundle"] = str(published.path)
+        result["reused"] = published.reused
+    if record is not None:
+        packet = check_packet(result, record, packet_dependencies(
+            args.hw, stack_path, stack, (result.get("clearance") or {}).get("guidelines"), calibration))
+        result["check_bundle"] = (None if packet is None else
+                                  publish_check(args.hw, version, subject, result, packet, args.replace))
+    return result, status
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="1D worst-case tolerance stack-up; statistics only where justified")
     parser.add_argument("stack", type=Path, help="stack definition YAML")
@@ -1433,45 +1478,8 @@ def main(argv: list[str] | None = None) -> int:
                          catalog=catalog, calibration=calibration)
         status = status_of(result)
         if args.hw:
-            result["status"] = status
-            stack_id = result.get("id")
-            if not isinstance(stack_id, str) or not stack_id:
-                raise StackError("stack id is required for versioned publication")
-            subject = case if case is not None else stack_id
-            params = {"V": version, "S": subject}
-            if args.out is not None:
-                raise StackError("--out is only allowed for standalone scratch output")
-            options: dict[str, Any] = {"result_decimals": RESULT_DECIMALS, "intent_version": INTENT_VERSION, "case": case,
-                                       "method": (stack.get("requirement") or {}).get("method", "worst_case"),
-                                       "basis_revision": BASIS_REVISION}
-            recipe = {"source_yaml_sha256": hashlib.sha256(stack_path.read_bytes()).hexdigest(), "options": options,
-                      **GUIDELINES.calibration_recipe(calibration)}  # sealed on or off: another setting never reuses a bundle
-            reused = LAYOUT.reusable(args.hw, "bundle.analysis", params, recipe, replace=args.replace)
-            if reused is not None:
-                cached = json.loads((reused / "results.json").read_text(encoding="utf-8"))
-                stale = sorted({row.get("obligation") for row in cached.get("obligations") or ()}
-                               ^ {row["obligation"] for row in result.get("obligations") or ()}, key=str)
-                if stale:  # a cached outcome that no longer binds to the surface this run measures is never published again
-                    raise StackError(f"the reused bundle judged {', '.join(map(str, stale))}, which is not the obligation "
-                                     "this run binds to the measured surface; rerun with --replace")
-                result = cached
-                result["bundle"] = str(reused)
-                result["reused"] = True
-                status = result["status"]
-            else:
-                stage = LAYOUT.staging(args.hw, "bundle.analysis")
-                output = stage / "results.json"
-                output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-                published = LAYOUT.publish(args.hw, "bundle.analysis", params, stage,
-                                           recipe=recipe, producer=PRODUCER, status=status,
-                                           replace=args.replace)
-                result["bundle"] = str(published.path)
-                result["reused"] = published.reused
-            if record is not None:
-                packet = check_packet(result, record, packet_dependencies(
-                    args.hw, stack_path, stack, (result.get("clearance") or {}).get("guidelines"), calibration))
-                result["check_bundle"] = (None if packet is None else
-                                          publish_check(args.hw, version, subject, result, packet, args.replace))
+            result, status = _publish_versioned(args, stack_path, stack, result, status, record, case, version,
+                                                calibration)
         elif args.out is not None:
             target = LAYOUT.scratch_path(_scratch_hw(args.out), args.out, "--out")
             target.parent.mkdir(parents=True, exist_ok=True)
