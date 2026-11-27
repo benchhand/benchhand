@@ -959,6 +959,23 @@ class RecheckHookTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("stale", result.stderr)
 
+    def stage_dated_capabilities(self, until: str) -> None:
+        path = self.root / "hw" / "manufacturing" / "capabilities.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"profiles:\n- id: tst_printer\n  revision: 1\n  title: TST\n  process: fdm\n  provider: local\n"
+                        f"  parameters: {{}}\n  materials: {{status: unknown, reason: TST}}\n  calibrations: []\n  valid_until: {until}\n",
+                        encoding="utf-8")
+        self.git("add", "hw/manufacturing/capabilities.yaml")
+
+    def test_a_quoted_date_turned_into_a_date_makes_the_stamp_stale(self) -> None:
+        self.stage_product("detail")
+        self.stage_dated_capabilities("'2026-12-31'")
+        self.stamp(passed=True, stage="detail")
+        self.stage_dated_capabilities("2026-12-31")
+        result = self.verify()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stale", result.stderr)
+
     def run_report(self, packet: Path | None, status: str = "pass") -> Path:
         """An `evidence.py run` report around the evidence packet in `packet` (null when the run stopped)."""
         report = {"kind": "cad-evidence-run", "schema_version": 1, "status": status, "scope": "commit", "stage": "detail",

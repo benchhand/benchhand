@@ -1727,6 +1727,31 @@ class RecordDigestStateTests(unittest.TestCase):
         self.assertEqual(evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard"))),
                          evidence.record_digest(self.files()))
 
+    @staticmethod
+    def yaml_digest(text: str) -> str:
+        return evidence.record_digest({"manufacturing/capabilities.yaml": text.encode("utf-8"), "product.yaml": b"record_version: 2\n"})
+
+    BASE = "profiles:\n- id: p\n  calibrations:\n  - id: c\n    valid_until: {until}\n  title: Printer\n"
+
+    def test_a_quoted_date_and_an_unquoted_date_hash_differently(self) -> None:
+        """Consumers read '2026-12-31' as text and 2026-12-31 as a date, so a stale expiry must not pass as current."""
+        self.assertNotEqual(self.yaml_digest(self.BASE.format(until="'2026-12-31'")), self.yaml_digest(self.BASE.format(until="2026-12-31")))
+        self.assertNotEqual(self.yaml_digest(self.BASE.format(until="'12'")), self.yaml_digest(self.BASE.format(until="12")))
+
+    def test_a_comment_only_edit_keeps_the_digest_and_a_real_change_does_not(self) -> None:
+        text = self.BASE.format(until="2026-12-31")
+        self.assertEqual(self.yaml_digest("# a note\n" + text), self.yaml_digest(text))
+        self.assertNotEqual(self.yaml_digest(text.replace("Printer", "Other printer")), self.yaml_digest(text))
+
+    def test_a_duplicate_key_is_not_hidden_by_the_last_one_winning(self) -> None:
+        text = self.BASE.format(until="2026-12-31")
+        self.assertNotEqual(self.yaml_digest(text.replace("  title: Printer\n", "  title: Old\n  title: Printer\n")), self.yaml_digest(text))
+
+    def test_a_yaml_calibration_state_in_block_style_keeps_the_digest(self) -> None:
+        text = self.BASE.format(until="2026-12-31")
+        stated = text + "  calibration_state:\n    status: standard\n    source: {kind: user, reference: x, origin: owner}\n"
+        self.assertEqual(self.yaml_digest(stated), self.yaml_digest(text))
+
     def test_any_other_capability_edit_changes_the_record_digest(self) -> None:
         stated = evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard")))
         self.assertNotEqual(evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard"), title="Other")), stated)
