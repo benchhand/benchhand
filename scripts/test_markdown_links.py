@@ -17,10 +17,16 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[1]
 GENERATED = {"schemas.md"}  # gen_api.py output; regex patterns in it look like links
 DOCS = [ROOT / "README.md", *(p for p in sorted((ROOT / "docs").glob("*.md")) if p.name not in GENERATED)]
-LINK = re.compile(r"""!?\[[^\]]*\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)""")
-DESTINATION = r"""\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)"""
+def destination(capture: bool) -> str:
+    """The `(target "title")` part of an inline link or image: one grammar for every use. Only the outer one
+    captures the target."""
+    target = r"(<[^>]*>|[^)\s]+)" if capture else r"(?:<[^>]*>|[^)\s]+)"
+    return r"""\(\s*""" + target + r"""(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)"""
+
+
+LINK = re.compile(r"!?\[[^\]]*\]" + destination(True))
 # A link whose label holds an image: `[![alt](img.png)](page.md)`. LINK and REFERENCE find the image itself.
-IMAGE_LINK = re.compile(r"\[[^\[\]]*!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])[^\[\]]*\]" + DESTINATION)
+IMAGE_LINK = re.compile(r"\[[^\[\]]*!\[[^\]]*\](?:" + destination(False) + r"|\[[^\]]*\])[^\[\]]*\]" + destination(True))
 REFERENCE = re.compile(r"!?\[[^\]]+\]\[([^\]]+)\]")
 DEFINITION = re.compile(r"^\s{0,3}\[([^\]]+)\]:\s*(<[^>]*>|\S+)")
 CODE_SPAN = re.compile(r"`[^`]*`")
@@ -103,6 +109,9 @@ def problems(doc: Path, root: Path) -> list[str]:
             continue
         name, _, fragment = target.partition("#")
         name, fragment = unquote(name), unquote(fragment)
+        if "\0" in name or "\0" in fragment:
+            found.append(f"{doc.relative_to(root)}: {target} is an invalid destination")
+            continue
         path = doc if not name else (doc.parent / name).resolve()
         if not exists_exact(path, root.resolve()):
             found.append(f"{doc.relative_to(root)}: {target} does not exist")
@@ -165,6 +174,19 @@ class MarkdownLinkTests(unittest.TestCase):
                 "[![ref][i]](gone2.md)\n\n[i]: real.png\n")
         self.assertEqual(self.check(files, text), [
             "doc.md: gone.md does not exist", "doc.md: gone.png does not exist", "doc.md: gone2.md does not exist"])
+
+    def test_checks_the_link_around_an_image_whose_title_holds_a_parenthesis(self) -> None:
+        files = {"real.png": "x\n", "real.md": "x\n"}
+        text = ('[![alt](real.png "a) [b]")](gone.md) [![alt](real.png "a) [b]")](real.md) '
+                '[![alt](gone2.png "a) [b]")](real.md)\n')
+        self.assertEqual(self.check(files, text), ["doc.md: gone.md does not exist", "doc.md: gone2.png does not exist"])
+
+    def test_reports_an_invalid_destination_and_keeps_checking(self) -> None:
+        text = "[bad](a%00b.md) [bad anchor](real.md#x%00y) [gone](gone.md)\n"
+        self.assertEqual(self.check({"real.md": "# Top\n"}, text), [
+            "doc.md: a%00b.md is an invalid destination",
+            "doc.md: gone.md does not exist",
+            "doc.md: real.md#x%00y is an invalid destination"])
 
     def test_reserves_every_slug_it_emits_when_headings_collide(self) -> None:
         files = {"real.md": "# X\n\n# X\n\n# X-1\n\n# X\n"}

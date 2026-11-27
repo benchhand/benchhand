@@ -14,7 +14,7 @@ FEA needs `ccx` and `gmsh`. Preflight looks through FreeCAD, then next to `freec
 |---|---|---|
 | `preflight.py` | 0 | Every required check passed. |
 | `preflight.py` | 1 | A required check failed. Read the report and fix it. |
-| `preflight.py --status` | 0, 1 | Exit 0 needs a passing warm-up and passing FEA checks of the current project. Exit 1 means the warm-up failed a required check, or the current project's FEA setting or solver check fails. A cached warm-up that passed still exits 1 for a failing project, and so does a missing warm-up. |
+| `preflight.py --status` | 0, 1 | Exit 0 needs a passing warm-up and no failing required FEA check of the current project. With FEA off, the solver row is informational, so exit 0 does not mean the solvers were probed. Exit 1 means the warm-up failed a required check, or a required FEA check of the current project fails (an invalid FEA setting, or missing solvers with FEA on). A cached warm-up that passed still exits 1 for such a project, and so does a missing warm-up. |
 | `preflight.py --status` | 2 | No warm-up is recorded, or it died. Warm in the foreground. |
 | `preflight.py --status` | 3 | The warm-up is still running. Run `--status` again, or add `--wait SECONDS`. |
 
