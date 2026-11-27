@@ -325,6 +325,36 @@ class ExtractTests(unittest.TestCase):
         _, result = run(*self.args(HTML))
         self.assertIs(result["reused"], False)
 
+    def test_an_html_page_without_tables_is_refused_before_it_is_stored(self) -> None:
+        page = Path(self._tmp.name) / "challenge.html"
+        page.write_text("<html><body><h1>Just a moment...</h1><p>Checking your browser.</p></body></html>", encoding="utf-8")
+        for extra in ((), ("--find", "dk")):
+            with self.subTest(extra=extra):
+                code, result = run(*self.args(page, *extra))
+                self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["no_tables"]))
+        self.assertFalse(self.hw.exists())
+
+    def test_a_sidecar_with_a_repeated_key_or_unparseable_json_is_invalid(self) -> None:
+        digest = hashlib.sha256(HTML.read_bytes()).hexdigest()
+        size = HTML.stat().st_size
+        whole = (f'"sha256": "{digest}", "accessed": "2026-11-20", "bytes": {size}, "kind": "html"')
+        cases = {
+            "repeated key": ('{"origin": "a", "origin": "b", ' + whole + "}").encode(),
+            "deeply nested": b"[" * 200000,
+            "not utf-8": b"\xff\xfe{",
+        }
+        for label, payload in cases.items():
+            with self.subTest(label):
+                hw = Path(self._tmp.name) / label.replace(" ", "_") / "hw"
+                sources = hw / "parts" / "PIN-0001" / "sources"
+                sources.mkdir(parents=True)
+                (sources / "thumb_screw_table.html").write_bytes(HTML.read_bytes())
+                sidecar = sources / "thumb_screw_table.html.source.json"
+                sidecar.write_bytes(payload)
+                code, result = run("PIN-0001", str(HTML), "--hw", str(hw))
+                self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["sidecar_invalid"]))
+                self.assertEqual(sidecar.read_bytes(), payload)
+
     def test_bad_arguments_exit_2(self) -> None:
         for argv in (["lower-1", str(HTML)], ["PIN-0001"], ["PIN-0001", str(HTML), "--bogus"]):
             with self.subTest(argv=argv):
