@@ -65,6 +65,16 @@ class Replicas(unittest.TestCase):
         except (json.JSONDecodeError, KeyError) as exc:
             raise AssertionError(f"drawing CLI gave no result (exit {proc.returncode}): {proc.stderr[-3000:]}") from exc
 
+    def test_the_v3_collar_with_controlled_model_inserts_keeps_its_rows(self) -> None:
+        code, result = self.draw("collar_v3", inclined_replicas.collar("surface"))
+        self.assertEqual((code, result["status"], result["findings"]), (0, "pass", []))
+        golden_rows.check(self, "collar_v3", result)
+
+    def test_a_frame_aligned_crank_keeps_its_rows(self) -> None:
+        code, result = self.draw("crank", inclined_replicas.crank())
+        self.assertEqual((code, result["status"], result["findings"]), (0, "pass", []))
+        golden_rows.check(self, "crank", result)
+
     def test_an_inclined_bore_and_boss_face_each_get_their_one_named_finding(self) -> None:
         """Named as native features, the inclined bores and boss faces are unlocated: one finding each, from the
         handler, never a second from the closure check and never a crash."""
