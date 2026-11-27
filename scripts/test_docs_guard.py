@@ -21,6 +21,7 @@ not as a proof that no test reads the safe set.
 """
 
 import ast
+import json
 import re
 import subprocess
 import unittest
@@ -109,7 +110,6 @@ LAYOUT = (
     "compares references/layout.md with layout.py's output; docs_only keeps that one file out"
     " of the safe set"
 )
-
 ALLOWED = [
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests', 'din-spec-3105-1-checklist.md', HW),
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests', 'index.md', HW),
@@ -313,6 +313,130 @@ class ScannerTests(unittest.TestCase):
     def test_prose_a_comment_and_an_unrelated_name_are_not_flagged(self) -> None:
         source = '"""Reads SKILL.md."""\n# see docs/\ny = "mydocs"\nz = "hw/decisions/DR-1.json"\n'
         self.assertEqual(self.flagged_in(source), set())
+
+
+FLOW_DOCS = tuple(ROOT / "skills" / "cad-flow" / rel
+                  for rel in ("SKILL.md", "references/flow.md", "references/manufacturing-selection.md"))
+RULES_INVOCATION = 'uv run --script "$CAD_SKILLS/cad-record/scripts/project_scope.py" rules'
+SERVICE_CLASSES = tuple(
+    name for name in json.loads(
+        (ROOT / "skills/cad-record/schemas/manufacturing.schema.json").read_text(encoding="utf-8")
+    )["$defs"]["service_class"]["enum"] if name != "unknown"
+)
+
+
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+DELIMITER_CELL = re.compile(r"^:?-+:?$")
+
+
+def table_cells(line: str) -> list[str]:
+    """The cells of a Markdown table row: split at pipes that no backslash escapes, leading and trailing pipe optional."""
+    cells = re.split(r"(?<!\\)\|", line.strip())
+    if line.strip().startswith("|"):
+        cells = cells[1:]
+    if line.strip().endswith("|") and not line.strip().endswith("\\|"):
+        cells = cells[:-1]
+    return [cell.strip() for cell in cells]
+
+
+def is_delimiter_row(line: str) -> bool:
+    cells = table_cells(line)
+    return "|" in line and bool(cells) and all(DELIMITER_CELL.match(cell) for cell in cells)
+
+
+def mask_fences(lines: list[str]) -> list[str]:
+    """`lines` with every code fence, its marker lines included, replaced by blank lines."""
+    masked, fence = [], None
+    for line in lines:
+        marker = FENCE.match(line)
+        closes = bool(fence and marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence)
+                      and not line.strip()[len(marker.group(1)):].strip())
+        if fence is None and marker:
+            fence = marker.group(1)
+        elif closes:
+            fence = None
+        masked.append("" if fence is not None or marker else line)
+    return masked
+
+
+def table_rows(lines: list[str]) -> list[int]:
+    """The indexes of the header and body rows of every GitHub table block in `lines`: a header row, then a delimiter
+    row with as many cells, then body rows up to a blank line or a line without a pipe."""
+    rows, index = [], 0
+    while index < len(lines):
+        is_table = ("|" in lines[index] and index + 1 < len(lines) and is_delimiter_row(lines[index + 1])
+                    and len(table_cells(lines[index])) == len(table_cells(lines[index + 1])))
+        if not is_table:
+            index += 1
+            continue
+        rows.append(index)
+        index += 2
+        while index < len(lines) and "|" in lines[index]:
+            rows.append(index)
+            index += 1
+    return rows
+
+
+def class_table_cells(text: str, classes: tuple[str, ...] = SERVICE_CLASSES) -> list[tuple[int, str]]:
+    """The (line, cell) pairs of GitHub Markdown table blocks whose cell is a service class name, with or without
+    backticks. Code fences are skipped."""
+    lines = mask_fences(text.splitlines())
+    return [(number + 1, cell) for number in table_rows(lines) for cell in table_cells(lines[number])
+            if cell.strip("`").strip() in classes]
+
+
+class ServiceClassDocTests(unittest.TestCase):
+    """The flow docs point to `project_scope.py rules` and keep no service-class table (design T3, PR 3). They are
+    in the docs-only safe set, so this check lives here, in the lane a docs-only PR still runs."""
+
+    def test_a_table_cell_that_is_a_class_name_is_found_with_or_without_backticks(self) -> None:
+        text = ("| Description | `service_class` |\n|---|---|\n| Fit prototype | `fit_assembly` |\n"
+                "| production | Record the standards |\n|  safety_critical  | x |\n| a production line | y |\n")
+        self.assertEqual(class_table_cells(text), [(3, "`fit_assembly`"), (4, "production"), (5, "safety_critical")])
+
+    def test_a_table_without_leading_pipes_is_found(self) -> None:
+        text = "Use | Class\n--- | :---:\nfit | `fit_assembly`\ndemo | functional_demo\nrest | x\n\nafter | production\n"
+        self.assertEqual(class_table_cells(text), [(3, "`fit_assembly`"), (4, "functional_demo")])
+
+    def test_a_class_in_the_header_row_is_found(self) -> None:
+        self.assertEqual(class_table_cells("| production | x |\n|---|---|\n| a | b |\n"), [(1, "production")])
+
+    def test_a_pipe_example_in_a_code_fence_is_not_a_table(self) -> None:
+        text = ("```markdown\n| Class | Use |\n|---|---|\n| `production` | end use |\n```\n"
+                "~~~\n| a | b |\n|---|---|\n| fit_assembly | c |\n~~~\n")
+        self.assertEqual(class_table_cells(text), [])
+
+    def test_a_table_after_a_closed_fence_is_found(self) -> None:
+        text = "```\ncode\n```\n| a | b |\n|---|---|\n| production | c |\n"
+        self.assertEqual(class_table_cells(text), [(6, "production")])
+
+    def test_pipe_lines_without_a_delimiter_row_and_prose_are_not_a_table(self) -> None:
+        self.assertEqual(class_table_cells("The `fit_assembly` class.\n- production\n| production | x |\n"), [])
+        self.assertEqual(class_table_cells("production\n---\n"), [])
+
+    def test_an_escaped_pipe_does_not_split_a_cell(self) -> None:
+        self.assertEqual(class_table_cells("| a | b |\n|---|---|\n| fit \\| production | x |\n"), [])
+
+    def test_no_flow_doc_has_a_table_row_that_names_a_service_class(self) -> None:
+        for doc in FLOW_DOCS:
+            with self.subTest(doc=doc.name):
+                self.assertEqual(class_table_cells(doc.read_text(encoding="utf-8")), [])
+
+    def test_each_flow_doc_gives_the_runnable_rules_invocation(self) -> None:
+        for doc in FLOW_DOCS:
+            with self.subTest(doc=doc.name):
+                self.assertIn(RULES_INVOCATION, doc.read_text(encoding="utf-8"))
+
+    def test_no_flow_doc_names_the_command_by_a_relative_path(self) -> None:
+        """`cad-record/scripts/project_scope.py rules` alone exits 127 from the project directory."""
+        for doc in FLOW_DOCS:
+            with self.subTest(doc=doc.name):
+                self.assertNotRegex(doc.read_text(encoding="utf-8"), r"project_scope\.py rules")
+
+    def test_the_gate_summary_rule_restates_the_class_rules_with_the_invocation(self) -> None:
+        lines = FLOW_DOCS[0].read_text(encoding="utf-8").splitlines()
+        self.assertTrue(any("gate summary" in line and "restate" in line and RULES_INVOCATION in line
+                            for line in lines))
 
 
 class AllowlistTests(unittest.TestCase):

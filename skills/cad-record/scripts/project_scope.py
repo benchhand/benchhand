@@ -1,7 +1,13 @@
+#!/usr/bin/env python3
+
 # SPDX-FileCopyrightText: 2026 Sjors Robroek
 #
 # SPDX-License-Identifier: MPL-2.0
 
+# /// script
+# requires-python = ">=3.12,<3.15"
+# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
+# ///
 """The project's scope: its service class and flow profile, read once from the record, and RULES, the one table
 that says per service class what each rule owes.
 
@@ -20,12 +26,14 @@ decides only what a gate makes of it. A release must resolve every obligation wh
 it may claim and whether an unvalidated trial (a waived physical obligation) is permitted.
 
 It loads manufacturing_intent.py, flow_profile_gate.py and layout.py (its canonical JSON digest) by path. It reads
-no project file; the modules it loads read the shipped product schema. Load it by path and register it in
+no project file; the modules it loads read the shipped product schema. `project_scope.py rules [--class C]` prints
+the rules of one service class, or of every class, as text (no schema: it is for a reader, not a parser). Load it by path and register it in
 `sys.modules` as `cad_record_project_scope`.
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sys
 import types
@@ -232,3 +240,78 @@ class ProjectScope:
     @property
     def rules_sha256(self) -> str:
         return rules_sha256(self.service_class)
+
+
+UNKNOWN_CLASS = "unknown"
+
+# What the gates do today (evidence.obligation_gate and Assessment.release): from LAYOUT on a due unresolved check
+# blocks, before it the check only warns; a planned physical check may stay planned until the release; the release
+# skips an out-of-scope obligation and blocks on any other unresolved one; a check not assessed blocks nothing. An
+# unknown service class owes every rule and also blocks the release by itself (release.service_class).
+# test_project_scope.py runs the real gates against these words, so a gate change that leaves them stale fails there.
+_REASONS: Mapping[str, str] = types.MappingProxyType({
+    "required": "blocks once due; blocks at release until resolved",
+    "check_before_use": "a physical check the release may close as checked before use",
+    "advisory": "runs and shows a finding, never blocks and never passes",
+    OUT_OF_SCOPE: "not owed at release; blocks once due before the release",
+})
+_GATE_NOTE = ("The first rule that matches an obligation decides it. From LAYOUT on, a due check that is unresolved "
+              "blocks; before LAYOUT it only warns. A planned physical check may stay planned until the release. "
+              "A check not assessed blocks nothing at any gate. The release skips an out-of-scope rule.")
+_UNKNOWN_NOTE = "Release: an unknown service class blocks the release by itself, whatever else is resolved."
+
+
+def _levels(first: Obligations, second: Obligations) -> list[str]:
+    """The evidence levels that both selectors cover, in LEVELS order (a level outside the schema is left out)."""
+    return [level for level in LEVELS
+            if (first.levels is None or level in first.levels) and (second.levels is None or level in second.levels)]
+
+
+def _exceptions(service_class: str) -> list[str]:
+    """One line per narrower family of an earlier rule that a later rule also names by its wider prefix, with the
+    evidence levels at which the earlier rule decides it."""
+    lines = []
+    for index, later in enumerate(RULES):
+        for earlier in RULES[:index]:
+            if later.applies_to.families is None or earlier.applies_to.families is None:
+                continue
+            levels = _levels(earlier.applies_to, later.applies_to)
+            if not levels:
+                continue
+            where = "every schema level" if levels == list(LEVELS) else ", ".join(levels)
+            for narrow in earlier.applies_to.families:
+                if any(narrow.startswith(wide) and narrow != wide for wide in later.applies_to.families):
+                    lines.append(f"  exception: {narrow} at {where} is decided by {earlier.id} "
+                                 f"[{earlier.disposition(service_class)}], not {later.id} "
+                                 f"[{later.disposition(service_class)}]")
+    return lines
+
+
+def rules_text(service_class: str) -> str:
+    """The rules of `service_class` as text: its rules in order, what the gates do with each, and the families that
+    an earlier rule takes from a later one, with the levels. The class `unknown`, or any class RULES does not list,
+    owes every rule."""
+    lines = [f"Service class: {service_class}", _GATE_NOTE]
+    if service_class not in SERVICE_CLASSES:
+        lines.append(_UNKNOWN_NOTE)
+    for rule in RULES:
+        disposition = rule.disposition(service_class)
+        lines.append(f"  {rule.id} [{disposition}]: {rule.summary} ({_REASONS[disposition]})")
+    lines.extend(_exceptions(service_class))
+    return "\n".join(lines) + "\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="The service-class scope of every obligation.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    rules = commands.add_parser("rules", help="print what each service class owes, per obligation family")
+    rules.add_argument("--class", dest="service_class", choices=(*SERVICE_CLASSES, UNKNOWN_CLASS),
+                       help="one service class (default: every class)")
+    args = parser.parse_args(argv)
+    classes = (args.service_class,) if args.service_class else SERVICE_CLASSES
+    sys.stdout.write("\n".join(rules_text(service_class) for service_class in classes))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,11 @@
+Service class: appearance_concept
+The first rule that matches an obligation decides it. From LAYOUT on, a due check that is unresolved blocks; before LAYOUT it only warns. A planned physical check may stay planned until the release. A check not assessed blocks nothing at any gate. The release skips an out-of-scope rule.
+  obligation.requirements [required]: Approved requirements and the evidence policy, at every level: a project may demand more (blocks once due; blocks at release until resolved)
+  obligation.make [required]: Make checks (intent, CAD, route, process, purchase, optical route, export) at the CAD, geometry and process levels (blocks once due; blocks at release until resolved)
+  obligation.make_evidence [out_of_scope]: Make checks at the simulation and physical levels (not owed at release; blocks once due before the release)
+  obligation.fit [out_of_scope]: Fit checks: interfaces, features, assembly and motion play (not owed at release; blocks once due before the release)
+  obligation.function [out_of_scope]: Function checks: engineering, function, contact, motion and optical (not owed at release; blocks once due before the release)
+  obligation.other [out_of_scope]: Every other check family, and any check at a level outside the schema (not owed at release; blocks once due before the release)
+  exception: optical.route at cad_valid, geometrically_manufacturable, process_planned is decided by obligation.make [required], not obligation.function [out_of_scope]
+  exception: optical.route at simulation_supported, physically_validated is decided by obligation.make_evidence [out_of_scope], not obligation.function [out_of_scope]
+  exception: motion.play at every schema level is decided by obligation.fit [out_of_scope], not obligation.function [out_of_scope]
