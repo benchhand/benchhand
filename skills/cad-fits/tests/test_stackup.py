@@ -1279,6 +1279,37 @@ class StackupCliTests(unittest.TestCase):
                 stackup.main([*args, "--replace"])
             self.assertFalse(json.loads(out.getvalue())["reused"])
 
+    def test_a_bundle_sealed_before_the_surface_binding_is_never_reused(self) -> None:
+        """Before the surface binding a stack that names neither of two regions was judged as the plain feature.fit and
+        passed. That bundle, sealed under the older revision, is another recipe: the upgraded CLI refuses it without
+        --replace (exit 2, no check bundle) and, with it, names the ambiguity (stack.obligation_ambiguous, exit 1)."""
+        documents = closing_gap_documents()
+        documents["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+            {"id": f"seal_{side}", "feature": "seal_groove", "region": side, "role": "seal", "dimension_state": "assembled"}
+            for side in ("inner", "outer")]
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", documents)
+            stack = self.assembly_stack()
+            stack["subject"] = {"PN": "TST-0001", "feature": "seal_groove"}
+            case = write_case(hw, "pn-stack", stack)
+            snapshot_version(hw)
+            args = ["uv", "run", "--quiet", "--script", str(SCRIPT), str(case), "--hw", str(hw), "--version", "v1"]
+            with unittest.mock.patch.object(stackup, "BASIS_REVISION", 1), \
+                    unittest.mock.patch.object(stackup._IntentStack, "obligation_id", stackup._IntentStack.obligation_base), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                stackup.main(args[5:])
+            self.assertTrue((hw / "checks" / "v1" / "stack-pn-stack").is_dir(), "the older code sealed a plain feature.fit check")
+            refused = subprocess.run(args, capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(refused.returncode, 2, refused.stdout[-300:])
+            self.assertIn("--replace", refused.stderr)
+            replaced = subprocess.run([*args, "--replace"], capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(replaced.returncode, 1, replaced.stderr)
+            result = json.loads(replaced.stdout)
+            self.assertFalse(result["reused"])
+            self.assertEqual(result["obligations"], [])
+            self.assertIn("stack.obligation_ambiguous", codes(result))
+            self.assertIsNone(result["check_bundle"])
+
     def test_rerun_reuses_bundle_and_recipe_change_requires_replace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory) / "project"
