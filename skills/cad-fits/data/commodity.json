@@ -33,6 +33,11 @@
       "source": "https://www.fasteners.eu/standards/ISO/7089/ (table according to DIN 125: d1 min, d2 max, h between min and max), read 2026-11-24",
       "size": {"M2": [2.2, 5.0, 0.3], "M2.5": [2.7, 6.0, 0.5], "M3": [3.2, 7.0, 0.5], "M4": [4.3, 9.0, 0.8],
                "M5": [5.3, 10.0, 1.0], "M6": [6.4, 12.0, 1.6], "M8": [8.4, 16.0, 1.6]}},
+    "DIN 653": {"item": "knurled thumb screw, low (flat) type; M3.5 is a non-preferred size in the standard", "fields": "head_diameter_nominal, head_diameter_max, head_diameter_min, head_height_max, head_height_min, shank_diameter_max, shank_diameter_min",
+      "source": "https://fasteners.eu/standards/din/653 (dimension table of DIN 653: dk nominal, max, min; k nominal = max, min; ds nominal = max, min; the label cells span columns, so values were read by column position from the size header row, M3, (M3,5), M4, M5, M6, M8), read 2026-11-27; cross-checked against https://boltport.com/standards/din-653 and https://engineeringhardware.com/guide/standard/din-653-din-653-knurled-thumb-screw-low-type",
+      "size": {"M3": [12, 12.35, 11.65, 2.5, 2.25, 3, 2.86], "M3.5": [14, 14.35, 13.65, 3, 2.75, 3.5, 3.32],
+               "M4": [16, 16.35, 15.65, 3.5, 3.2, 4, 3.82], "M5": [20, 20.42, 19.58, 4, 3.7, 5, 4.82],
+               "M6": [24, 24.42, 23.58, 5, 4.7, 6, 5.82], "M8": [30, 30.42, 29.58, 6, 5.7, 8, 7.78]}},
     "ISO 8734": {"item": "hardened dowel pin, tolerance m6; the size key is the diameter in mm", "fields": "diameter",
       "source": "https://www.fasteners.eu/standards/ISO/8734/ (table according to ISO 8734: d, m6), read 2026-11-24",
       "size": {"2": [2.0], "3": [3.0], "4": [4.0], "5": [5.0], "6": [6.0], "8": [8.0]}}
