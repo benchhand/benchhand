@@ -25,10 +25,13 @@ init    copies HW into <workspace>/hw/ without versions/, renders/, releases/, .
         records the unit's PNs and the sha256 of every copied file in <workspace>/baseline.json.
         It seeds the scratch part store with hard links to HW's stored objects and build records,
         so the scratch build reuses every unchanged part. An existing workspace is kept unless
-        --reset replaces it.
+        --reset replaces it. It builds the workspace in a sibling directory and moves it into place, so a
+        refused init leaves nothing behind. A symlink in the lead's cache path is not followed: init
+        finishes unseeded and says so under "info".
 build   runs cad-model `run` on the scratch hw/ under the next scratch label, cad-model `check`
         on that version, and cad-design form_check at --fidelity. HW itself is never passed to
-        any of them, so HW/versions/ is neither created nor changed. Form findings are split
+        any of them, so HW/versions/ is neither created nor changed. It runs under workspace.lock after settling
+        any sync a killed run left, so no sync or deliver can change the scratch hw/ while it builds. Form findings are split
         into the unit's own PNs and the rest; only the unit's own blocking findings block it. A
         finding form_check marks `blocking: false` is a diagnostic (a legacy heuristic such as a
         minimum wall or block_like proposal): reported as own_diagnostics, never a pass or a
@@ -65,8 +68,9 @@ sync    brings the lead's current record into the workspace: a part the lead ret
         ("unreadable-directory") and a workspace another sync or deliver holds ("workspace-busy").
         Every write goes through directory descriptors opened without following links. A baseline.json
         that is not valid or has the wrong shape is "baseline-invalid" (exit 1) for every command that
-        reads it. It never writes HW, and it links stored builds of newly delivered parts into the
-        scratch store.
+        reads it. A directory keeps its exact mode through a sync. Removing the old tree after the swap can
+        fail without harm: that is a "warnings" entry and the next command tries again. It never writes
+        HW, and it links stored builds of newly delivered parts into the scratch store.
         Run it before build whenever the lead has integrated a delivery or a decision.
 
 stdout: one JSON document; every path in it is absolute. build writes each tool's diagnostics to
