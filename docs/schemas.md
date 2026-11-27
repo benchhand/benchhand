@@ -7,6 +7,7 @@ schema-sha256 cce7a6387838df08c1043f5828275c9a59f6ccd2867709944ceda31ed2223d79 s
 schema-sha256 6868af6519ab519f02414dc1d860de2b33d3757aa39d78d4960530f0b4dbbe28 skills/cad-record/schemas/bundle-manifest.schema.json
 schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 skills/cad-record/schemas/drawing.schema.json
 schema-sha256 6ffce99afd025a980bb99e691f44813b24e9814209a7ae84e64fa9071e5d55bf skills/cad-record/schemas/evidence-digest.schema.json
+schema-sha256 2e8bbd3f79171fe423ff771a1e376e1d7a6eb2043ba4c486dc40c9fbe2e7b6bf skills/cad-record/schemas/evidence-packet.schema.json
 schema-sha256 77d09e3d654eef9c216f6cb70465fbca26689edbdc5bf76c70b850c15143484d skills/cad-record/schemas/evidence-run.schema.json
 schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 skills/cad-record/schemas/fea-case.schema.json
 schema-sha256 078be15a80317b69b47fef81c0bfe83b86e1d5b8d4a775feab87ac5c1e8746dd skills/cad-record/schemas/finding.schema.json
@@ -1611,6 +1612,220 @@ Source: `/oneOf/2`
 | --- | --- | --- | --- | --- |
 | `status` | `Literal["error"]` | yes |  |  |
 | `message` | `str` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+## evidence-packet.schema.json
+
+- File: `skills/cad-record/schemas/evidence-packet.schema.json`
+- `$id`: `https://srobroek.com/cad/schemas/evidence-packet.schema.json`
+
+CAD evidence packet (evidence.py check)
+
+### EvidencePacket
+
+Source: schema root
+
+**CAD evidence packet (evidence.py check)**
+
+The aggregate evidence of one built version of a record version 2 project at one stage gate, as evidence.py check prints it and cad-recheck stamps it: the expected checks, each one's status and service-class scope, the facets, the typed verification rows, the evidence findings, the selection summary and the gate. cad-recheck seals version 2 only; it still reads a version 1 packet that an older stamp sealed, which has no scope_rules_sha256 and no status scope
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `kind` | `Literal["cad-evidence-packet"]` | yes |  |  |
+| `schema_version` | `Literal[2]` | yes |  |  |
+| `record_version` | `ManufacturingRecordVersion` | yes |  |  |
+| `version` | `str \| None` | yes |  | the built version assessed, such as v3; null when none was named |
+| `version_manifest_sha256` | `EvidencePacketSha256OrNull` | yes |  | sha256 of that version's manifest |
+| `record_sha256` | `ProductSha256` | yes |  | the digest of the record inputs the packet was computed from (evidence.record_digest) |
+| `expected_sha256` | `ProductSha256` | yes |  | sha256 of the expected checks in their schema form, as canonical JSON |
+| `stage` | `ProductStage` | yes |  | the gate the packet applies |
+| `scope_rules_sha256` | `ProductSha256` | yes |  | the digest of the project_scope RULES and the service class that judged the packet (project_scope.rules_sha256); a packet that other rules judged is stale |
+| `expected` | `list[ManufacturingObligation]` | yes |  | every check the record implies (manufacturing_intent.required_checks) |
+| `statuses` | `Mapping[str, EvidencePacketStatus]` | yes |  | per expected check id, what it has shown |
+| `facets` | `Mapping[str, EvidencePacketFacet]` | yes |  | per requirement, part, interface, assembly operation and the product: each evidence level's result, the worst over its checks |
+| `verification` | `list[EvidencePacketVerificationRow]` | yes |  | the typed verification.csv rows |
+| `findings` | `list[EvidencePacketFinding]` | yes |  | the findings about the evidence itself |
+| `critical` | `list[EvidencePacketCritical]` | yes |  | the unresolved critical producer findings |
+| `complete` | `bool` | yes |  | false when a producer packet was partial or invalid |
+| `selection` | `EvidencePacketSelection` | yes |  |  |
+| `gate` | `EvidencePacketGate` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### EvidencePacketCritical
+
+Source: `/$defs/critical`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `finding` | `str \| None` | yes |  |  |
+| `code` | `str \| None` | yes |  |  |
+| `bundle` | `str` | yes |  |  |
+| `obligation` | `str \| None` | yes |  |  |
+| `consequence` | `str \| None` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### EvidencePacketFacet
+
+Source: `/$defs/facet`
+
+Alias of `Mapping[str, Literal["not_required"] | EvidencePacketResult]`
+
+Constraints not expressed by the type:
+
+- propertyNames: {"$ref":"manufacturing.schema.json#/$defs/evidence_level"}
+
+### EvidencePacketFinding
+
+Source: `/$defs/finding`
+
+An evidence, gate or release finding (evidence.Finding)
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `path` | `str` | yes |  | the project-relative path it is about |
+| `message` | `str` | yes |  |  |
+| `severity` | `Literal["error", "warning", "info"]` | yes |  | error blocks the gate; warning and info do not |
+| `code` | `ManufacturingFindingCode` | yes |  |  |
+| `canonical_location` | `str \| None` | yes |  |  |
+| `action` | `str \| None` | yes |  |  |
+| `obligation` | `str` | no |  | the expected check it is about |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### EvidencePacketGate
+
+Source: `/$defs/gate`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `stage` | `ProductStage` | yes |  |  |
+| `passed` | `bool` | yes |  | no gate finding is an error |
+| `findings` | `list[EvidencePacketFinding]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### EvidencePacketResult
+
+Source: `/$defs/result`
+
+An obligation's status: pass, waived and not_applicable resolve it; not_assessed blocks nothing and is never a pass; unknown, planned and stale never become pass
+
+Alias of `Literal["pass", "fail", "waived", "not_applicable", "not_assessed", "stale", "planned", "unknown"]`
+
+### EvidencePacketScope
+
+Source: `/$defs/scope`
+
+What the project's service class owes the check (project_scope.ProjectScope.obligation_scope)
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `disposition` | `Literal["required", "check_before_use", "advisory", "out_of_scope"]` | yes |  | required blocks at its due stage; out_of_scope blocks no gate and stays unclaimed |
+| `rule` | `str` | yes |  | the id of the RULES row that decides it |
+| `reason` | `ManufacturingText` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `rule`: pattern: "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+
+### EvidencePacketSelection
+
+Source: `/$defs/selection`
+
+The selection report of the same record (selection.py), as the packet summarizes it
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `status` | `str \| None` | yes |  |  |
+| `input_sha256` | `EvidencePacketSha256OrNull` | yes |  |  |
+| `recorded` | `EvidencePacketSelectionRecorded` | yes |  |  |
+| `decisions` | `list[EvidencePacketSelectionDecisionsItems]` | yes |  |  |
+| `findings` | `list[str]` | yes |  | the selection finding codes |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### EvidencePacketSelectionDecisionsItems
+
+Source: `/$defs/selection/properties/decisions/items`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `parts` | `list[str]` | yes |  |  |
+| `final_allowed` | `bool \| None` | yes |  |  |
+| `refused_because` | `list[str]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### EvidencePacketSelectionRecorded
+
+Source: `/$defs/selection/properties/recorded`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `status` | `str \| None` | yes |  |  |
+| `current` | `bool \| None` | yes |  |  |
+| `approved` | `bool \| None` | yes |  | whether the confirming decision is the user's approval; null when not confirmed |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### EvidencePacketSha256OrNull
+
+Source: `/$defs/sha256_or_null`
+
+Alias of `ProductSha256 | None`
+
+### EvidencePacketStatus
+
+Source: `/$defs/status`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `result` | `EvidencePacketResult` | yes |  |  |
+| `level` | `ManufacturingEvidenceLevel` | yes |  |  |
+| `stage` | `ProductStage` | yes |  |  |
+| `sources` | `list[str]` | yes |  | the producer bundles and evidence ids that decided it, or record |
+| `reasons` | `list[str]` | yes |  |  |
+| `waiver` | `Mapping[str, Any]` | no |  | the waiver of a waived check, as the evidence ledger records it |
+| `scope` | `EvidencePacketScope` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### EvidencePacketVerificationRow
+
+Source: `/$defs/verification_row`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `requirement` | `str` | yes |  |  |
+| `method` | `str \| None` | yes |  |  |
+| `criterion` | `Any` | yes |  | the requirement's criteria, or the row's criteria for an unknown requirement |
+| `acceptance` | `list[Any]` | yes |  |  |
+| `stated` | `str` | yes |  | the result the CSV row states |
+| `result` | `EvidencePacketResult` | yes |  | the result its evidence shows |
+| `levels` | `Mapping[str, EvidencePacketResult]` | yes |  |  |
+| `evidence` | `list[Mapping[str, Any]]` | yes |  | the ledger entries the row rests on |
 
 Constraints not expressed by the type:
 

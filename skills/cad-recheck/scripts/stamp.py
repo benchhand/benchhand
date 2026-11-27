@@ -14,8 +14,9 @@ A stamp records the staged hw/ tree hash, the stage and the evidence packet `evi
 for it (cad-record), or the packet of an `evidence.py run` report (a run that stopped has none): its
 expected checks, each one's status and the digest of the record inputs it
 read. Only a record version 2 record stamps; a record of another version refuses at or after the
-threshold. A new stamp seals evidence packet version 2 only (exit 1 on another version); `--verify` still reads a
-version 1 packet that an older stamp sealed. A packet that is not the assessment of the staged record, lacks an
+threshold. A new stamp seals only an evidence packet of version 2 that follows cad-record
+schemas/evidence-packet.schema.json (exit 1 otherwise); `--verify` still reads a version 1 packet that an older stamp
+sealed. A packet that is not the assessment of the staged record, lacks an
 expected check or is partial never stamps; `--passed` stamps only a packet whose stage gate, recomputed
 here from its statuses and from the staged record's selection report (cad-record selection.py, with
 the digest of the staged selection inputs), passes, so a stale, failed or unknown due check, or a
@@ -459,14 +460,24 @@ class PacketRefused(RuntimeError):
     """An evidence packet a new stamp does not seal; the stamp exits 1."""
 
 
+PACKET_SCHEMA = "evidence-packet.schema.json"
+
+
 def require_sealable_packet(checks: Any) -> None:
-    """A new stamp seals the current evidence packet version only. Verification still reads an older stamp's packet
+    """A new stamp seals the current evidence packet version only, and only a packet that follows its schema
+    (cad-record schemas/evidence-packet.schema.json). Verification still reads an older stamp's packet
     (cad-record evidence.packet_problems)."""
-    if isinstance(checks, dict) and checks.get("kind") == evidence.PACKET_KIND \
-            and checks.get("schema_version") != evidence.PACKET_SCHEMA_VERSION:
+    if not isinstance(checks, dict) or checks.get("kind") != evidence.PACKET_KIND:
+        return  # not an evidence packet: require_evidence refuses it
+    if checks.get("schema_version") != evidence.PACKET_SCHEMA_VERSION:
         raise PacketRefused(f"stamp.packet_version: the evidence packet is schema_version {checks.get('schema_version')!r}; "
                             f"a new stamp seals version {evidence.PACKET_SCHEMA_VERSION} only. Run `evidence.py check --hw hw "
                             "--version vN --out .cad-work/evidence.json` again and stamp its packet")
+    findings: list[dict[str, str]] = []
+    if not validate.validate_document(checks, PACKET_SCHEMA, "evidence packet", findings):
+        messages = [item["message"] for item in findings]
+        raise PacketRefused(f"stamp.packet_schema: the evidence packet does not follow {PACKET_SCHEMA}: "
+                            + "; ".join(messages[:3]) + (" …" if len(messages) > 3 else ""))
 
 
 def record(stage: str, checks_path: Path, passed: bool, root: Path) -> dict[str, Any]:

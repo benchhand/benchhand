@@ -86,7 +86,7 @@ Release claims state purpose, scope, operating limits, exclusions, required obli
 
 `scripts/project_scope.py` holds the class rules. `RULES` says which obligations each class owes. A release must resolve them, and a gate before the release skips the rest. A skipped obligation keeps its result. A `gate.out_of_scope` info row names it, with its rule and reason. `SERVICE_POLICY` says which evidence levels the class may claim and whether it allows an unvalidated trial.
 
-The evidence packet is version 2. It records the `scope` of each status. Its `scope_rules_sha256` is the digest of the rules that judged it. A packet that other rules judged is stale. A version 1 packet still reads.
+The evidence packet is version 2 (`schemas/evidence-packet.schema.json`). It records the `scope` of each status. Its `scope_rules_sha256` is the digest of the rules that judged it. A packet that other rules judged is stale. A new stamp seals only a version 2 packet that follows the schema. Verification still reads a version 1 packet.
 
 Evidence codes include `evidence.unqualified`, `.stale`, `.subject`, `.carry_forward`, `.csv_unsupported`, `.physical_claim`; `packet.invalid`, `.unexpected`; `waiver.unapproved`, `.expired`, `.scope`, `.forbidden`; and `finding.critical`.
 Gate/release codes include `gate.record`, `.fail`, `.stale`, `.unresolved`, `.out_of_scope`, `.use_case`, `.selection`, `.selection_approval`; `release.service_class`, `.scope`, `.trial_not_permitted`, `.waiver_forbidden`.

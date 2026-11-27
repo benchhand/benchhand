@@ -10,6 +10,7 @@
 # schema-sha256 6868af6519ab519f02414dc1d860de2b33d3757aa39d78d4960530f0b4dbbe28 skills/cad-record/schemas/bundle-manifest.schema.json
 # schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 skills/cad-record/schemas/drawing.schema.json
 # schema-sha256 6ffce99afd025a980bb99e691f44813b24e9814209a7ae84e64fa9071e5d55bf skills/cad-record/schemas/evidence-digest.schema.json
+# schema-sha256 2e8bbd3f79171fe423ff771a1e376e1d7a6eb2043ba4c486dc40c9fbe2e7b6bf skills/cad-record/schemas/evidence-packet.schema.json
 # schema-sha256 77d09e3d654eef9c216f6cb70465fbca26689edbdc5bf76c70b850c15143484d skills/cad-record/schemas/evidence-run.schema.json
 # schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 skills/cad-record/schemas/fea-case.schema.json
 # schema-sha256 078be15a80317b69b47fef81c0bfe83b86e1d5b8d4a775feab87ac5c1e8746dd skills/cad-record/schemas/finding.schema.json
@@ -148,6 +149,19 @@ __all__ = [
     "EvidenceDigestOneOf0",
     "EvidenceDigestOneOf1",
     "EvidenceDigestOneOf2",
+    "EvidencePacket",
+    "EvidencePacketCritical",
+    "EvidencePacketFacet",
+    "EvidencePacketFinding",
+    "EvidencePacketGate",
+    "EvidencePacketResult",
+    "EvidencePacketScope",
+    "EvidencePacketSelection",
+    "EvidencePacketSelectionDecisionsItems",
+    "EvidencePacketSelectionRecorded",
+    "EvidencePacketSha256OrNull",
+    "EvidencePacketStatus",
+    "EvidencePacketVerificationRow",
     "EvidenceRun",
     "EvidenceRunSha256OrNull",
     "EvidenceRunStep",
@@ -2303,6 +2317,349 @@ class EvidenceDigestOneOf2(TypedDict):
 EvidenceDigest = EvidenceDigestOneOf0 | EvidenceDigestOneOf1 | EvidenceDigestOneOf2
 
 
+# The project record version product.yaml declares; any other value, or none, is refused
+#
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/record_version
+ManufacturingRecordVersion = Literal[2]
+
+
+# Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/sha256_or_null
+EvidencePacketSha256OrNull = ProductSha256 | None
+
+
+# Source: skills/cad-record/schemas/product.schema.json#/$defs/stage
+ProductStage = Literal["ground", "intent", "specify", "concept", "layout", "parts", "detail", "bom", "analysis", "critique", "reconcile", "design_freeze", "release"]
+
+
+# family@anchor: anchor is product, a PN with optional .component, /operation and #feature, an IF with optional #feature, a REQ, or op:<assembly operation>
+#
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/obligation_id
+#
+# Not expressible as types (see the schema):
+# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*@(product|[A-Z]{2,5}-[0-9]{4}(\\.[a-z][a-z0-9_]*)?(/[a-z][a-z0-9_]*)?(#[a-z][a-z0-9_]*)?|IF-[0-9]{3}(#[a-z][a-z0-9_]*)?|REQ-[0-9]{3}|op:[a-z][a-z0-9_-]*)$"
+ManufacturingObligationId = str
+
+
+# A check family, such as process.fdm.support or interface.fit
+#
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/check_family
+#
+# Not expressible as types (see the schema):
+# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*$"
+ManufacturingCheckFamily = str
+
+
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/pn
+ManufacturingPn = DrawingPn
+
+
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/occurrence_ref
+ManufacturingOccurrenceRef = AssemblyOccurrenceRef
+
+
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/interface_id
+#
+# Not expressible as types (see the schema):
+# - pattern: "^IF-[0-9]{3}$"
+ManufacturingInterfaceId = str
+
+
+# an assembly.yaml operations id
+#
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/assembly_operation_id
+#
+# Not expressible as types (see the schema):
+# - pattern: "^[a-z][a-z0-9_-]*$"
+ManufacturingAssemblyOperationId = str
+
+
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/requirement_id
+#
+# Not expressible as types (see the schema):
+# - pattern: "^REQ-[0-9]{3}$"
+ManufacturingRequirementId = str
+
+
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/requirement_ids
+#
+# Not expressible as types (see the schema):
+# - minItems: 1
+# - uniqueItems: true
+ManufacturingRequirementIds = list[ManufacturingRequirementId]
+
+
+class ManufacturingSubject(TypedDict):
+    """What a statement, finding or evidence is about: the product, a part (with an optional occurrence, component, operation, feature and region), an interface or an assembly operation. Faces and solids are named semantically, never by persistent index
+
+    Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/subject
+
+    Not expressible as types (see the schema):
+    - minProperties: 1
+    - dependentRequired: {"occurrence":["PN"],"component":["PN"],"operation":["PN"],"region":["feature"]}
+    - additionalProperties: false
+    - anyOf: [{"required":["product"]},{"required":["PN"]},{"required":["interface"]},{"required":["assembly_operation"]}]
+    """
+    product: NotRequired[Literal[True]]
+    PN: NotRequired[ManufacturingPn]
+    occurrence: NotRequired[ManufacturingOccurrenceRef]
+    component: NotRequired[ManufacturingSemanticId]
+    operation: NotRequired[ManufacturingSemanticId]
+    feature: NotRequired[ManufacturingSemanticId]
+    region: NotRequired[ManufacturingSemanticId]
+    interface: NotRequired[ManufacturingInterfaceId]
+    assembly_operation: NotRequired[ManufacturingAssemblyOperationId]
+    requirements: NotRequired[ManufacturingRequirementIds]
+
+
+# Independent evidence facets, not an ordinal badge: each requirement and part can hold several
+#
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/evidence_level
+ManufacturingEvidenceLevel = Literal["cad_valid", "geometrically_manufacturable", "process_planned", "simulation_supported", "physically_validated"]
+
+
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/stage
+ManufacturingStage = ProductStage
+
+
+class ManufacturingObligation(TypedDict):
+    """One expected check, enumerated by manufacturing_intent.required_checks before any producer runs
+
+    Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/obligation
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - stage: the earliest workflow stage at which the obligation is due
+    - basis: why it is required: the route kind, function, interface, requirement or service input it derives from
+    """
+    id: Required[ManufacturingObligationId]
+    family: Required[ManufacturingCheckFamily]
+    subject: Required[ManufacturingSubject]
+    level: Required[ManufacturingEvidenceLevel]
+    stage: Required[ManufacturingStage]
+    basis: Required[ManufacturingText]
+    requirement: NotRequired[ManufacturingRequirementId]
+    criterion: NotRequired[ManufacturingSemanticId]
+
+
+# An obligation's status: pass, waived and not_applicable resolve it; not_assessed blocks nothing and is never a pass; unknown, planned and stale never become pass
+#
+# Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/result
+EvidencePacketResult = Literal["pass", "fail", "waived", "not_applicable", "not_assessed", "stale", "planned", "unknown"]
+
+
+class EvidencePacketScope(TypedDict):
+    """What the project's service class owes the check (project_scope.ProjectScope.obligation_scope)
+
+    Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/scope
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - disposition: required blocks at its due stage; out_of_scope blocks no gate and stays unclaimed
+    - rule: the id of the RULES row that decides it; pattern: "^[a-z][a-z0-9_]*(\\\\.[a-z][a-z0-9_]*)+$"
+    """
+    disposition: Required[Literal["required", "check_before_use", "advisory", "out_of_scope"]]
+    rule: Required[str]
+    reason: Required[ManufacturingText]
+
+
+class EvidencePacketStatus(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/status
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - sources: the producer bundles and evidence ids that decided it, or record
+    - waiver: the waiver of a waived check, as the evidence ledger records it
+    """
+    result: Required[EvidencePacketResult]
+    level: Required[ManufacturingEvidenceLevel]
+    stage: Required[ProductStage]
+    sources: Required[list[str]]
+    reasons: Required[list[str]]
+    waiver: NotRequired[Mapping[str, Any]]
+    scope: Required[EvidencePacketScope]
+
+
+# Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/facet
+#
+# Not expressible as types (see the schema):
+# - propertyNames: {"$ref":"manufacturing.schema.json#/$defs/evidence_level"}
+EvidencePacketFacet = Mapping[str, Literal["not_required"] | EvidencePacketResult]
+
+
+class EvidencePacketVerificationRow(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/verification_row
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - criterion: the requirement's criteria, or the row's criteria for an unknown requirement
+    - stated: the result the CSV row states
+    - result: the result its evidence shows
+    - evidence: the ledger entries the row rests on
+    """
+    requirement: Required[str]
+    method: Required[str | None]
+    criterion: Required[Any]
+    acceptance: Required[list[Any]]
+    stated: Required[str]
+    result: Required[EvidencePacketResult]
+    levels: Required[Mapping[str, EvidencePacketResult]]
+    evidence: Required[list[Mapping[str, Any]]]
+
+
+# A stable finding code, such as process.fdm.overhang
+#
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/finding_code
+#
+# Not expressible as types (see the schema):
+# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)+$"
+ManufacturingFindingCode = str
+
+
+class EvidencePacketFinding(TypedDict):
+    """An evidence, gate or release finding (evidence.Finding)
+
+    Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/finding
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - path: the project-relative path it is about
+    - severity: error blocks the gate; warning and info do not
+    - obligation: the expected check it is about
+    """
+    path: Required[str]
+    message: Required[str]
+    severity: Required[Literal["error", "warning", "info"]]
+    code: Required[ManufacturingFindingCode]
+    canonical_location: Required[str | None]
+    action: Required[str | None]
+    obligation: NotRequired[str]
+
+
+class EvidencePacketCritical(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/critical
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    finding: Required[str | None]
+    code: Required[str | None]
+    bundle: Required[str]
+    obligation: Required[str | None]
+    consequence: Required[str | None]
+
+
+class EvidencePacketSelectionRecorded(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/selection/properties/recorded
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - approved: whether the confirming decision is the user's approval; null when not confirmed
+    """
+    status: Required[str | None]
+    current: Required[bool | None]
+    approved: Required[bool | None]
+
+
+class EvidencePacketSelectionDecisionsItems(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/selection/properties/decisions/items
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    parts: Required[list[str]]
+    final_allowed: Required[bool | None]
+    refused_because: Required[list[str]]
+
+
+class EvidencePacketSelection(TypedDict):
+    """The selection report of the same record (selection.py), as the packet summarizes it
+
+    Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/selection
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - findings: the selection finding codes
+    """
+    status: Required[str | None]
+    input_sha256: Required[EvidencePacketSha256OrNull]
+    recorded: Required[EvidencePacketSelectionRecorded]
+    decisions: Required[list[EvidencePacketSelectionDecisionsItems]]
+    findings: Required[list[str]]
+
+
+class EvidencePacketGate(TypedDict):
+    """Source: skills/cad-record/schemas/evidence-packet.schema.json#/$defs/gate
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - passed: no gate finding is an error
+    """
+    stage: Required[ProductStage]
+    passed: Required[bool]
+    findings: Required[list[EvidencePacketFinding]]
+
+
+class EvidencePacket(TypedDict):
+    """CAD evidence packet (evidence.py check)
+
+    The aggregate evidence of one built version of a record version 2 project at one stage gate, as evidence.py check prints it and cad-recheck stamps it: the expected checks, each one's status and service-class scope, the facets, the typed verification rows, the evidence findings, the selection summary and the gate. cad-recheck seals version 2 only; it still reads a version 1 packet that an older stamp sealed, which has no scope_rules_sha256 and no status scope
+
+    Source: skills/cad-record/schemas/evidence-packet.schema.json#
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - version: the built version assessed, such as v3; null when none was named
+    - version_manifest_sha256: sha256 of that version's manifest
+    - record_sha256: the digest of the record inputs the packet was computed from (evidence.record_digest)
+    - expected_sha256: sha256 of the expected checks in their schema form, as canonical JSON
+    - stage: the gate the packet applies
+    - scope_rules_sha256: the digest of the project_scope RULES and the service class that judged the packet (project_scope.rules_sha256); a packet that other rules judged is stale
+    - expected: every check the record implies (manufacturing_intent.required_checks)
+    - statuses: per expected check id, what it has shown
+    - facets: per requirement, part, interface, assembly operation and the product: each evidence level's result, the worst over its checks
+    - verification: the typed verification.csv rows
+    - findings: the findings about the evidence itself
+    - critical: the unresolved critical producer findings
+    - complete: false when a producer packet was partial or invalid
+    """
+    kind: Required[Literal["cad-evidence-packet"]]
+    schema_version: Required[Literal[2]]
+    record_version: Required[ManufacturingRecordVersion]
+    version: Required[str | None]
+    version_manifest_sha256: Required[EvidencePacketSha256OrNull]
+    record_sha256: Required[ProductSha256]
+    expected_sha256: Required[ProductSha256]
+    stage: Required[ProductStage]
+    scope_rules_sha256: Required[ProductSha256]
+    expected: Required[list[ManufacturingObligation]]
+    statuses: Required[Mapping[str, EvidencePacketStatus]]
+    facets: Required[Mapping[str, EvidencePacketFacet]]
+    verification: Required[list[EvidencePacketVerificationRow]]
+    findings: Required[list[EvidencePacketFinding]]
+    critical: Required[list[EvidencePacketCritical]]
+    complete: Required[bool]
+    selection: Required[EvidencePacketSelection]
+    gate: Required[EvidencePacketGate]
+
+
 # Source: skills/cad-record/schemas/evidence-run.schema.json#/$defs/sha256_or_null
 #
 # Not expressible as types (see the schema):
@@ -2713,21 +3070,6 @@ ManufacturingBooleanFact = ManufacturingBooleanFactOneOf0 | ManufacturingFactUnk
 ManufacturingFunction = Literal["structural", "cosmetic", "locating", "sliding", "rotating", "sealing", "spring", "thermal", "electrical", "optical", "other"]
 
 
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/requirement_id
-#
-# Not expressible as types (see the schema):
-# - pattern: "^REQ-[0-9]{3}$"
-ManufacturingRequirementId = str
-
-
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/requirement_ids
-#
-# Not expressible as types (see the schema):
-# - minItems: 1
-# - uniqueItems: true
-ManufacturingRequirementIds = list[ManufacturingRequirementId]
-
-
 class ManufacturingFunctionEntry(TypedDict):
     """Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/function_entry
 
@@ -2746,14 +3088,6 @@ class ManufacturingFunctionEntry(TypedDict):
 # - minItems: 1
 # - uniqueItems: true
 ManufacturingSemanticIds = list[ManufacturingSemanticId]
-
-
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/pn
-ManufacturingPn = DrawingPn
-
-
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/occurrence_ref
-ManufacturingOccurrenceRef = AssemblyOccurrenceRef
 
 
 class InterfacesFunctionalSurfacesItems(TypedDict):
@@ -2799,20 +3133,6 @@ class ManufacturingCriterion(TypedDict):
     source: Required[ManufacturingSource]
     conditions: NotRequired[ManufacturingText]
     note: NotRequired[ManufacturingText]
-
-
-# Independent evidence facets, not an ordinal badge: each requirement and part can hold several
-#
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/evidence_level
-ManufacturingEvidenceLevel = Literal["cad_valid", "geometrically_manufacturable", "process_planned", "simulation_supported", "physically_validated"]
-
-
-# Source: skills/cad-record/schemas/product.schema.json#/$defs/stage
-ProductStage = Literal["ground", "intent", "specify", "concept", "layout", "parts", "detail", "bom", "analysis", "critique", "reconcile", "design_freeze", "release"]
-
-
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/stage
-ManufacturingStage = ProductStage
 
 
 class InterfacesFunctionalAcceptanceItemsVerification(TypedDict):
@@ -2919,15 +3239,6 @@ class InterfacesFunctionalPlay(TypedDict):
     backlash: NotRequired[ManufacturingQuantityFact]
     compliance: NotRequired[InterfacesFunctionalPlayCompliance]
     scenario_cases: NotRequired[list[str]]
-
-
-# an assembly.yaml operations id
-#
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/assembly_operation_id
-#
-# Not expressible as types (see the schema):
-# - pattern: "^[a-z][a-z0-9_-]*$"
-ManufacturingAssemblyOperationId = str
 
 
 class InterfacesFace(TypedDict):
@@ -3928,82 +4239,6 @@ ManufacturingCapabilitiesQtyTravelY = Mapping[str, Any]
 ManufacturingCapabilitiesQtyTravelZ = Mapping[str, Any]
 
 
-# A check family, such as process.fdm.support or interface.fit
-#
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/check_family
-#
-# Not expressible as types (see the schema):
-# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*$"
-ManufacturingCheckFamily = str
-
-
-# The project record version product.yaml declares; any other value, or none, is refused
-#
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/record_version
-ManufacturingRecordVersion = Literal[2]
-
-
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/interface_id
-#
-# Not expressible as types (see the schema):
-# - pattern: "^IF-[0-9]{3}$"
-ManufacturingInterfaceId = str
-
-
-class ManufacturingSubject(TypedDict):
-    """What a statement, finding or evidence is about: the product, a part (with an optional occurrence, component, operation, feature and region), an interface or an assembly operation. Faces and solids are named semantically, never by persistent index
-
-    Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/subject
-
-    Not expressible as types (see the schema):
-    - minProperties: 1
-    - dependentRequired: {"occurrence":["PN"],"component":["PN"],"operation":["PN"],"region":["feature"]}
-    - additionalProperties: false
-    - anyOf: [{"required":["product"]},{"required":["PN"]},{"required":["interface"]},{"required":["assembly_operation"]}]
-    """
-    product: NotRequired[Literal[True]]
-    PN: NotRequired[ManufacturingPn]
-    occurrence: NotRequired[ManufacturingOccurrenceRef]
-    component: NotRequired[ManufacturingSemanticId]
-    operation: NotRequired[ManufacturingSemanticId]
-    feature: NotRequired[ManufacturingSemanticId]
-    region: NotRequired[ManufacturingSemanticId]
-    interface: NotRequired[ManufacturingInterfaceId]
-    assembly_operation: NotRequired[ManufacturingAssemblyOperationId]
-    requirements: NotRequired[ManufacturingRequirementIds]
-
-
-# family@anchor: anchor is product, a PN with optional .component, /operation and #feature, an IF with optional #feature, a REQ, or op:<assembly operation>
-#
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/obligation_id
-#
-# Not expressible as types (see the schema):
-# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*@(product|[A-Z]{2,5}-[0-9]{4}(\\.[a-z][a-z0-9_]*)?(/[a-z][a-z0-9_]*)?(#[a-z][a-z0-9_]*)?|IF-[0-9]{3}(#[a-z][a-z0-9_]*)?|REQ-[0-9]{3}|op:[a-z][a-z0-9_-]*)$"
-ManufacturingObligationId = str
-
-
-class ManufacturingObligation(TypedDict):
-    """One expected check, enumerated by manufacturing_intent.required_checks before any producer runs
-
-    Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/obligation
-
-    Not expressible as types (see the schema):
-    - additionalProperties: false
-
-    Field notes:
-    - stage: the earliest workflow stage at which the obligation is due
-    - basis: why it is required: the route kind, function, interface, requirement or service input it derives from
-    """
-    id: Required[ManufacturingObligationId]
-    family: Required[ManufacturingCheckFamily]
-    subject: Required[ManufacturingSubject]
-    level: Required[ManufacturingEvidenceLevel]
-    stage: Required[ManufacturingStage]
-    basis: Required[ManufacturingText]
-    requirement: NotRequired[ManufacturingRequirementId]
-    criterion: NotRequired[ManufacturingSemanticId]
-
-
 # A check obligation's result; unknown is never a pass
 #
 # Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/outcome
@@ -4035,15 +4270,6 @@ class ManufacturingObligationOutcome(TypedDict):
     uncertainty: NotRequired[ManufacturingText]
     coverage: Required[ManufacturingText]
     findings: NotRequired[ManufacturingSemanticIds]
-
-
-# A stable finding code, such as process.fdm.overhang
-#
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/finding_code
-#
-# Not expressible as types (see the schema):
-# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)+$"
-ManufacturingFindingCode = str
 
 
 # Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/severity
