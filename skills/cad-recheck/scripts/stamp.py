@@ -14,7 +14,8 @@ A stamp records the staged hw/ tree hash, the stage and the evidence packet `evi
 for it (cad-record), or the packet of an `evidence.py run` report (a run that stopped has none): its
 expected checks, each one's status and the digest of the record inputs it
 read. Only a record version 2 record stamps; a record of another version refuses at or after the
-threshold. A packet that is not the assessment of the staged record, lacks an
+threshold. A new stamp seals evidence packet version 2 only (exit 1 on another version); `--verify` still reads a
+version 1 packet that an older stamp sealed. A packet that is not the assessment of the staged record, lacks an
 expected check or is partial never stamps; `--passed` stamps only a packet whose stage gate, recomputed
 here from its statuses and from the staged record's selection report (cad-record selection.py, with
 the digest of the staged selection inputs), passes, so a stale, failed or unknown due check, or a
@@ -454,12 +455,27 @@ def require_complete(checks: Any, path: Path) -> None:
                            "and stamp that result")
 
 
+class PacketRefused(RuntimeError):
+    """An evidence packet a new stamp does not seal; the stamp exits 1."""
+
+
+def require_sealable_packet(checks: Any) -> None:
+    """A new stamp seals the current evidence packet version only. Verification still reads an older stamp's packet
+    (cad-record evidence.packet_problems)."""
+    if isinstance(checks, dict) and checks.get("kind") == evidence.PACKET_KIND \
+            and checks.get("schema_version") != evidence.PACKET_SCHEMA_VERSION:
+        raise PacketRefused(f"stamp.packet_version: the evidence packet is schema_version {checks.get('schema_version')!r}; "
+                            f"a new stamp seals version {evidence.PACKET_SCHEMA_VERSION} only. Run `evidence.py check --hw hw "
+                            "--version vN --out .cad-work/evidence.json` again and stamp its packet")
+
+
 def record(stage: str, checks_path: Path, passed: bool, root: Path) -> dict[str, Any]:
     if stage not in validate.stages():
         raise RuntimeError(f"unknown stage {stage!r}; expected one of: {', '.join(validate.stages())}")
     require_clean_layout(root, staged_product(root, stage))
     checks = load_checks(checks_path)
     require_complete(checks, checks_path)
+    require_sealable_packet(checks)
     staged = staged_record(root)
     require_current_version(staged.record)
     blocking = require_evidence(checks, staged, stage)
@@ -589,7 +605,11 @@ def main() -> int:
             print(json.dumps({"passed": True, "tree_hash": actual_hash, "expected_sha256": record_data["expected_sha256"]}))
             return 0
         checks_path = args.checks if args.checks.is_absolute() else start / args.checks
-        data = record(args.stage, checks_path, args.passed, root)
+        try:
+            data = record(args.stage, checks_path, args.passed, root)
+        except PacketRefused as error:
+            print(f"cad-recheck stamp: {error}", file=sys.stderr)
+            return 1
         write_record(data, root)
         print(json.dumps(data, ensure_ascii=False, indent=2))
     except GateFinding as error:
