@@ -464,10 +464,26 @@ def default_cache_dir() -> Path:
     return Path(base) / "cad-concept" / "vendor"
 
 
-def run(argv: list[str], *, idle_timeout_s: float | None = None,
-        ready_callback: Callable[[dict[str, object]], None] | None = None,
-        install_signals: bool = True,
-        shutdown_callback: Callable[[Callable[[int, object], None]], None] | None = None) -> int:
+def stop_when_idle(watcher: SceneWatcher, timeout_s: float, idle_stopped: threading.Event,
+                   shutdown: Callable[[int, object], None]) -> None:
+    """Wait for the idle timeout, then commit the stop under the client lock and shut the server down."""
+    while True:
+        with watcher.cond:
+            while not watcher.stopped:
+                remaining = timeout_s - (time.monotonic() - watcher.last_activity)
+                if watcher.live_clients == 0 and remaining <= 0:
+                    break
+                watcher.cond.wait(max(0.01, min(0.2, remaining if watcher.live_clients == 0 else 0.2)))
+            if watcher.stopped:
+                return
+        if not watcher.commit_idle_stop(timeout_s):
+            continue  # a client arrived between the wait and the commit
+        idle_stopped.set()
+        shutdown(signal.SIGTERM, None)  # stops accepting first; the notice follows, in run()
+        return
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="serve.py", description=__doc__.splitlines()[0])
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT,
                         help="project root that contains hw/ (defaults to the skill checkout root)")
@@ -480,6 +496,14 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
                         help="allow a non-loopback --host: every client on that network can then reach the server")
     parser.add_argument("--poll", type=float, default=0.3, help="scene poll interval, seconds")
     parser.add_argument("--cache-dir", type=Path, default=default_cache_dir(), help="pinned module cache")
+    return parser
+
+
+def run(argv: list[str], *, idle_timeout_s: float | None = None,
+        ready_callback: Callable[[dict[str, object]], None] | None = None,
+        install_signals: bool = True,
+        shutdown_callback: Callable[[Callable[[int, object], None]], None] | None = None) -> int:
+    parser = build_parser()
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -544,23 +568,8 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
         ready_callback(ready)
     idle_stopped = threading.Event()
     if timeout_s > 0:
-        def stop_when_idle() -> None:
-            while True:
-                with watcher.cond:
-                    while not watcher.stopped:
-                        remaining = timeout_s - (time.monotonic() - watcher.last_activity)
-                        if watcher.live_clients == 0 and remaining <= 0:
-                            break
-                        watcher.cond.wait(max(0.01, min(0.2, remaining if watcher.live_clients == 0 else 0.2)))
-                    if watcher.stopped:
-                        return
-                if not watcher.commit_idle_stop(timeout_s):
-                    continue  # a client arrived between the wait and the commit
-                idle_stopped.set()
-                shutdown(signal.SIGTERM, None)  # stops accepting first; the notice follows, below
-                return
-
-        threading.Thread(target=stop_when_idle, daemon=True, name="idle-timeout").start()
+        threading.Thread(target=stop_when_idle, args=(watcher, timeout_s, idle_stopped, shutdown),
+                         daemon=True, name="idle-timeout").start()
     try:
         httpd.serve_forever(poll_interval=0.2)
     finally:

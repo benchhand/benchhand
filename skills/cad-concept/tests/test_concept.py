@@ -537,7 +537,8 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
     def setUp(self) -> None:
         require_browser(self)
 
-    def test_visibility_drives_the_list_labels_picking_saves_and_survives_a_reload(self) -> None:
+    def run_driver(self) -> tuple[subprocess.CompletedProcess[str], str, dict | None]:
+        """Serve a lamp scene with a hidden group, run the browser driver, and read the saved capture."""
         scene = example()
         base = scene["variants"][0]["root"]["children"][0]
         lower_arm = next(node for node in base["children"] if node["id"] == "lower-arm")
@@ -569,12 +570,13 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
             # Read the saved bundle while the temporary project still exists.
             lamp_sha = hashlib.sha256((scene_dir / "lamp-arm.scene.json").read_bytes()).hexdigest()
             report = json.loads(driver.stdout) if driver.returncode == 0 else {}
+            saved_capture = None
             if "save_during_switch" in report:
                 saved = Path(report["save_during_switch"].removeprefix("Saved "))
                 saved_capture = json.loads((saved.parent / "manifest.json").read_text(encoding="utf-8"))["recipe"]["capture"]
-        self.assertEqual(driver.returncode, 0, driver.stdout[-3000:] + driver.stderr[-3000:])
-        report = json.loads(driver.stdout)
-        self.assertEqual(report["errors"], [])
+        return driver, lamp_sha, saved_capture
+
+    def assert_authored_visibility_and_picking(self, report: dict) -> None:
         # Authored `visible: false` on a group unticks only that node, and its subtree shows no labels.
         self.assertEqual({k for k, on in report["authored_checked"].items() if not on}, {"lower-arm"})
         self.assertFalse(self.HIDDEN_BY_AUTHORING & set(report["authored_labels"]), report["authored_labels"])
@@ -585,6 +587,8 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
         # Toggling shows the group and its descendants' labels again.
         self.assertTrue(report["toggled_checked"]["lower-arm"])
         self.assertTrue({"lower-arm", "lower-link", "upper-arm", "upper-link"} & set(report["toggled_labels"]), report)
+
+    def assert_saves_follow_visibility(self, report: dict) -> None:
         # Save, toggle, save: the capture binds the visible nodes, so the second save is a new bundle, not a 409.
         self.assertTrue(report["save_hidden"].startswith("Saved "), report["save_hidden"])
         self.assertTrue(report["save_shown"].startswith("Saved "), report["save_shown"])
@@ -592,6 +596,8 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
         # The PNG shows every variant, so hiding something in another variant is a new capture too.
         self.assertTrue(report["save_other_variant"].startswith("Saved "), report["save_other_variant"])
         self.assertNotIn(report["save_other_variant"], (report["save_hidden"], report["save_shown"]))
+
+    def assert_toggles_follow_the_loaded_file(self, report: dict) -> None:
         # A live reload keeps the viewer's own toggles over the file's flags.
         self.assertTrue(report["reloaded_checked"]["lower-arm"])
         self.assertFalse(report["reloaded_checked"]["upper-arm"])
@@ -604,9 +610,17 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
         self.assertEqual(report["stale_title"], "Reloaded lamp")
         self.assertEqual(report["stale_loaded_file"], "lamp-arm.scene.json")
         self.assertEqual(report["stale_select"], "lamp-arm.scene.json")
+
+    def test_visibility_drives_the_list_labels_picking_saves_and_survives_a_reload(self) -> None:
+        driver, lamp_sha, capture = self.run_driver()
+        self.assertEqual(driver.returncode, 0, driver.stdout[-3000:] + driver.stderr[-3000:])
+        report = json.loads(driver.stdout)
+        self.assertEqual(report["errors"], [])
+        self.assert_authored_visibility_and_picking(report)
+        self.assert_saves_follow_visibility(report)
+        self.assert_toggles_follow_the_loaded_file(report)
         # A scene switch while a save is in flight: the bundle is the first scene's, whole.
         self.assertTrue(report["save_during_switch"].startswith("Saved "), report["save_during_switch"])
-        capture = saved_capture
         self.assertEqual(capture["scene"], "lamp-arm.scene.json")
         self.assertEqual(capture["scene_sha256"], lamp_sha)
         self.assertTrue({"base-plate", "upper-arm"} <= set(capture["hidden_nodes"]["short-reach"]), capture)
