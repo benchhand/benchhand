@@ -68,15 +68,18 @@ infrastructure error.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
 import hashlib
 import importlib.util
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
@@ -138,7 +141,7 @@ def workspace(hw: Path, unit: str) -> Path:
         raise UsageError(f"unit {unit!r} must match {UNIT.pattern} without '..'")
     if not (hw / "parts").is_dir():
         raise UsageError(f"{hw} is not a design record: no parts/ directory")
-    return hw.parent / WORK_DIR / unit
+    return hw.resolve().parent / WORK_DIR / unit  # resolved, so a link below it is the only link open_dir can meet
 
 
 def is_skipped(relative: PurePosixPath, top: frozenset[str]) -> bool:
@@ -168,19 +171,86 @@ def tree_hashes(root: Path, top: frozenset[str] = NOT_COPIED) -> dict[str, str]:
     return hashes
 
 
-def load_baseline(work: Path) -> dict[str, Any]:
-    path = work / "baseline.json"
-    if not path.is_file():
-        raise UsageError(f"{work} has no baseline.json; run `scratch.py init` first")
-    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
-def refuse_links(root: Path, path: Path) -> None:
-    """Refuse a write below `root` that would follow a symlink: `root` itself, every directory down to
-    `path`, and `path` are checked, the same refusal deliver makes for a linked scratch file."""
-    for step in (root, *(root / part for part in path.relative_to(root).parents[::-1]), path):
-        if step.is_symlink():
-            raise UsageError(f"scratch contains a symlink at {step}")
+def descend(root_fd: int, names: Sequence[str], create: bool = False) -> int:
+    """A new descriptor for the directory `names` below the open directory `root_fd`, opened one component
+    at a time with O_NOFOLLOW. A symlink on the way is refused; `create` makes missing directories."""
+    fd = os.dup(root_fd)
+    try:
+        for name in names:
+            if create:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(name, 0o777, dir_fd=fd)
+            try:
+                below = os.open(name, DIR_FLAGS, dir_fd=fd)
+            except OSError as error:
+                if error.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise UsageError(f"scratch contains a symlink or a non-directory at {name}") from error
+                raise
+            os.close(fd)
+            fd = below
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def open_dir(path: Path) -> int:
+    """A descriptor for the absolute directory `path`, every component opened without following links,
+    so a linked ancestor of a workspace is refused too. `path` comes from a resolved HW."""
+    root = os.open("/", DIR_FLAGS)
+    try:
+        return descend(root, path.parts[1:])
+    finally:
+        os.close(root)
+
+
+def write_file(dir_fd: int, name: str, data: bytes, mode: int = 0o644) -> None:
+    """Publish `data` as `name` in the open directory: an exclusive temporary file, then a rename over
+    the name, which replaces a link at `name` instead of following it."""
+    staged = f".{name}.sync-{os.getpid()}-{secrets.token_hex(4)}"
+    fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            os.fchmod(stream.fileno(), mode)
+        os.replace(staged, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(staged, dir_fd=dir_fd)
+        raise
+
+
+def read_file(dir_fd: int, name: str) -> bytes:
+    """The bytes of `name` in the open directory, refusing a link at `name`."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise UsageError(f"scratch contains a symlink at {name}") from error
+        raise
+    with os.fdopen(fd, "rb") as stream:
+        return stream.read()
+
+
+def load_baseline(work: Path, work_fd: int | None = None) -> dict[str, Any]:
+    owned = work_fd is None
+    fd = open_dir(work) if work_fd is None else work_fd
+    try:
+        try:
+            raw = read_file(fd, "baseline.json")
+        except FileNotFoundError:
+            raise UsageError(f"{work} has no baseline.json; run `scratch.py init` first") from None
+        return cast(dict[str, Any], json.loads(raw.decode("utf-8")))
+    finally:
+        if owned:
+            os.close(fd)
+
+
+def write_baseline(work_fd: int, baseline: dict[str, Any]) -> None:
+    write_file(work_fd, "baseline.json", (json.dumps(baseline, indent=2) + "\n").encode("utf-8"))
 
 
 def seed_store(hw: Path, scratch_hw: Path) -> int:
@@ -190,22 +260,27 @@ def seed_store(hw: Path, scratch_hw: Path) -> int:
     Where no hard link can be made (another filesystem) seeding stops, and the scratch build builds the
     rest itself; nothing is copied, because the store can be as large as every version together."""
     lay, seeded = layout.load(), 0
-    for entry_id in ("cache.part_objects", "cache.part_records"):
-        folder = layout.locate(hw, str(PurePosixPath(lay.entry(entry_id).path).parent))
-        for path in sorted(folder.iterdir()) if folder.is_dir() else []:
-            match = lay.classify(layout.relative(hw, path))
-            if match is None or match.entry.id != entry_id or path.is_symlink() or not path.is_file():
-                continue
-            target = scratch_hw / path.relative_to(hw)
-            if target.exists():
-                continue
-            refuse_links(scratch_hw, target.parent)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                os.link(path, target)
-            except OSError:
-                return seeded
-            seeded += 1
+    scratch_fd = open_dir(scratch_hw)
+    try:
+        for entry_id in ("cache.part_objects", "cache.part_records"):
+            folder = layout.locate(hw, str(PurePosixPath(lay.entry(entry_id).path).parent))
+            for path in sorted(folder.iterdir()) if folder.is_dir() else []:
+                match = lay.classify(layout.relative(hw, path))
+                if match is None or match.entry.id != entry_id or path.is_symlink() or not path.is_file():
+                    continue
+                relative = path.relative_to(hw)
+                dest_fd = descend(scratch_fd, relative.parent.parts, create=True)
+                try:
+                    if (scratch_hw / relative).exists():
+                        continue
+                    os.link(path, relative.name, dst_dir_fd=dest_fd, follow_symlinks=False)
+                except OSError:
+                    return seeded
+                finally:
+                    os.close(dest_fd)
+                seeded += 1
+    finally:
+        os.close(scratch_fd)
     return seeded
 
 
@@ -257,14 +332,12 @@ def lead_snapshot(hw: Path) -> dict[str, str]:
     return first
 
 
-def copy_bytes(source: Path, target: Path) -> str:
-    """Install `source` at `target` through a temporary file and os.replace, which never follows a link at
-    `target`, and return the sha256 of the bytes actually written."""
-    data = source.read_bytes()
-    staged = target.with_name(f".{target.name}.sync-{os.getpid()}")
-    staged.write_bytes(data)
-    staged.chmod(source.stat().st_mode & 0o777)
-    os.replace(staged, target)
+def copy_bytes(source: Path, dir_fd: int, name: str) -> str:
+    """Install the lead's `source` as `name` in the open scratch directory and return the sha256 of the
+    bytes actually written."""
+    with os.fdopen(os.open(source, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+        data, mode = stream.read(), os.fstat(stream.fileno()).st_mode & 0o777
+    write_file(dir_fd, name, data, mode)
     return hashlib.sha256(data).hexdigest()
 
 
@@ -283,23 +356,38 @@ def drop_collisions(plan: list[str], present: set[str], lead: dict[str, str], co
         plan = [path for path in plan if path not in clashing]
 
 
-def remove_synced(scratch_hw: Path, path: str) -> None:
-    """Delete a path the lead retired, then the directories that leaves empty (never `scratch_hw` itself)."""
-    target = scratch_hw / path
-    target.unlink(missing_ok=True)
-    for parent in target.parents:
-        if parent == scratch_hw or any(parent.iterdir()):
+def remove_synced(scratch_fd: int, path: str) -> None:
+    """Delete a path the lead retired, then the directories that leaves empty (never the scratch hw)."""
+    names = path.split("/")
+    try:
+        parent = descend(scratch_fd, names[:-1])
+    except FileNotFoundError:
+        return
+    try:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(names[-1], dir_fd=parent)
+    finally:
+        os.close(parent)
+    for depth in range(len(names) - 1, 0, -1):
+        above = descend(scratch_fd, names[:depth - 1])
+        try:
+            os.rmdir(names[depth - 1], dir_fd=above)
+        except OSError:
             break
-        parent.rmdir()
+        finally:
+            os.close(above)
 
 
-def install_synced(hw: Path, scratch_hw: Path, path: str, lead_digest: str, mine_digest: str | None) -> str:
+def install_synced(hw: Path, scratch_fd: int, path: str, lead_digest: str, mine_digest: str | None) -> str:
     """Put the lead's file in the scratch copy unless it already matches; return the digest of what is there."""
     if mine_digest == lead_digest:
         return lead_digest
-    target = scratch_hw / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    return copy_bytes(hw / path, target)
+    names = path.split("/")
+    parent = descend(scratch_fd, names[:-1], create=True)
+    try:
+        return copy_bytes(hw / path, parent, names[-1])
+    finally:
+        os.close(parent)
 
 
 def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
@@ -308,38 +396,48 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
     the baseline takes it too, so deliver sees no change. A file both sides changed, and any file of
     a part the unit owns, is left alone and reported as a conflict."""
     work = workspace(hw, unit)
-    baseline = load_baseline(work)
+    work_fd = open_dir(work)
+    try:
+        return sync_workspace(hw, unit, work, work_fd)
+    finally:
+        os.close(work_fd)
+
+
+def sync_workspace(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
+    baseline = load_baseline(work, work_fd)
     if Path(baseline["hw"]) != hw:
         raise UsageError(f"{work} was initialised from {baseline['hw']}, not {hw}")
     scratch_hw = work / "hw"
-    own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
-    base: dict[str, str] = baseline["files"]
-    refuse_links(scratch_hw, scratch_hw)
-    lead, mine = lead_snapshot(hw), delivery_tree(scratch_hw)[0]
-    added: list[str] = []
-    modified: list[str] = []
-    removed: list[str] = []
-    conflicts: list[str] = []
-    plan: list[str] = []
-    seeded = seed_store(hw, scratch_hw)  # refuses a linked cache directory before anything else is written
-    for path in sorted(set(lead) | set(base)):
-        if lead.get(path) == base.get(path):
-            continue
-        if path.startswith(own) or (mine.get(path) != base.get(path) and mine.get(path) != lead.get(path)):
-            conflicts.append(path)
-            continue
-        refuse_links(scratch_hw, scratch_hw / path)  # before any write
-        plan.append(path)
-    plan = drop_collisions(plan, set(mine), lead, conflicts)
-    for path in plan:
-        if path not in lead:
-            remove_synced(scratch_hw, path)
-            removed.append(path)
-            base.pop(path, None)
-        else:
-            (modified if path in base else added).append(path)
-            base[path] = install_synced(hw, scratch_hw, path, lead[path], mine.get(path))
-    (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+    scratch_fd = descend(work_fd, ["hw"])
+    try:
+        own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
+        base: dict[str, str] = baseline["files"]
+        lead, mine = lead_snapshot(hw), delivery_tree(scratch_hw)[0]
+        added: list[str] = []
+        modified: list[str] = []
+        removed: list[str] = []
+        conflicts: list[str] = []
+        plan: list[str] = []
+        seeded = seed_store(hw, scratch_hw)  # refuses a linked cache directory before anything else is written
+        for path in sorted(set(lead) | set(base)):
+            if lead.get(path) == base.get(path):
+                continue
+            if path.startswith(own) or (mine.get(path) != base.get(path) and mine.get(path) != lead.get(path)):
+                conflicts.append(path)
+                continue
+            plan.append(path)
+        plan = drop_collisions(plan, set(mine), lead, conflicts)
+        for path in plan:
+            if path not in lead:
+                remove_synced(scratch_fd, path)
+                removed.append(path)
+                base.pop(path, None)
+            else:
+                (modified if path in base else added).append(path)
+                base[path] = install_synced(hw, scratch_fd, path, lead[path], mine.get(path))
+        write_baseline(work_fd, baseline)
+    finally:
+        os.close(scratch_fd)
     report = {"status": "conflict" if conflicts else "synced", "unit": unit, "scratch_hw": str(scratch_hw),
               "added": added, "modified": modified, "removed": removed, "conflicts": sorted(conflicts),
               "seeded_store_files": seeded}
@@ -503,7 +601,15 @@ def validate_delivery(baseline: dict[str, Any], authorized: set[str], files: dic
 
 def deliver(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
     work = workspace(hw, unit)
-    baseline = load_baseline(work)
+    work_fd = open_dir(work)
+    try:
+        return deliver_workspace(hw, unit, work, work_fd)
+    finally:
+        os.close(work_fd)
+
+
+def deliver_workspace(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
+    baseline = load_baseline(work, work_fd)
     if Path(baseline["hw"]) != hw:
         raise UsageError(f"{work} was initialised from {baseline['hw']}, not {hw}")
     scratch_hw = work / "hw"
@@ -543,7 +649,7 @@ def deliver(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
                           if not path.startswith(f"parts/{pn}/")}
         baseline_files.update({f"parts/{pn}/{path}": digest for path, digest in current.items()})
     baseline["files"] = baseline_files
-    (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+    write_baseline(work_fd, baseline)
     proposals = []
     for path in sorted(set(files) | set(baseline_files)):
         if any(path.startswith(f"parts/{pn}/") for pn in authorized) or files.get(path) == baseline_files.get(path):

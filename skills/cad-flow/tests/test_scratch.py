@@ -620,10 +620,10 @@ class Sync(ScratchCase):
         module = load_scratch()
         real = module.copy_bytes
 
-        def copy(source, target):
+        def copy(source, *rest):
             with source.open("a", encoding="utf-8") as stream:  # the lead edits again after the snapshot
                 stream.write("# second lead edit\n")
-            return real(source, target)
+            return real(source, *rest)
 
         with mock.patch.object(module, "copy_bytes", copy):
             code, report = module.sync(self.hw.resolve(), "unit-a")
