@@ -24,6 +24,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
@@ -52,11 +53,11 @@ def load_entry(ident: str, newtons: float = 30.0, direction: tuple[float, float,
 def documents(contact_load: float | None = None, joint: dict | None = None, kind: str = "other",
               limits: dict | None = None, *, joints: list[dict] | None = None, ends: tuple[str, str] = ("TST-0302", "TST-0301"),
               pns: tuple[str, ...] = ("TST-0301", "TST-0302"), loads: str = "known",
-              direction: tuple[float, float, float] = (0, 0, -1)) -> dict:
+              direction: tuple[float, float, float] = (0, 0, -1), load_overrides: Sequence[dict] = ()) -> dict:
     """A record of the fixture parts: IF-006 the lever-to-bracket stops, critical and structural, under two 30 N loads.
     `joint` replaces the pivot (`joints`, all the joints), `kind` is the interface type, `limits` its declared fits,
     `ends` its from and to, and `loads` is "known", "unknown" (named, magnitude unknown) or "none" (not named), and `direction` is the unit
-    vector of both loads."""
+    vector of both loads, and `load_overrides` is merged into the first, second... load entry."""
     functional = {"critical": fx.known(True), "functions": [{"function": "locating"}, {"function": "structural"}]}
     if loads != "none":
         functional["loads"] = ["handle_close_at_latched_stop", "handle_open_at_open_stop"]
@@ -68,6 +69,8 @@ def documents(contact_load: float | None = None, joint: dict | None = None, kind
     if loads == "unknown":
         for entry in entries:
             entry["magnitude"] = fx.unknown("the handle force is not measured")
+    for entry, override in zip(entries, load_overrides):
+        entry.update(override)
     use = fx.use_case("draft", loads=entries)
     titles = {"TST-0301": "Bracket", "TST-0302": "Lever", "TST-0303": "Ring"}
     docs = fx.record(product_data=fx.product(use), parts=[fx.part(pn, titles[pn], process="cnc") for pn in pns],
@@ -375,6 +378,19 @@ class StopGeometryTests(unittest.TestCase):
                 reaction = result["detail"]["interfaces"]["IF-006"]["ends"]["min"]["reaction"]
                 self.assertAlmostEqual(reaction["design_reaction_n"], expected, places=9)
                 self.assertEqual((code, result["result"]), (0, "pass"))
+
+    def test_a_slide_with_a_stop_at_each_end_reacts_each_opposing_load(self) -> None:
+        # By hand: the lever slides along +z between the disc (lower stop) and the cap (upper stop), 5 mm apart. A 30 N
+        # load along -z presses the lower stop, a 12 N load along +z presses the upper one, so min reacts 30 N and
+        # max 12 N, each stop only its own load.
+        overrides = [{"magnitude": fx.known(fx.quantity(30.0, "N")), "direction": [0, 0, -1]},
+                     {"magnitude": fx.known(fx.quantity(12.0, "N")), "direction": [0, 0, 1]}]
+        code, result = self.run_stop("slide-two-stops", joint=self.SLIDE, variant="capped", load_overrides=overrides)
+        ends = result["detail"]["interfaces"]["IF-006"]["ends"]
+        self.assertEqual((ends["min"]["touching"], ends["max"]["touching"]), (True, True))
+        self.assertAlmostEqual(ends["min"]["reaction"]["design_reaction_n"], 30.0, places=9)
+        self.assertAlmostEqual(ends["max"]["reaction"]["design_reaction_n"], 12.0, places=9)
+        self.assertEqual((code, result["result"], result["findings"]), (0, "pass", []))
 
     def test_a_prismatic_stop_with_unknown_loads_is_unknown_never_pass(self) -> None:
         code, result = self.run_stop("slide-unknown", joint=self.SLIDE, variant="disk", loads="unknown")
