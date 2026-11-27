@@ -787,16 +787,20 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
             result, reasons = "unknown", (f"{ident} rests on refused evidence {', '.join(reliant[ident])}",)
             entry_findings = [*entry_findings, _reliant_finding(ident, reliant[ident])]
         findings.extend(entry_findings)
-        entry_results[ident] = result
         targets = _entry_targets(entry, record, expected)
+        derived = [target for target in targets if by_id[target].family.startswith(_DECIDED_FROM_RECORD)]
+        for target in derived:  # refused before its waiver or result reaches anything else
+            findings.append(Finding("evidence.record_derived", f"hw/manufacturing/evidence.yaml#/entries/{ident}",
+                                    f"{ident}: {target} is decided from the record, so a ledger {result} counts for "
+                                    "nothing; resolve what its basis names in the record instead", "warning", target))
+        if derived:
+            result = "unknown"
+        entry_results[ident] = result
         for target in targets:
+            if target in derived:
+                continue
             if result == "waived":
                 waivers.setdefault(target, entry.get("waiver") or {})
-            elif by_id[target].family.startswith(_DECIDED_FROM_RECORD):
-                findings.append(Finding("evidence.record_derived", f"hw/manufacturing/evidence.yaml#/entries/{ident}",
-                                        f"{ident}: {target} is decided from the record, so a ledger {result} counts for "
-                                        "nothing; resolve what its basis names in the record instead", "warning", target))
-                continue
             candidates[target].append((result, ident, "; ".join(reasons)))
         if not targets and entry.get("requirement"):
             untargeted.setdefault((entry["requirement"], entry.get("level")), []).append(result)
