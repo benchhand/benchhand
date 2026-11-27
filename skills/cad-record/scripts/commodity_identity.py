@@ -131,6 +131,16 @@ _POSITIVE = "must be a positive number"
 _STANDARD_ORDER = ("standard", "size", "length", "property_class", "finish")
 
 
+def _shown(value: Any) -> str:
+    """A bounded, safe description of a rejected value: its type and a short repr. A value Python cannot render
+    (an integer past the text conversion limit) shows its type alone, never an exception."""
+    try:
+        text = repr(value)
+    except (ValueError, RecursionError):
+        return f"a {type(value).__name__} too large to show"
+    return f"{text[:40]}... ({type(value).__name__})" if len(text) > 40 else f"{text} ({type(value).__name__})"
+
+
 def _blank(value: Any) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
@@ -144,7 +154,7 @@ def _text_issues(designation: Mapping[str, Any], fields: tuple[str, ...]) -> lis
     for name in _STRING_FIELDS:
         value = designation.get(name)
         if name in designation and not _blank(value) and not isinstance(value, str):
-            issues.append((name, f"must be text, not {value!r}: quote it so {value!r} stays text"))
+            issues.append((name, f"must be text, not {_shown(value)}: quote it so it stays text"))
     return issues
 
 
@@ -180,7 +190,7 @@ def _standard_issues(designation: Mapping[str, Any]) -> list[Issue]:
 def _family_issues(designation: Mapping[str, Any]) -> list[Issue]:
     family = designation.get("family")
     if not isinstance(family, str) or family not in KNOWN_FAMILIES:
-        return [("family", f"{family!r} is not a known commodity family ({', '.join(sorted(KNOWN_FAMILIES))})")]
+        return [("family", f"{_shown(family)} is not a known commodity family ({', '.join(sorted(KNOWN_FAMILIES))})")]
     fields = KNOWN_FAMILIES[family]
     issues = _text_issues(designation, fields)
     named = {field for field, _ in issues}
@@ -197,7 +207,7 @@ def designation_issues(designation: Any) -> list[Issue]:
         return _standard_issues(designation)
     if kind == "family_designation":
         return _family_issues(designation)
-    return [("kind", f"{kind!r} is not a commodity designation")]
+    return [("kind", f"{_shown(kind)} is not a commodity designation")]
 
 
 def designation_problem(designation: Any) -> str | None:
@@ -211,10 +221,9 @@ def designation_problem(designation: Any) -> str | None:
 def part_designation_issues(part: Mapping[str, Any]) -> list[Issue]:
     """The issues of the structured designation the part's purchased route operation supplies."""
     purchase = _purchase(part)
-    supplied = purchase.get("designation")
-    if supplied is not None and not isinstance(supplied, Mapping):  # supplied but malformed, unlike an omitted designation
-        return [("", f"must be a mapping with a kind (standard_designation or family_designation), not {supplied!r}")]
-    return designation_issues(supplied)
+    if "designation" in purchase and not isinstance(purchase["designation"], Mapping):  # present but malformed, null included
+        return [("", f"must be a mapping with a kind (standard_designation or family_designation), not {_shown(purchase['designation'])}")]
+    return designation_issues(purchase.get("designation"))
 
 
 def _number(value: Any) -> str:
