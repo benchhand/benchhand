@@ -315,6 +315,19 @@ class UnknownNeverPasses(unittest.TestCase):
         self.assertIn("evidence.record_derived", {f.code for f in result.findings if f.obligation == ident})
         self.assertIn(ident, {f.obligation for f in result.gate("design_freeze") if f.severity == "error"})
 
+    def test_a_generic_ledger_pass_cannot_resolve_a_joint_the_record_leaves_unknown(self) -> None:
+        """fit_bearing's retention is not a sourced fact in the record, so assembly_operations judges its joint
+        unknown. A dimensional pass in the ledger says nothing about retention: the joint stays unknown."""
+        ident = "assembly.joint@op:fit_bearing"
+        base = normalized(documents())
+        self.assertEqual(assess(base).statuses[ident].result, "unknown")
+        self.assertIn("retention", " ".join(assess(base).statuses[ident].reasons))
+        generic = acceptance.entry(base, "EV-001", {"assembly_operation": "fit_bearing"}, "process_planned",
+                                   obligation=ident, version="v1", manifest_sha256=V1)
+        result = assess(normalized(documents(), [generic]))
+        self.assertEqual(result.statuses[ident].result, "unknown")
+        self.assertIn("evidence.record_derived", {f.code for f in result.findings if f.obligation == ident})
+
     def test_a_verification_csv_pass_is_not_evidence(self) -> None:
         docs = documents()
         record = normalized(docs)
