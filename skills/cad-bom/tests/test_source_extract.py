@@ -170,7 +170,7 @@ class ExtractTests(unittest.TestCase):
         sidecar = sources / "thumb_screw_table.html.source.json"
         sidecar.write_text('{"origin": "earlier"}\n', encoding="utf-8")
         code, result = run(*self.args(HTML))
-        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["name_conflict"]))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["sidecar_invalid"]))
         self.assertEqual(sidecar.read_text(encoding="utf-8"), '{"origin": "earlier"}\n')
         self.assertFalse((sources / "thumb_screw_table.html").exists())
 
@@ -278,6 +278,52 @@ class ExtractTests(unittest.TestCase):
         code, result = run(*self.args(HTML))
         self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["symlink_refused"]))
         self.assertEqual(list(real.iterdir()), [])
+
+    def test_a_stored_sidecar_that_does_not_fully_describe_the_content_is_invalid_not_trusted(self) -> None:
+        digest = hashlib.sha256(HTML.read_bytes()).hexdigest()
+        good = {"origin": "https://example.test/din653", "sha256": digest, "accessed": "2026-11-20",
+                "bytes": HTML.stat().st_size, "kind": "html"}
+        cases = {
+            "empty object": ({}, "sidecar_invalid"),
+            "only the hash": ({"sha256": digest}, "sidecar_invalid"),
+            "bad date": ({**good, "accessed": "yesterday"}, "sidecar_invalid"),
+            "wrong size": ({**good, "bytes": 1}, "sidecar_invalid"),
+            "wrong kind": ({**good, "kind": "pdf"}, "sidecar_invalid"),
+            "origin not text": ({**good, "origin": 7}, "sidecar_invalid"),
+            "other content": ({**good, "sha256": "0" * 64}, "name_conflict"),
+        }
+        for label, (record, expected) in cases.items():
+            with self.subTest(label):
+                hw = Path(self._tmp.name) / label.replace(" ", "_") / "hw"
+                sources = hw / "parts" / "PIN-0001" / "sources"
+                sources.mkdir(parents=True)
+                (sources / "thumb_screw_table.html").write_bytes(HTML.read_bytes())
+                sidecar = sources / "thumb_screw_table.html.source.json"
+                sidecar.write_text(json.dumps(record), encoding="utf-8")
+                code, result = run("PIN-0001", str(HTML), "--hw", str(hw), "--accessed", "2026-11-27")
+                self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, [expected]))
+                self.assertEqual(json.loads(sidecar.read_text(encoding="utf-8")), record)
+        broken = Path(self._tmp.name) / "broken" / "hw"
+        (broken / "parts" / "PIN-0001" / "sources").mkdir(parents=True)
+        (broken / "parts" / "PIN-0001" / "sources" / "thumb_screw_table.html").write_bytes(HTML.read_bytes())
+        (broken / "parts" / "PIN-0001" / "sources" / "thumb_screw_table.html.source.json").write_text("not json", encoding="utf-8")
+        code, result = run("PIN-0001", str(HTML), "--hw", str(broken))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["sidecar_invalid"]))
+
+    def test_a_reused_store_reports_the_provenance_that_is_stored(self) -> None:
+        first = Path(self._tmp.name) / "first" / "thumb_screw_table.html"
+        first.parent.mkdir()
+        first.write_bytes(HTML.read_bytes())
+        self.assertEqual(run("PIN-0001", str(first), "--hw", str(self.hw), "--accessed", "2026-11-20")[0], 0)
+        code, result = run(*self.args(HTML, "--accessed", "2026-12-01"))
+        self.assertEqual(code, 0)
+        self.assertEqual((result["origin"], result["accessed"], result["reused"]), (str(first), "2026-11-20", True))
+        stored = json.loads((self.hw / "parts" / "PIN-0001" / "sources" / "thumb_screw_table.html.source.json").read_text(encoding="utf-8"))
+        self.assertEqual((stored["origin"], stored["accessed"]), (str(first), "2026-11-20"))
+
+    def test_a_fresh_store_is_not_marked_reused(self) -> None:
+        _, result = run(*self.args(HTML))
+        self.assertIs(result["reused"], False)
 
     def test_bad_arguments_exit_2(self) -> None:
         for argv in (["lower-1", str(HTML)], ["PIN-0001"], ["PIN-0001", str(HTML), "--bogus"]):
