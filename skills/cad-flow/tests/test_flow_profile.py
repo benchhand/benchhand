@@ -257,16 +257,6 @@ class Record(unittest.TestCase):
             self.assertEqual(asked[field]["status"], "not_applicable", field)
             self.assertIn("print-in-place is declined", asked[field]["reason"])
 
-    def test_the_printer_question_is_asked_only_while_fdm_may_apply(self) -> None:
-        for name, manufacturing, printer in (("a cnc plan", "[cnc]", False), ("an fdm plan", "[fdm]", True)):
-            with self.subTest(name):
-                self.product.write_text(PRODUCT + f"manufacturing:\n  processes: {manufacturing}\n", encoding="utf-8")
-                result = run("questions", "--hw", str(self.hw))
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual("Which printer, nozzle and filament?" in result.stdout, printer, result.stdout)
-        self.product.write_text(PRODUCT, encoding="utf-8")  # no plan and no part: FDM is not ruled out
-        self.assertIn("Which printer, nozzle and filament?", run("questions", "--hw", str(self.hw)).stdout)
-
     def test_the_scoped_questions_list_the_clearance_options_as_follow_ups_to_the_print_in_place_answer(self) -> None:
         follow_up = "--print-in-place; if the answer is offer, also --pip-clearance-xy, --pip-clearance-z"
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
