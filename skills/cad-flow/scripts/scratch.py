@@ -53,9 +53,17 @@ sync    brings the lead's current record into the workspace: a part the lead ret
         carries it as the unit's change. A file the unit and the lead both changed, and any file of
         a part the unit owns, and a file that would collide with a directory (or the reverse) once
         applied, stays as it is and is listed under "conflicts" (exit 1). It reads the lead's
-        record twice and refuses (exit 2, nothing written) when the two reads differ, when a delivery is
-        staged in HW/parts/, or when a scratch path is a symlink. It never writes HW,
-        and it links stored builds of newly delivered parts into the scratch store.
+        record twice and reads every file it will install before it changes anything. It refuses
+        (exit 2, nothing changed, a named "finding" in the JSON) on a symlink anywhere from / down
+        to the workspace, a delivery staged in HW/parts/ ("delivery-in-progress"), a lead file that
+        changed during the read ("lead-changed-during-read"), an unreadable directory
+        ("unreadable-directory") and a workspace another sync or deliver holds ("workspace-busy").
+        Every change goes through directory descriptors opened without following links. The new files
+        and baseline.json are written together under workspace.lock; sync.pending marks the span, a
+        failure part way is "sync-half-applied" with the baseline matching what was changed, and
+        deliver refuses with "sync-interrupted" until a sync finishes. A baseline.json that is not
+        valid or has the wrong shape is "baseline-invalid" (exit 1) for every command that reads it.
+        It never writes HW, and it links stored builds of newly delivered parts into the scratch store.
         Run it before build whenever the lead has integrated a delivery or a decision.
 
 stdout: one JSON document; every path in it is absolute. build writes each tool's diagnostics to
