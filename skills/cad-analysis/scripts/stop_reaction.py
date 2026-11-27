@@ -113,6 +113,7 @@ STOP_CONTACT_TOLERANCE_MM = 0.15
 STOP_CONTACT_EPSILON_MM = 1e-6  # float noise: a gap on the tolerance gets no verdict from rounding
 NORMAL_TOL = 1e-6  # |n1 . n2 + 1| under this: opposite-facing faces
 BLOCKING_COS = 0.5  # a contact face blocks a slide when its normal is within 60 deg of directly against travel
+COSINE_NOISE = 1e-12  # float rounding of a posed normal (about 1e-16): 60.00001 deg is 8.7e-8 under BLOCKING_COS, far outside it
 MIN_AREA_MM2 = 1e-6
 METHOD = ("rigid statics of the modelled stop contact: the peak use-case force times the moving part's farthest point "
           "from the pivot axis, over the smallest arm of the overlap of the touching planar faces (cad-analysis "
@@ -523,7 +524,7 @@ def blocking_contact(geometry: Mapping[str, Any], label: str, tolerance: float) 
     faces, the one that needs the most normal force for a given axial reaction."""
     axis = geometry["axis"]
     faces = contact_faces(geometry["fixed"], geometry["moving"], tolerance,
-                          lambda normal: travel_cosine(normal, axis, label) >= BLOCKING_COS - NORMAL_TOL)
+                          lambda normal: travel_cosine(normal, axis, label) >= BLOCKING_COS - COSINE_NOISE)
     if not faces:
         return None
     cos = min(1.0, min(travel_cosine(normal, axis, label) for _, normal in faces))
