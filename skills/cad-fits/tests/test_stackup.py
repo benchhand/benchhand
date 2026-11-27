@@ -1310,6 +1310,30 @@ class StackupCliTests(unittest.TestCase):
             self.assertIn("stack.obligation_ambiguous", codes(result))
             self.assertIsNone(result["check_bundle"])
 
+    def test_a_cached_outcome_that_binds_another_surface_is_refused(self) -> None:
+        """A bundle of the current recipe whose outcome names the plain feature.fit, where this run measures no single
+        surface, is not published again: the CLI exits 2 and publishes no check."""
+        documents = closing_gap_documents()
+        documents["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+            {"id": f"seal_{side}", "feature": "seal_groove", "region": side, "role": "seal", "dimension_state": "assembled"}
+            for side in ("inner", "outer")]
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", documents)
+            stack = self.assembly_stack()
+            stack["subject"] = {"PN": "TST-0001", "feature": "seal_groove"}
+            case = write_case(hw, "pn-stack", stack)
+            snapshot_version(hw)
+            args = ["uv", "run", "--quiet", "--script", str(SCRIPT), str(case), "--hw", str(hw), "--version", "v1"]
+            with unittest.mock.patch.object(stackup._IntentStack, "obligation_id", stackup._IntentStack.obligation_base), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                stackup.main(args[5:])
+            check = hw / "checks" / "v1" / "stack-pn-stack"
+            before = sorted(path.name for path in check.parent.iterdir())
+            rerun = subprocess.run(args, capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(rerun.returncode, 2, rerun.stdout[-300:])
+            self.assertIn("not the obligation this run binds to the measured surface", rerun.stderr)
+            self.assertEqual(before, sorted(path.name for path in check.parent.iterdir()))
+
     def test_rerun_reuses_bundle_and_recipe_change_requires_replace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory) / "project"
