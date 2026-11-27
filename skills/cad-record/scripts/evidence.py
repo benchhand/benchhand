@@ -1360,12 +1360,49 @@ def _typed(node: Any) -> Any:
     return ["m", node.tag, [[_typed(key), _typed(value)] for key, value in node.value]]
 
 
+MERGE_TAG = "tag:yaml.org,2002:merge"
+STATE_KEY = "calibration_state"
+
+
+def _merge_sources(value: Any) -> list[Any]:
+    """The mappings a merge key's value names: one mapping, or a sequence of them (a ValueError for anything else)."""
+    yaml = yaml_loader.yaml
+    sources = value.value if isinstance(value, yaml.SequenceNode) else [value]
+    if not all(isinstance(source, yaml.MappingNode) for source in sources):
+        raise ValueError("a merge key names something other than a mapping")
+    return sources
+
+
+def _resolved(node: Any) -> Any:
+    """`node` with every merge key applied, as a YAML loader reads it (an own key beats a merged one; of the sources of
+    one merge the first wins), and with each calibration_state key left out wherever it stands: the key is wording only,
+    and so is the copy of it that an anchor or a merge source carries. A duplicate own key stays visible, as in `_typed`."""
+    yaml = yaml_loader.yaml
+    if isinstance(node, yaml.SequenceNode):
+        return yaml.SequenceNode(node.tag, [_resolved(item) for item in node.value])
+    if not isinstance(node, yaml.MappingNode):
+        return node
+    inherited: dict[str, tuple[Any, Any]] = {}
+    own = []
+    for key, value in node.value:
+        if key.tag == MERGE_TAG:
+            for source in reversed(_merge_sources(value)):
+                for k, v in _resolved(source).value:
+                    inherited[json.dumps(_typed(k))] = (k, v)
+        else:
+            own.append((key, _resolved(value)))
+    taken = {json.dumps(_typed(key)) for key, _ in own}
+    pairs = [pair for ident, pair in inherited.items() if ident not in taken] + own
+    return yaml.MappingNode(node.tag, [(k, v) for k, v in pairs if not (isinstance(k, yaml.ScalarNode) and k.value == STATE_KEY)])
+
+
 def digest_form(rel: str, data: bytes) -> bytes:
     """The bytes of record input `rel` that a freshness digest covers: its own, except that capabilities.yaml is read
-    as typed YAML nodes without any profile's calibration_state, which is wording only (no check reads it, and no outcome
-    moves with it), so recording or editing one never stales a packet or a stamp. Every other edit changes it, a quoted
-    date from a bare one and a duplicate key included; only comments and layout do not count. A file that does not parse
-    as a document with a profiles list stays as it is."""
+    as typed YAML nodes with its merge keys applied and without any calibration_state, which is wording only (no check
+    reads it, and no outcome moves with it), so recording or editing one, in a profile or in the anchor a merge takes it
+    from, never stales a packet or a stamp, while a profile field that a merge brings in does. Every other edit changes
+    it, a quoted date from a bare one and a duplicate key included; only comments and layout do not count. A file that does
+    not parse as a document with a profiles list stays as it is."""
     if rel != CAPABILITIES_REL:
         return data
     yaml = yaml_loader.yaml
@@ -1373,19 +1410,11 @@ def digest_form(rel: str, data: bytes) -> bytes:
         root = yaml.compose(data.decode("utf-8"), Loader=yaml.SafeLoader)
         if not isinstance(root, yaml.MappingNode):
             return data
-        pairs = []
-        found = False
-        for key, value in root.value:
-            if isinstance(key, yaml.ScalarNode) and key.value == "profiles" and isinstance(value, yaml.SequenceNode):
-                found = True
-                value = yaml.SequenceNode(value.tag, [
-                    yaml.MappingNode(item.tag, [(k, v) for k, v in item.value
-                                                if not (isinstance(k, yaml.ScalarNode) and k.value == "calibration_state")])
-                    if isinstance(item, yaml.MappingNode) else item for item in value.value])
-            pairs.append((key, value))
-        if not found:
+        resolved = _resolved(root)
+        if not any(isinstance(key, yaml.ScalarNode) and key.value == "profiles" and isinstance(value, yaml.SequenceNode)
+                   for key, value in resolved.value):
             return data
-        typed = _typed(yaml.MappingNode(root.tag, pairs))
+        typed = _typed(resolved)
     except (UnicodeError, ValueError, RecursionError, yaml.YAMLError):
         return data
     return b"capabilities-without-calibration-state:" + json.dumps(typed, separators=(",", ":"), ensure_ascii=False).encode("utf-8")

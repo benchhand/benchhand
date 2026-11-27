@@ -959,6 +959,30 @@ class RecheckHookTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("stale", result.stderr)
 
+    def stage_merged_capabilities(self, title: str, status: str) -> None:
+        path = self.root / "hw" / "manufacturing" / "capabilities.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"defaults: &d\n  title: {title}\n  calibration_state: {{status: {status}, source: {{kind: user, reference: x, origin: owner}}}}\n"
+                        "profiles:\n- <<: *d\n  id: tst_printer\n  revision: 1\n  process: fdm\n  provider: local\n", encoding="utf-8")
+        self.git("add", "hw/manufacturing/capabilities.yaml")
+
+    def test_a_calibration_state_brought_in_by_a_merge_keeps_the_stamp_current(self) -> None:
+        self.stage_product("detail")
+        self.stage_merged_capabilities("TST", "standard")
+        self.stamp(passed=True, stage="detail")
+        self.stage_merged_capabilities("TST", "custom")
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_profile_field_brought_in_by_a_merge_makes_the_stamp_stale(self) -> None:
+        self.stage_product("detail")
+        self.stage_merged_capabilities("TST", "standard")
+        self.stamp(passed=True, stage="detail")
+        self.stage_merged_capabilities("Edited", "standard")
+        result = self.verify()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stale", result.stderr)
+
     def stage_dated_capabilities(self, until: str) -> None:
         path = self.root / "hw" / "manufacturing" / "capabilities.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)

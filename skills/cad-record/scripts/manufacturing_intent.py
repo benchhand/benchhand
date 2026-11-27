@@ -928,6 +928,13 @@ def _deepest_error(error: ValidationError, registry: SchemaRegistry, bases: Mapp
                key=lambda leaf: (-len(leaf.absolute_path), leaf.validator in {"oneOf", "anyOf"}, relevance(leaf)), default=error)
 
 
+def advisory_schema_path(rel: str, parts: Sequence[Any]) -> bool:
+    """Whether a schema error at `parts` (its JSON pointer segments) of document `rel` is an advisory: a profile's
+    calibration_state is wording only, so a malformed one never blocks a gate. The one severity rule of every schema reader."""
+    names = [str(part) for part in parts]
+    return rel == "manufacturing/capabilities.yaml" and names[:1] == ["profiles"] and names[2:3] == ["calibration_state"]
+
+
 def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
     """JSON-schema problems of every document (needs jsonschema), offline: every bundled schema resolves by $id."""
     from referencing.jsonschema import DRAFT202012  # noqa: PLC0415 - jsonschema's dependency, needed only to validate
@@ -949,7 +956,7 @@ def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
             parts = [str(part) for part in error.absolute_path]
             pointer = "/".join(parts)
             message = f"{pointer + ': ' if pointer else ''}{error.message}"
-            if rel == "manufacturing/capabilities.yaml" and parts[:1] == ["profiles"] and parts[2:3] == ["calibration_state"]:
+            if advisory_schema_path(rel, parts):
                 problems.append(Problem("intent.calibration_state", f"hw/{rel}", pointer, message, "warning"))  # wording only
             else:
                 problems.append(Problem("intent.schema", f"hw/{rel}", pointer, message))
@@ -2107,7 +2114,11 @@ class _Reader:
         target = self.hw / relative
         if relative.is_absolute() or ".." in relative.parts:
             return [f"names {artifact}, which is outside hw/"]
-        if not target.is_file() or target.is_symlink():
+        try:
+            present = target.is_file() and not target.is_symlink()
+        except OSError as error:  # the metadata lookup itself fails (a name too long, say): an advisory, as a read failure is
+            return [f"names hw/{artifact}, which cannot be read: {error.strerror or error}"]
+        if not present:
             return [f"names hw/{artifact}, which is missing"]
         if digest is None:
             return []

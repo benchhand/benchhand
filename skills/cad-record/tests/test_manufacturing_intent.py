@@ -366,6 +366,17 @@ class Normalization(unittest.TestCase):
         found = [p for p in record.problems if p.code == "intent.calibration_state"]
         self.assertEqual([(p.severity, p.pointer) for p in found], [("warning", "profiles/1/calibration_state/source")])
 
+    def test_an_overlong_artifact_path_cited_only_by_a_calibration_state_is_a_warning_not_an_abort(self) -> None:
+        documents = fx.tst_record()
+        name = "x" * 300 + ".pdf"  # longer than NAME_MAX: the metadata lookup itself fails (ENAMETOOLONG)
+        source = fx.source("datasheet", artifact=f"manufacturing/sources/{name}", sha256="0" * 64)
+        documents["manufacturing/capabilities.yaml"]["profiles"][1]["calibration_state"] = {"status": "standard", "source": source}
+        hw = fx.write_record(temp_hw(self), documents)
+        record, problems = mi.check_record(hw)
+        found = [p for p in problems if p.code == "intent.calibration_state"]
+        self.assertEqual([(p.severity, p.pointer) for p in found], [("warning", "profiles/1/calibration_state/source")])
+        self.assertEqual([p.message for p in problems if p.severity == "error"], [])
+
     def test_a_custom_calibration_state_without_a_measured_calibration_is_a_warning_that_blocks_nothing(self) -> None:
         documents = fx.tst_record()
         documents["manufacturing/capabilities.yaml"]["profiles"][1].update(calibration_state=fx.calibration_state("custom"), calibrations=[])

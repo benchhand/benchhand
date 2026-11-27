@@ -21,7 +21,7 @@ import os
 import posixpath
 import re
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
@@ -127,11 +127,14 @@ def load_json(path: Path, findings: list[dict[str, str]]) -> Any:
 
 
 def validate_document(
-    data: Any, schema_name: str, path: str, findings: list[dict[str, str]], *, code: str | None = None
+    data: Any, schema_name: str, path: str, findings: list[dict[str, Any]], *, code: str | None = None,
+    advisory: Callable[[Sequence[Any]], bool] | None = None,
 ) -> bool:
     """Validate `data` against `schemas/<schema_name>`, with format checks, through the validator
     schema_registry keeps for this checkout's schemas; each error becomes a finding at its JSON pointer, with
-    `code` when given. Error paths mix int and str parts (a YAML key 1 beside a key a), so they sort as text."""
+    `code` when given. An error at a path that `advisory` accepts is a non-blocking warning (code
+    intent.calibration_state) and leaves the result True. Error paths mix int and str parts (a YAML key 1 beside a
+    key a), so they sort as text."""
     schema_path = SCHEMAS / schema_name
     try:
         schema_registry.schema(SCHEMAS, schema_name)
@@ -140,10 +143,16 @@ def validate_document(
         return False
     validator = schema_registry.document_validator(SCHEMAS, schema_name, formats=True)
     errors = sorted(validator.iter_errors(data), key=lambda item: [str(part) for part in item.absolute_path])
+    blocking = False
     for item in errors:
         location = "/".join(str(part) for part in item.absolute_path)
-        findings.append(finding(path, f"{location + ': ' if location else ''}{item.message}", code=code))
-    return not errors
+        message = f"{location + ': ' if location else ''}{item.message}"
+        if advisory is not None and advisory(list(item.absolute_path)):
+            findings.append(finding(path, message, severity="warning", code="intent.calibration_state"))
+        else:
+            findings.append(finding(path, message, code=code))
+            blocking = True
+    return not blocking
 
 
 def read_csv(path: Path, accepted: tuple[list[str], ...], findings: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -880,7 +889,8 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any], valid: Ma
         path = hw / rel
         if rel.startswith("manufacturing/") and "*" not in rel and path.is_file():  # the guideline wildcard is read below
             data = load_yaml(path, findings)
-            if validate_document(data, schema, str(path), findings, code=intent.SCHEMA_INVALID):  # None (an empty file) is checked too
+            if validate_document(data, schema, str(path), findings, code=intent.SCHEMA_INVALID,
+                                 advisory=functools.partial(intent.advisory_schema_path, rel)):  # None (an empty file) is checked too
                 parsed[rel] = data
     record = intent.normalize_record(parsed, hw=hw)
     findings.extend(_intent_finding(hw, problem.finding()) for problem in record.problems)

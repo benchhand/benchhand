@@ -1752,6 +1752,29 @@ class RecordDigestStateTests(unittest.TestCase):
         stated = text + "  calibration_state:\n    status: standard\n    source: {kind: user, reference: x, origin: owner}\n"
         self.assertEqual(self.yaml_digest(stated), self.yaml_digest(text))
 
+    MERGED = ("defaults: &d\n  title: {title}\n  calibration_state: {{status: {status}, source: {{kind: user, reference: x, origin: owner}}}}\n"
+              "profiles:\n- {merge}: *d\n  id: p\n")
+    MERGE_KEYS = {"a merge key": "<<", "a tagged merge key": "!!merge <<"}
+
+    def test_a_calibration_state_brought_in_by_a_merge_keeps_the_digest(self) -> None:
+        for label, merge in self.MERGE_KEYS.items():
+            with self.subTest(label):
+                standard = self.yaml_digest(self.MERGED.format(title="Printer", status="standard", merge=merge))
+                self.assertEqual(self.yaml_digest(self.MERGED.format(title="Printer", status="custom", merge=merge)), standard)
+
+    def test_a_profile_field_brought_in_by_a_merge_changes_the_digest(self) -> None:
+        for label, merge in self.MERGE_KEYS.items():
+            with self.subTest(label):
+                self.assertNotEqual(self.yaml_digest(self.MERGED.format(title="Other", status="standard", merge=merge)),
+                                    self.yaml_digest(self.MERGED.format(title="Printer", status="standard", merge=merge)))
+
+    def test_a_merged_profile_field_that_the_profile_overrides_is_judged_by_its_effective_value(self) -> None:
+        """Overriding the merged title changes the effective profile; a merge-key source with the same effective profile hashes alike."""
+        merged = "profiles:\n- <<: {title: Printer}\n  id: p\n"
+        inline = "profiles:\n- title: Printer\n  id: p\n"
+        self.assertEqual(self.yaml_digest(merged), self.yaml_digest(inline))
+        self.assertNotEqual(self.yaml_digest("profiles:\n- <<: {title: Printer}\n  title: Own\n  id: p\n"), self.yaml_digest(merged))
+
     def test_any_other_capability_edit_changes_the_record_digest(self) -> None:
         stated = evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard")))
         self.assertNotEqual(evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard"), title="Other")), stated)

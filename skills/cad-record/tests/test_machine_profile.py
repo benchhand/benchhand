@@ -321,6 +321,17 @@ class WriteTests(Case):
         self.assertEqual(self.stored()[0]["calibration_state"]["status"], "custom")
         self.assertIn("advisory: ", out.getvalue())
 
+    def test_write_saves_a_profile_with_a_malformed_calibration_state_and_prints_an_advisory(self) -> None:
+        for label, state in CheckTests.MALFORMED_STATES.items():
+            with self.subTest(label):
+                self.path.unlink(missing_ok=True)
+                out = io.StringIO()
+                with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                    code = int(machine_profile.main(["write", str(self.hw), str(self.answers(profile(calibration_state=state)))]))
+                self.assertEqual(code, 0)
+                self.assertEqual([p["id"] for p in self.stored()], ["bench"])
+                self.assertIn("advisory: hw/manufacturing/capabilities.yaml: profiles/0/calibration_state", out.getvalue())
+
     def test_write_refuses_failing_profile_and_leaves_file_unchanged(self) -> None:
         self.put(profile(id="other"))
         before = self.path.read_bytes()
