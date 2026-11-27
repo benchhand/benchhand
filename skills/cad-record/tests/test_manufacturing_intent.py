@@ -482,6 +482,28 @@ class UseCaseReadiness(unittest.TestCase):
         self.assertEqual(mi.assess_use_case(mi.normalize_record(documents)).open_questions, ("Q-050",))
         self.assertFalse(mi.assess_use_case(mi.load_record(fx.LAMP)).final_ready)
 
+    def test_an_unknown_fact_of_a_listed_load_blocks_and_is_named(self) -> None:
+        """A populated loads list is not a known load case: each load's magnitude, duration, frequency and cycles count."""
+        for name in ("magnitude", "duration", "frequency", "cycles"):
+            with self.subTest(field=name):
+                documents = self.confirmed()
+                documents["product.yaml"]["use_case"]["loads"][0][name] = fx.unknown("never measured")
+                assessment = mi.assess_use_case(mi.normalize_record(documents))
+                self.assertFalse(assessment.final_ready)
+                self.assertIn(f"loads.head_load.{name}", assessment.unknown)
+                self.assertIn(f"use_case.loads.head_load.{name} is unknown and no open question tracks it", assessment.blocking)
+
+    def test_an_unknown_load_fact_blocks_even_when_an_open_minor_question_tracks_it(self) -> None:
+        """A load fact is never minor: an open question that is neither material to the choice nor safety relevant
+        tracks the unknown magnitude, and the final choice is still refused."""
+        documents = self.confirmed()
+        documents["requirements.yaml"]["open_questions"].append(fx.question("Q-060"))
+        documents["product.yaml"]["use_case"]["loads"][0]["magnitude"] = fx.unknown("never measured", "Q-060")
+        assessment = mi.assess_use_case(mi.normalize_record(documents))
+        self.assertFalse(assessment.final_ready)
+        self.assertIn("use_case.loads.head_load.magnitude is unknown: a final choice needs every load fact known, "
+                      "whatever its question (Q-060) is classed as", assessment.blocking)
+
     def test_a_resolved_question_does_not_track_an_unknown(self) -> None:
         documents = self.confirmed()
         question = mi.normalize_record(fx.tst_record()).use_case.facts["environment.uv"].question
@@ -704,6 +726,61 @@ class RequiredChecks(unittest.TestCase):
         product = owed["cad.product_exports@product"]
         self.assertEqual((product.family, dict(product.subject), product.level, product.stage),
                          ("cad.product_exports", {"product": True}, "cad_valid", "layout"))
+
+    def test_checks_that_share_an_anchor_get_their_own_ids(self) -> None:
+        """Two seal surfaces on one feature (with or without regions), or two policy requirements at one level on one
+        part, share an anchor. The first keeps the plain id, so references to it still resolve; each later one adds
+        ~<surface id> or ~<requirement>. No check vanishes, and no collision needs reporting."""
+        def surfaces(*regions: str | None) -> Any:
+            def change(documents: dict[str, Any]) -> None:
+                documents["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+                    {"id": f"seal_{side}", "feature": "seal_groove", "role": "seal", "dimension_state": "after_finish",
+                     **({"region": region} if region else {})}
+                    for side, region in zip(("inner", "outer"), regions, strict=True)]
+            return change
+
+        def policies(documents: dict[str, Any]) -> None:
+            documents["requirements.yaml"]["requirements"].append(fx.requirement("REQ-002", "Seal the housing"))
+            documents["product.yaml"]["use_case"]["evidence_policy"] = {"decision": "DR-001", "obligations": [
+                {"subject": {"PN": "TST-0001"}, "requirement": ident, "level": "physically_validated"}
+                for ident in ("REQ-001", "REQ-002")]}
+
+        surface_ids = {f"feature.{family}@TST-0001#seal_groove{suffix}"
+                       for family in ("fit", "inspection") for suffix in ("", "~seal_outer")}
+        cases = {"two surfaces, no region": (surfaces(None, None), surface_ids),
+                 "two surfaces, two regions": (surfaces("inner", "outer"), surface_ids),
+                 "two requirements": (policies, {"policy.physically_validated@TST-0001",
+                                                 "policy.physically_validated@TST-0001~REQ-002"})}
+        obligation = fx.ref_validator("https://srobroek.com/cad/schemas/manufacturing.schema.json#/$defs/obligation")
+        for case, (change, wanted) in cases.items():
+            with self.subTest(case):
+                documents = fx.tst_record()
+                change(documents)
+                record = mi.normalize_record(documents)
+                self.assertEqual([p.message for p in record.problems if p.severity == "error"], [])
+                owed = {o.id: o for o in mi.required_checks(record)}
+                self.assertLessEqual(wanted, set(owed))
+                self.assertEqual([ident for ident in owed if ident.startswith("intent.obligation_identity")], [])
+                for ident in wanted:
+                    self.assertEqual([e.message for e in obligation.iter_errors(owed[ident].as_dict())], [], ident)
+                if case == "two requirements":
+                    self.assertEqual([owed[i].requirement for i in sorted(wanted)], ["REQ-001", "REQ-002"])
+                else:
+                    self.assertIn("seal_outer", owed["feature.fit@TST-0001#seal_groove~seal_outer"].basis)
+
+    def test_checks_no_id_can_separate_are_reported_with_a_remedy_that_keeps_them(self) -> None:
+        """Two policy obligations on two occurrences of one part at one level, with no requirement: the id grammar has no
+        occurrence, so one intent obligation names both. Its remedy keeps the recorded subjects and level."""
+        documents = fx.with_subject_occurrences(fx.tst_record(), {"PN": "TST-0003"})
+        documents["product.yaml"]["use_case"]["evidence_policy"] = {"decision": "DR-001", "obligations": [
+            {"subject": {"PN": "TST-0003", "occurrence": ref}, "level": "physically_validated"} for ref in ("@left", "@right")]}
+        record = mi.normalize_record(documents)
+        self.assertEqual([p.message for p in record.problems if p.severity == "error"], [])
+        owed = {o.id: o for o in mi.required_checks(record)}
+        basis = owed["intent.obligation_identity@TST-0003"].basis
+        for named in ("occurrence @left", "occurrence @right", "name the requirement each evidence_policy obligation serves"):
+            self.assertIn(named, basis)
+        self.assertNotIn("subject or level", basis)
 
     def test_existing_equipment_carries_no_obligation_of_its_own(self) -> None:
         documents = fx.record(parts=[fx.part("TST-0001"), fx.existing_part("TST-0009")],

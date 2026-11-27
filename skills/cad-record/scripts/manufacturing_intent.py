@@ -487,6 +487,11 @@ class Load:
     direction: tuple[float, float, float] | None  # a unit vector; None only when invalid, which validation reports
     requirements: tuple[str, ...]
     application: Mapping[str, Any] | None = field(default=None, hash=False)  # what `direction` is stated against; None when omitted, an empty mapping when present but not a subject; a mapping is unhashable, equality still compares it
+    timing: Mapping[str, Fact] = field(default_factory=lambda: types.MappingProxyType({}), hash=False)  # the duration, frequency and cycles it records
+
+    def facts(self) -> dict[str, Fact]:
+        """The load's facts by field name: its magnitude and the duration, frequency and cycles it records."""
+        return {"magnitude": self.magnitude, **self.timing}
 
 
 @dataclass(frozen=True)
@@ -1473,9 +1478,9 @@ class _Reader:
                     continue
                 pointer = f"use_case/loads/{index}"
                 self.define("load", item.get("id"), path, pointer)
-                for key, dimensions in (("duration", ("time",)), ("frequency", ("frequency",)), ("cycles", ("count",))):
-                    if key in item:
-                        self.fact(item[key], path, f"{pointer}/{key}", dimensions)
+                timing = {key: self.fact(item[key], path, f"{pointer}/{key}", dimensions)
+                          for key, dimensions in (("duration", ("time",)), ("frequency", ("frequency",)), ("cycles", ("count",)))
+                          if key in item}
                 direction = self.check_load_direction(item, path, pointer)
                 application = self.subject(item["application"], path, f"{pointer}/application") if "application" in item else None
                 for requirement in item.get("requirements") or ():
@@ -1483,7 +1488,7 @@ class _Reader:
                 entries.append(Load(item.get("id"), item.get("kind"),
                                     self.fact(item.get("magnitude"), path, f"{pointer}/magnitude", ("force", "torque")),
                                     direction,
-                                    tuple(item.get("requirements") or ()), application))
+                                    tuple(item.get("requirements") or ()), application, types.MappingProxyType(timing)))
             loads = tuple(entries)
         else:
             loads = self.fact(loads_data, path, "use_case/loads")
@@ -2279,11 +2284,29 @@ class UseCaseAssessment:
     open_questions: tuple[str, ...]  # open questions that are material to the choice or safety-relevant
 
 
+def use_case_fields(use_case: UseCase) -> dict[str, Fact]:
+    """Every use-case fact by its field name below use_case: the USE_CASE_FACTS, the service class, and loads,
+    capability.equipment and evidence_policy while each is a fact. A recorded loads list adds each load's facts as
+    loads.<id>.<field> (magnitude, duration, frequency, cycles), so a listed load never hides an unknown one."""
+    fields = dict(use_case.facts)
+    fields["service_class"] = use_case.service_class
+    for name, value in (("loads", use_case.loads), ("capability.equipment", use_case.equipment),
+                        ("evidence_policy", use_case.evidence_policy)):
+        if is_fact(value):
+            fields[name] = value
+    if not is_fact(use_case.loads):
+        for index, load in enumerate(use_case.loads):
+            for name, value in load.facts().items():
+                fields[f"loads.{load.id or index}.{name}"] = value
+    return fields
+
+
 def assess_use_case(record: Record) -> UseCaseAssessment:
     """Whether the use case supports a final material/process recommendation. Conditional exploration
     is always allowed; a final choice needs a confirmed use case, a known service class, no open
-    material-to-choice or safety question, and no unknown that no open question tracks. A resolved
-    question does not track an unknown: its answer belongs in the fact, so the pair is a contradiction."""
+    material-to-choice or safety question, and no unknown that no open question tracks. An unknown load fact (the load
+    case, or a listed load's magnitude, duration, frequency or cycles) blocks whatever its question is classed as. A
+    resolved question does not track an unknown: its answer belongs in the fact, so the pair is a contradiction."""
     use_case = record.use_case
     blocking: list[str] = []
     if record.version != RECORD_VERSION:
@@ -2293,12 +2316,7 @@ def assess_use_case(record: Record) -> UseCaseAssessment:
     service = use_case.service_class.value if use_case.service_class.known else None
     if service in (None, "unknown"):
         blocking.append("the service class is unknown")
-    fields = dict(use_case.facts)
-    fields["service_class"] = use_case.service_class
-    for name, value in (("loads", use_case.loads), ("capability.equipment", use_case.equipment),
-                        ("evidence_policy", use_case.evidence_policy)):
-        if is_fact(value):
-            fields[name] = value
+    fields = use_case_fields(use_case)
     unknown = tuple(sorted(name for name, value in fields.items() if value.unknown))
     for name in unknown:
         tracking = fields[name].question
@@ -2308,6 +2326,9 @@ def assess_use_case(record: Record) -> UseCaseAssessment:
         elif question.status != "open":
             blocking.append(f"use_case.{name} is unknown but its question {question.id} is {question.status}; "
                             "record the answer in the fact or reopen the question")
+        elif name == "loads" or name.startswith("loads."):
+            blocking.append(f"use_case.{name} is unknown: a final choice needs every load fact known, whatever its "
+                            f"question ({question.id}) is classed as")
     open_questions = tuple(sorted(q.id for q in record.questions.values() if q.blocks_final_choice))
     if open_questions:
         blocking.append(f"open questions material to the choice or safety: {', '.join(open_questions)}")
@@ -2618,15 +2639,25 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
     whole product) and access, and joint evidence for every joining operation; requirement evidence levels;
     and an intent.* obligation for every unknown
     input that hides checks. A producer cannot shrink this list by omission; an unknown route kind gets
-    process.<kind>.coverage, which no handler can pass."""
+    process.<kind>.coverage, which no handler can pass. Distinct checks that share one anchor keep their own ids: the
+    first keeps family@anchor, so references to it still resolve, and each later one adds ~<qualifier> (its critical
+    surface id, or its policy requirement). Distinct checks no qualifier separates add an unknown
+    intent.obligation_identity obligation that names them."""
     found: dict[str, Obligation] = {}
+    # obligation id -> the distinct checks that share it, keyed by their identity (the first is the one found holds)
+    collided: dict[str, dict[tuple[Any, ...], Obligation]] = {}
 
     def add(family: str, subject: Mapping[str, Any], level: str, stage: str, basis: str, *,
-            requirement: str | None = None, criterion: str | None = None) -> None:
+            requirement: str | None = None, criterion: str | None = None, qualifier: str | None = None) -> None:
         clean = {key: value for key, value in subject.items() if value is not None}
         ident = f"{family}@{obligation_anchor(clean)}"
-        if ident not in found:
-            found[ident] = Obligation(ident, family, types.MappingProxyType(clean), level, stage, basis, requirement, criterion)
+        obligation = Obligation(ident, family, types.MappingProxyType(clean), level, stage, basis, requirement, criterion)
+        identity = _identity(obligation, qualifier)
+        if ident in collided and identity not in collided[ident] and qualifier is not None:
+            ident = f"{ident}~{qualifier}"
+            obligation = Obligation(ident, family, obligation.subject, level, stage, basis, requirement, criterion)
+        found.setdefault(ident, obligation)
+        collided.setdefault(ident, {}).setdefault(identity, obligation)
 
     use_case = record.use_case
     add("intent.use_case", {"product": True}, "process_planned", "intent",
@@ -2667,8 +2698,65 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
                 {"product": True, "requirements": (item["requirement"],)} if item.get("requirement") else None)
             if subject is not None and policy_level in _LEVEL_STAGE:
                 add(f"policy.{policy_level}", subject, policy_level, _LEVEL_STAGE[policy_level], "the approved evidence policy",
-                    requirement=item.get("requirement"))
+                    requirement=item.get("requirement"), qualifier=item.get("requirement"))
+    found.update(_identity_collisions(collided))
     return tuple(found[key] for key in sorted(found))
+
+
+# The record-derived obligation that reports distinct checks sharing one obligation id; no producer can pass it.
+OBLIGATION_IDENTITY_FAMILY = "intent.obligation_identity"
+
+
+def obligation_base(obligation_id: str) -> str:
+    """`obligation_id` without its ~qualifier: family@anchor, the id the first of the checks sharing an anchor holds."""
+    return obligation_id.split("~", 1)[0]
+
+
+def _identity(obligation: Obligation, qualifier: str | None) -> tuple[Any, ...]:
+    """What makes two checks distinct: subject (occurrence, component, operation, feature and region), requirement,
+    criterion and qualifier (the critical surface a check is about). The basis text is not identity: one check may be
+    derived from two functions."""
+    return (tuple(sorted((key, repr(value)) for key, value in obligation.subject.items())), obligation.requirement,
+            obligation.criterion, qualifier)
+
+
+def _identity_collisions(collided: Mapping[str, Mapping[tuple[Any, ...], Obligation]]) -> dict[str, Obligation]:
+    """One intent.obligation_identity obligation per anchor where distinct checks still share an obligation id: no
+    qualifier separates them (two policy obligations on two occurrences of a part with no requirement; the id grammar
+    holds no occurrence). The first check keeps the id and the others would vanish, so this obligation names them all
+    and stays unknown: the collision is never a pass. Its remedy keeps the recorded subjects and levels."""
+    texts: dict[str, list[str]] = {}
+    firsts: dict[str, Obligation] = {}
+    stages: dict[str, str] = {}
+    policy: dict[str, bool] = {}
+    for ident, distinct in sorted(collided.items()):
+        if len(distinct) < 2:
+            continue
+        members = list(distinct.values())
+        anchor = obligation_base(ident).split("@", 1)[1]
+        firsts.setdefault(anchor, members[0])
+        texts.setdefault(anchor, []).append(f"{ident} stands for {len(members)} checks: "
+                                            + "; ".join(_identity_text(member) for member in members))
+        stages[anchor] = min((stages.get(anchor, members[0].stage), *(m.stage for m in members)), key=STAGES.index)
+        policy[anchor] = policy.get(anchor, False) or members[0].family.startswith("policy.")
+    found = {}
+    for anchor, first in firsts.items():
+        ident = f"{OBLIGATION_IDENTITY_FAMILY}@{anchor}"
+        remedy = ("name the requirement each evidence_policy obligation serves (a requirement of its own for each), so "
+                  "each gets an id of its own" if policy[anchor] else
+                  "give each critical surface an id of its own, so each check gets an id of its own")
+        found[ident] = Obligation(ident, OBLIGATION_IDENTITY_FAMILY, first.subject, "process_planned", stages[anchor],
+                                  " | ".join(texts[anchor]) + ". One result cannot answer them all, so none of them is "
+                                  f"checked: {remedy}; the recorded subjects and evidence levels stay as they are")
+    return found
+
+
+def _identity_text(obligation: Obligation) -> str:
+    details = [f"{key} {obligation.subject[key]}" for key in ("occurrence", "component", "operation", "region")
+               if obligation.subject.get(key)]
+    if obligation.requirement:
+        details.append(f"requirement {obligation.requirement}")
+    return obligation.basis + (f" ({', '.join(details)})" if details else "")
 
 
 def _part_checks(record: Record, pn: str, part: Part, add: Any) -> None:
@@ -2743,9 +2831,11 @@ def _part_checks(record: Record, pn: str, part: Part, add: Any) -> None:
                 f"{pn} is structural and additive: layer direction against its loads")
     surfaces = () if is_fact(intent.critical_surfaces) else intent.critical_surfaces
     for surface in surfaces:
-        subject = {**base, "component": surface.component, "feature": surface.feature}
-        add("feature.fit", subject, "process_planned", "detail", f"{pn} {surface.id}: {surface.role} finished fit")
-        add("feature.inspection", subject, "physically_validated", "release", f"{pn} {surface.id}: inspected finished dimensions")
+        subject = {**base, "component": surface.component, "feature": surface.feature, "region": surface.region}
+        add("feature.fit", subject, "process_planned", "detail", f"{pn} {surface.id}: {surface.role} finished fit",
+            qualifier=surface.id)
+        add("feature.inspection", subject, "physically_validated", "release", f"{pn} {surface.id}: inspected finished dimensions",
+            qualifier=surface.id)
     for function, family, level in _FUNCTION_CHECKS:
         if function in functions:
             add(family, base, level, "detail" if level == "process_planned" else "analysis", f"{pn} function {function}")

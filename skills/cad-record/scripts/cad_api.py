@@ -21,10 +21,10 @@
 # schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
 # schema-sha256 19cbfed3c714ae92a3b27ed8242078c59455f05ede808f77d92f9a9b51da70b7 skills/cad-record/schemas/manufacturing-guideline.schema.json
 # schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
-# schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
-# schema-sha256 e7a1d4d1233184f1320a1f23f538e0980207f30c9292fa791fe05c0cee538c06 skills/cad-record/schemas/manufacturing.schema.json
+# schema-sha256 cecbad00c27eeebb9c3dbe27456aa4ca395507e60eac54d286ac8a1dc0915023 skills/cad-record/schemas/manufacturing-selection.schema.json
+# schema-sha256 e582e2845100b0fc5159954a56091179d6b3251d8df406c3939d3cb145ebea2d skills/cad-record/schemas/manufacturing.schema.json
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
-# schema-sha256 7e31ffb8d6a6abc67e890d6b0543f581a9aa8e23af0d24fbffbbb8a0a1fe79c9 skills/cad-record/schemas/part.schema.json
+# schema-sha256 6e0abef226162aa78724b8958db0fb3464ddff043f7a287898ebe2af78bb5fb8 skills/cad-record/schemas/part.schema.json
 # schema-sha256 a925c74c84c3c9b3ef53579fdb4d41f295eef9af85ea8646996db71d5db66b36 skills/cad-record/schemas/preflight-report.schema.json
 # schema-sha256 1ec25097f8c2802056f7d44d0ad27f8d60a8561192d0c73d54457898c000de9f skills/cad-record/schemas/product.schema.json
 # schema-sha256 1f824e1afee20c599bd4408606a4584208e22bcc56f626d561604a235c402f3f skills/cad-record/schemas/release-manifest.schema.json
@@ -350,6 +350,7 @@ __all__ = [
     "ManufacturingSelectionProposedPart",
     "ManufacturingSelectionRecommendation",
     "ManufacturingSelectionStep",
+    "ManufacturingSelectionStepStock",
     "ManufacturingSemanticId",
     "ManufacturingSemanticIds",
     "ManufacturingServiceClass",
@@ -3977,12 +3978,12 @@ class ManufacturingSubject(TypedDict):
     requirements: NotRequired[ManufacturingRequirementIds]
 
 
-# family@anchor: anchor is product, a PN with optional .component, /operation and #feature, an IF with optional #feature, a REQ, or op:<assembly operation>
+# family@anchor[~qualifier]: anchor is product, a PN with optional .component, /operation and #feature, an IF with optional #feature, a REQ, or op:<assembly operation>. A later check that shares an anchor with another adds ~<critical surface id> or ~<REQ>; the first keeps the plain id
 #
 # Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/obligation_id
 #
 # Not expressible as types (see the schema):
-# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*@(product|[A-Z]{2,5}-[0-9]{4}(\\.[a-z][a-z0-9_]*)?(/[a-z][a-z0-9_]*)?(#[a-z][a-z0-9_]*)?|IF-[0-9]{3}(#[a-z][a-z0-9_]*)?|REQ-[0-9]{3}|op:[a-z][a-z0-9_-]*)$"
+# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*@(product|[A-Z]{2,5}-[0-9]{4}(\\.[a-z][a-z0-9_]*)?(/[a-z][a-z0-9_]*)?(#[a-z][a-z0-9_]*)?|IF-[0-9]{3}(#[a-z][a-z0-9_]*)?|REQ-[0-9]{3}|op:[a-z][a-z0-9_-]*)(~([a-z][a-z0-9_]*|REQ-[0-9]{3}))?$"
 ManufacturingObligationId = str
 
 
@@ -5007,6 +5008,19 @@ class PartPurchase(TypedDict):
     supplier_evidence: NotRequired[ManufacturingSources]
 
 
+class ManufacturingSelectionStepStock(TypedDict):
+    """The stock a cutting step cuts, so the capability's material approval can be checked against its thickness and coating ("none" for uncoated stock)
+
+    Source: skills/cad-record/schemas/manufacturing-selection.schema.json#/$defs/step/properties/stock
+
+    Not expressible as types (see the schema):
+    - minProperties: 1
+    - additionalProperties: false
+    """
+    thickness: NotRequired[ManufacturingQuantityFact]
+    coating: NotRequired[ManufacturingTextFact]
+
+
 class ManufacturingSelectionStep(TypedDict):
     """One route step of a candidate part. A purchased step may carry the purchase criteria of the bought item, so a purchased alternative to a made part can be assessed before any part record holds them
 
@@ -5015,11 +5029,15 @@ class ManufacturingSelectionStep(TypedDict):
     Not expressible as types (see the schema):
     - additionalProperties: false
     - if {"required":["purchase"]} then {"properties":{"kind":{"const":"purchased"}}}
+
+    Field notes:
+    - stock: The stock a cutting step cuts, so the capability's material approval can be checked against its thickness and coating ("none" for uncoated stock)
     """
     kind: Required[ManufacturingRouteKind]
     capability: Required[ManufacturingProfileId | ManufacturingFactOpen]
     provider: NotRequired[Literal["local", "outsourced"]]
     purchase: NotRequired[PartPurchase]
+    stock: NotRequired[ManufacturingSelectionStepStock]
 
 
 # How much light the part passes; absent means opaque. Only a transparent part is see-through to the visibility check. An optical requirement is a hard selection constraint met by a purchased transparent part or identified transparent stock on a suitable route, never by an opaque process
@@ -5426,12 +5444,16 @@ class PartSetupStock(TypedDict):
     Not expressible as types (see the schema):
     - minProperties: 1
     - additionalProperties: false
+
+    Field notes:
+    - coating: the stock's coating or film, "none" for uncoated stock; a cutting approval must name the same
     """
     material_profile: NotRequired[ManufacturingProfileId | ManufacturingFactOpen]
     grade: NotRequired[ManufacturingTextFact]
     form: NotRequired[ManufacturingTextFact]
     dimensions: NotRequired[ManufacturingTextFact]
     thickness: NotRequired[ManufacturingQuantityFact]
+    coating: NotRequired[ManufacturingTextFact]
     state: NotRequired[ManufacturingText]
     supplier: NotRequired[ManufacturingText]
 

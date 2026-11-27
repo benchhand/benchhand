@@ -803,6 +803,14 @@ class RecheckHookTests(unittest.TestCase):
         self.stamp_refused(checks, "computed from another record")
         self.stamp_refused(self.evidence_packet("parts"), "assessed for stage parts, not detail")
 
+    def test_a_packet_with_malformed_expected_checks_is_refused_not_a_crash(self) -> None:
+        self.stage_product("detail")
+        checks = self.evidence_packet("detail")
+        packet = json.loads(checks.read_text(encoding="utf-8"))
+        packet["expected"][0]["id"] = [packet["expected"][0]["id"]]
+        checks.write_text(json.dumps(packet), encoding="utf-8")
+        self.stamp_refused(checks, "evidence.expected_invalid")
+
     def test_a_stamp_whose_evidence_blocks_is_refused_at_commit_even_if_edited_to_passed(self) -> None:
         self.stage_product("detail")
         self.stamp(passed=False, stage="detail", outcome="unknown")

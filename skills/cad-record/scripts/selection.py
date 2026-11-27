@@ -141,17 +141,25 @@ DIGEST_SCOPE = ("product.yaml use_case", "requirements.yaml", "interfaces.yaml",
                 "manufacturing/capabilities.yaml", "manufacturing/materials.yaml", "manufacturing/selection.yaml candidates")
 _APPEARANCE_INTENT = ("color",)  # intent keys that never reach the selection digest
 _PART_FIELDS = ("PN", "make_buy", "procurement", "process", "material", "transparency", "intent")
+# The approved operation (manufacturing-capabilities.schema.json material_approval operations) a route step of each
+# kind does; a kind not listed does none of them, so an operation-scoped approval of it is unresolved.
+_STEP_OPERATION = {"laser": "cut", "waterjet": "cut", "plasma": "cut", "cnc": "machine", "drilling": "machine",
+                   "reaming": "machine", "tapping": "machine", "fdm": "print", "resin": "print", "sheet_forming": "form",
+                   "joining": "join"}
 
 
 # --- inputs ----------------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class Step:
-    """One route step of a candidate part: its kind, capability profile id (or a Fact) and provider."""
+    """One route step of a candidate part: its kind, capability profile id (or a Fact), provider and, for a cutting
+    step, the thickness and coating Facts of the stock it cuts (None when the step states none)."""
 
     kind: str
     capability: Any  # a capability profile id, or a Fact (unknown when the step records none)
     provider: str | None
+    stock_thickness: Any = None
+    stock_coating: Any = None
 
     def describe(self) -> str:
         capability = self.capability if isinstance(self.capability, str) else f"capability {self.capability.status}"
@@ -219,6 +227,21 @@ def _open_choice(value: Any, what: str) -> Any:
     return mi.Fact.unknown_because(f"the candidate records no {what}")
 
 
+def _text_key(text: str) -> str:
+    """A text compared without case or spacing differences, such as a coating name."""
+    return " ".join(text.split()).casefold()
+
+
+def _stock_fact(stock: Any, key: str) -> Any:
+    """The `key` (thickness or coating) Fact a step states for its stock; None when it states none. A value that is not
+    a recorded fact (which the schema reports) is unknown."""
+    value = stock.get(key) if isinstance(stock, Mapping) else None
+    if value is None:
+        return None
+    return _open_choice(value, f"stock {key}") if isinstance(value, Mapping) else mi.Fact.unknown_because(
+        f"the stock {key} is not a recorded fact")
+
+
 def _candidate(ident: str, raw: Mapping[str, Any], existing: frozenset[str] = frozenset()) -> Candidate:
     """A selection.yaml candidate. A part entry naming existing equipment is dropped: it is outside the product, so it
     is never assessed, ranked or proposed a material, route or make_buy."""
@@ -226,7 +249,8 @@ def _candidate(ident: str, raw: Mapping[str, Any], existing: frozenset[str] = fr
     for entry in raw.get("parts") or ():
         if isinstance(entry.get("PN"), str) and entry["PN"] in existing:
             continue
-        steps = [Step(step.get("kind"), _open_choice(step.get("capability"), "capability"), step.get("provider"))
+        steps = [Step(step.get("kind"), _open_choice(step.get("capability"), "capability"), step.get("provider"),
+                      _stock_fact(step.get("stock"), "thickness"), _stock_fact(step.get("stock"), "coating"))
                  for step in entry.get("route") or ()]
         parts.append(CandidatePart(entry.get("PN"), _open_choice(entry.get("material_profile"), "material profile"),
                                    tuple(steps), entry.get("note")))
@@ -281,6 +305,9 @@ class Evaluation:
     remedy: str | None = None
     blocks_prototype: bool = False  # a failure that rules the candidate out even as a limited prototype
     authored: bool = False  # from the candidate's evaluations, not computed here
+    # a stress criterion of a profiled part in a service class that needs a design allowable: an authored pass carries no
+    # allowable basis, so it never replaces this computed result
+    allowable_required: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"constraint": self.constraint, "mandatory": self.mandatory, "outcome": self.outcome,
@@ -345,9 +372,11 @@ def _numbers(value: Any) -> list[float] | None:
 
 
 def _same_criterion(required: Any, stated: Any) -> bool:
-    """Whether an evaluation states the requirement's criterion: same property and operator and the same
-    value, converted to the requirement's units. A pass against another criterion never satisfies it."""
-    if (required.property, required.operator) != (stated.property, stated.operator):
+    """Whether an evaluation states the requirement's criterion: same property and operator, the same dimension
+    state and conditions, and the same value, converted to the requirement's units. A pass against another
+    criterion, or measured in another state or under other conditions, never satisfies it."""
+    if (required.property, required.operator, required.state, required.conditions) != (
+            stated.property, stated.operator, stated.state, stated.conditions):
         return False
     wanted, given = mi.thaw(required.value), mi.thaw(stated.value)
     if required.units == stated.units:
@@ -614,13 +643,40 @@ class _Assessor:
         return assessed
 
     def matches_record(self, cpart: CandidatePart, part: Any) -> bool:
+        """Whether the candidate part is the route the record holds: the same route kinds, the same material profile, and
+        no step's declared stock that conflicts with its record operation's setup stock (stock_conflicts)."""
         route = part.intent.route
         if mi.is_fact(route) or tuple(op.kind for op in route) != tuple(step.kind for step in cpart.route):
             return False
         recorded, proposed = part.intent.material_profile, cpart.material
         if isinstance(recorded, str) or isinstance(proposed, str):
-            return bool(recorded == proposed)
-        return bool(recorded.not_applicable and proposed.not_applicable)
+            return bool(recorded == proposed) and not self.stock_conflicts(cpart, part)
+        return bool(recorded.not_applicable and proposed.not_applicable) and not self.stock_conflicts(cpart, part)
+
+    @staticmethod
+    def stock_conflicts(cpart: CandidatePart, part: Any) -> list[str]:
+        """Each way a candidate step's declared stock differs from the setup stock of the record operation at the same
+        route position, as "<operation> stock <key> <declared> (now <recorded>)". A stock the record leaves unknown or
+        unstated differs too: a candidate that states it only proposes it. A candidate on other stock is another route: the
+        approval it passes is not an approval of the stock the record cuts."""
+        route = part.intent.route
+        if mi.is_fact(route) or len(route) != len(cpart.route):
+            return []
+        found = []
+        for step, op in zip(cpart.route, route, strict=True):
+            stock = (op.setup or {}).get("stock")
+            for key, stated in (("thickness", step.stock_thickness), ("coating", step.stock_coating)):
+                held = mi.fact(stock[key]) if isinstance(stock, Mapping) and isinstance(stock.get(key), Mapping) else None
+                if stated is None or not stated.known:
+                    continue
+                if held is None or not held.known:  # the record says nothing of what the route cuts: only a proposal
+                    found.append(f"{op.id} stock {key} {stated.value} (now unknown)")
+                    continue
+                same = (_text_key(stated.value) == _text_key(held.value) if isinstance(stated.value, str)
+                        and isinstance(held.value, str) else stated.value == held.value)
+                if not same:
+                    found.append(f"{op.id} stock {key} {stated.value} (now {held.value})")
+        return found
 
     # -- route constraints --
     def route_constraints(self, cpart: CandidatePart) -> list[Evaluation]:
@@ -636,7 +692,7 @@ class _Assessor:
                     (f"{step.kind} has no check contract: its manufacturability coverage is unknown, never a pass",),
                     remedy=f"add a check profile for {step.kind}, or choose a route kind Benchhand checks"))
                 continue
-            found.extend(self.capability(cpart, step, where))
+            found.extend(self.capability(cpart, step, where, index))
         return found
 
     def material_form(self, cpart: CandidatePart) -> Evaluation:
@@ -664,7 +720,7 @@ class _Assessor:
         return Evaluation("material_form", True, outcome, subject, method, (why,),
                           remedy=None if outcome == "pass" else "select a profile whose form matches the route")
 
-    def capability(self, cpart: CandidatePart, step: Step, where: str) -> list[Evaluation]:
+    def capability(self, cpart: CandidatePart, step: Step, where: str, index: int) -> list[Evaluation]:
         subject = {"PN": cpart.pn}
         method = f"{where}: capability profile"
         not_assumed = "unavailable tooling is never assumed"
@@ -705,9 +761,9 @@ class _Assessor:
                                criterion=criterion, remedy=f"confirm {profile.id} is available, or choose another capability")]
         return [Evaluation("capability", True, "pass", subject, method, tuple(reasons), criterion=criterion,
                            measured={"text": profile.process}),
-                self.approval(cpart, step, profile, where)]
+                self.approval(cpart, step, profile, where, index)]
 
-    def approval(self, cpart: CandidatePart, step: Step, profile: Any, where: str) -> Evaluation:
+    def approval(self, cpart: CandidatePart, step: Step, profile: Any, where: str, index: int) -> Evaluation:
         subject = {"PN": cpart.pn}
         method = f"{where}: {profile.id} material approvals"
         source = _record_source("hw/manufacturing/capabilities.yaml", f"{profile.id} materials")
@@ -739,15 +795,93 @@ class _Assessor:
                               (f"{profile.id} does not list {cpart.material}: an unlisted material is never assumed approved",),
                               criterion=criterion,
                               remedy=f"record {profile.id}'s approval of {cpart.material} with its source, or choose a listed material")
-        entry = approved[0]
+        gaps = []  # (entry, its (why, remedy) list) of every approval that does not cover the step
+        for entry in approved:
+            outside = self.approval_scope(cpart, step, profile, entry, index)
+            if not outside:
+                return Evaluation("material_approval", True, "pass", subject, method, (f"{profile.id} approves {cpart.material}",),
+                                  criterion={**criterion, "source": mi.thaw(entry.get("source"))}, measured={"text": "approved"})
+            gaps.append((entry, outside))
+        numbered = len(gaps) > 1
+        reasons = tuple(f"approval {number}: {why}" if numbered else why
+                        for number, (_, outside) in enumerate(gaps, 1) for why, _ in outside)
+        return Evaluation("material_approval", True, "unknown", subject, method, reasons,
+                          criterion={**criterion, "source": mi.thaw(gaps[0][0].get("source"))},
+                          remedy="; ".join(dict.fromkeys(fix for _, outside in gaps for _, fix in outside)))
+
+    def approval_scope(self, cpart: CandidatePart, step: Step, profile: Any, entry: Mapping[str, Any],
+                       index: int) -> list[tuple[str, str]]:
+        """(why, remedy) for each way an approval entry does not cover this step, or is not known to: the operation the
+        step does and, for a cutting step, an explicit cut scope, the stock thickness and the stock's coating. Empty when
+        it covers the step. An approval for another operation or other stock, or whose scope cannot be resolved, never
+        approves the step."""
+        found: list[tuple[str, str]] = []
+        approval = f"{profile.id}'s approval of {cpart.material}"
+        operation = _STEP_OPERATION.get(step.kind)
+        modes = entry.get("operations")
+        cutting = step.kind in mi.SHEET_CUTTING_KINDS
+        if not modes and cutting:
+            found.append((f"{approval} states no operation scope, so it is not known to cover cutting",
+                          f"record operations: [cut] in {approval} once cutting it is approved"))
+        elif modes and operation is None:
+            found.append((f"{approval} is for {', '.join(modes)}; which of these a {step.kind} step does is unknown",
+                          f"choose a capability whose approval covers the {step.kind} step"))
+        elif modes and operation not in modes:
+            found.append((f"{approval} is only for {', '.join(modes)}, not {operation}: an approval for another "
+                          "operation is never credited", f"record an approval of {cpart.material} for {operation} on "
+                                                          f"{profile.id}, or choose a capability approved for it"))
+        if not cutting:
+            return found
         if step.kind == "laser":
             extraction = entry.get("extraction")
             if not isinstance(extraction, Mapping) or not mi.fact(extraction).known:
-                return Evaluation("material_approval", True, "unknown", subject, method,
-                                  (f"{profile.id} approves {cpart.material} but its extraction approval is not recorded",),
-                                  criterion=criterion, remedy="record the extraction approved for this material")
-        return Evaluation("material_approval", True, "pass", subject, method, (f"{profile.id} approves {cpart.material}",),
-                          criterion={**criterion, "source": mi.thaw(entry.get("source"))}, measured={"text": "approved"})
+                found.append((f"{approval} does not record the extraction approved for it",
+                              "record the extraction approved for this material"))
+        approved = mi.fact(entry["thickness"]) if isinstance(entry.get("thickness"), Mapping) else None
+        stock = self.stock_fact(cpart, step, index, "thickness")
+        if approved is None or not approved.known or not isinstance(approved.value, mi.Quantity):
+            found.append((f"{approval} states no thickness, so the stock it covers is unknown",
+                          f"record the thickness range {approval} covers"))
+        elif stock is None or not stock.known or not isinstance(stock.value, mi.Quantity):
+            found.append((f"the {step.kind} step states no stock thickness, so {approval} at {approved.value} cannot be checked",
+                          "record the stock.thickness of the step (or of its operation's setup in the part record)"))
+        elif not approved.value.contains(stock.value):
+            found.append((f"the stock thickness {stock.value} lies outside {approval} at {approved.value}",
+                          f"choose stock within {approved.value}, or record an approval that covers {stock.value}"))
+        found.extend(self.coating_scope(cpart, step, index, approval, entry))
+        return found
+
+    def coating_scope(self, cpart: CandidatePart, step: Step, index: int, approval: str,
+                      entry: Mapping[str, Any]) -> list[tuple[str, str]]:
+        """(why, remedy) when the approval's coating is unidentified, the stock's coating is not stated, or they differ.
+        An uncoated stock and its approval both say "none"; a blank name (empty once spacing is removed) identifies no
+        coating, so two blank names never match."""
+        approved = mi.fact(entry["coating"]) if isinstance(entry.get("coating"), Mapping) else None
+        if approved is None or not approved.known or not isinstance(approved.value, str) or not _text_key(approved.value):
+            return [(f"{approval} does not identify the coating or film it covers",
+                     f'record the coating it is approved for, or "none" for uncoated stock, in {approval}')]
+        stock = self.stock_fact(cpart, step, index, "coating")
+        if stock is None or not stock.known or not isinstance(stock.value, str) or not _text_key(stock.value):
+            return [(f"the {step.kind} step states no stock coating, so {approval} for {approved.value} cannot be checked",
+                     'record the stock.coating of the step, or "none" for uncoated stock')]
+        if _text_key(stock.value) != _text_key(approved.value):
+            return [(f"the stock's coating {stock.value} is not the {approved.value} {approval} covers: an approval for "
+                     "other stock is never credited",
+                     f"record an approval for stock with {stock.value}, or choose stock with {approved.value}")]
+        return []
+
+    def stock_fact(self, cpart: CandidatePart, step: Step, index: int, key: str) -> Any:
+        """The `key` (thickness or coating) Fact of the stock `step` (route position `index`) cuts: the candidate step's
+        own, else, when the record already holds this candidate's route, the setup stock of the record operation at the
+        same position. None when neither states it; another operation's stock never stands in for it."""
+        stated = step.stock_thickness if key == "thickness" else step.stock_coating
+        if stated is not None:
+            return stated
+        part = self.record.parts.get(cpart.pn)
+        if part is None or not self.matches_record(cpart, part):
+            return None
+        stock = (part.intent.route[index].setup or {}).get("stock")
+        return mi.fact(stock[key]) if isinstance(stock, Mapping) and isinstance(stock.get(key), Mapping) else None
 
     # -- optical --
     def optical(self, cpart: CandidatePart, part: Any) -> Evaluation:
@@ -883,7 +1017,8 @@ class _Assessor:
                 self.issues.append({"kind": "conflict", "candidate": candidate.id, "requirement": requirement.id,
                                     "criterion": _criterion_dict(criterion), "subject": subject})
             if not computed_fail and any(e.outcome == "pass" for e in written):
-                computed = [e for e in computed if e.outcome != "unknown"]
+                # an authored pass settles an unknown only where its evidence meets the service class
+                computed = [e for e in computed if e.outcome != "unknown" or e.allowable_required]
             results.extend(computed + written)
         for index, data in enumerate(authored):
             if index in matched or (requirement.acceptance and data in blanket):
@@ -959,7 +1094,7 @@ class _Assessor:
                       f"such as another candidate; never relax {requirement.id} to make this one pass")
         elif outcome == "unknown":
             remedy = f"record a sourced {name} of {profile.id} under the service conditions, or a grade-level profile"
-        return Evaluation(outcome=outcome, method=method, reasons=tuple(reasons),
+        return Evaluation(outcome=outcome, method=method, reasons=tuple(reasons), allowable_required=allowable,
                           measured=first.value.as_dict() if first is not None else None,
                           basis=first.basis if first is not None else None,
                           sources=tuple(_source_dict(s) for s in first.sources) if first is not None else (),
@@ -1245,7 +1380,7 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
     """The deterministic, JSON-ready selection report of a normalized record (manufacturing_intent.Record).
     `problems` are the record's problems (default record.problems); an error
     makes the report invalid, and nothing is compared on invalid input. A valid
-    report's `coverage` names the record's made parts and those no candidate covers (see `_coverage`)."""
+    report's `coverage` names the record's made parts and those no chosen candidate covers (see `_coverage`)."""
     calibration = guidelines.calibration_enabled() if calibration is None else calibration  # read once, here
     problems = list(record.problems if problems is None else problems)
     assessment = mi.assess_use_case(record)
@@ -1275,6 +1410,7 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
                      remedy="record whole candidate routes (material profile, route and capability per part), including "
                             "metal, purchased, sheet and hybrid alternatives where credible", inputs=_INPUTS)
         report["coverage"] = _coverage(record, [])
+        _unselected_findings(findings, report["coverage"])  # every made part is named, whatever else blocks
         if _dropped_findings(findings, report, dropped):
             report["status"] = "blocked"
         return report
@@ -1292,25 +1428,58 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
         statuses.append("blocked")
     report["status"] = ("blocked" if "blocked" in statuses else "conditional" if "conditional" in statuses else "final_ready")
     report["coverage"] = _coverage(record, report["decisions"])
+    if _unselected_findings(findings, report["coverage"]) and report["status"] == "final_ready":
+        report["status"] = "conditional"
     return report
 
 
+def _unselected_findings(findings: _Findings, coverage: Mapping[str, Any]) -> bool:
+    """A finding for each made part that no chosen candidate covers, whatever the report's status: its material and
+    process are not chosen, so the selection cannot be final. True when one is found."""
+    for pn in coverage["unselected"]:
+        findings.add("selection.part_unselected", pn, {"PN": pn}, "major", "unknown",
+                     measured=_unknown(f"no chosen candidate names {pn}"),
+                     criterion={"property": "coverage", "operator": "equals", "value": "chosen",
+                                "source": _policy_source("every made part has a chosen material and process")},
+                     method="made parts against the chosen candidate of each decision",
+                     uncertainty=f"only an alternative, or no candidate, names {pn}",
+                     consequence=f"{pn} has no chosen material or process, so the selection cannot be final",
+                     remedy=f"confirm a primary that names {pn}, or add {pn} to the confirmed primary through the approval "
+                            "gate", inputs=_INPUTS)
+    return bool(coverage["unselected"])
+
+
 def _coverage(record: Any, decisions: Sequence[Mapping[str, Any]]) -> dict[str, list[str]]:
-    """The record's made parts and those no decision covers. A made part no candidate names has an unknown
-    material and process choice: exploration before the design freeze, a refusal from it (evidence.selection_gate)."""
+    """The record's made parts and those no decision's chosen candidate covers. The chosen candidate of a decision is
+    the primary selection.yaml confirms when it belongs to that decision, else the assessment's recommended primary. A
+    part only an alternative names is not chosen, so its material and process choice is unknown: exploration before the
+    design freeze, a refusal from it (evidence.selection_gate)."""
     made = sorted(pn for pn, part in record.parts.items() if part.made)
-    covered = {pn for decision in decisions for pn in decision["parts"]}
+    confirmed = _confirmed_primary(record)
+    covered = {pn for decision in decisions for pn in _chosen_parts(decision, confirmed)}
     return {"made": made, "unselected": [pn for pn in made if pn not in covered]}
 
 
+def _confirmed_primary(record: Any) -> str | None:
+    """The primary a confirmed selection.yaml records; None while the selection is not confirmed."""
+    recommendation = record.selection.recommendation
+    if record.selection.status != "confirmed" or not isinstance(recommendation, Mapping):
+        return None
+    primary = recommendation.get("primary")
+    return primary if isinstance(primary, str) else None
+
+
+def _chosen_parts(decision: Mapping[str, Any], confirmed: str | None) -> set[str]:
+    """The parts the decision's chosen candidate names: the confirmed primary when it is one of the decision's
+    candidates, else the recommended primary; none when every candidate is eliminated and none is confirmed."""
+    ids = {c["id"]: c for c in decision["candidates"]}
+    recommendation = decision["recommendation"]
+    chosen = confirmed if confirmed in ids else recommendation["primary"] if recommendation is not None else None
+    return {part["PN"] for part in ids[chosen]["parts"]} if chosen is not None else set()
+
+
 def _use_case_section(record: Any, assessment: Any) -> dict[str, Any]:
-    use_case = record.use_case
-    fields = dict(use_case.facts)
-    fields["service_class"] = use_case.service_class
-    for name, value in (("loads", use_case.loads), ("capability.equipment", use_case.equipment),
-                        ("evidence_policy", use_case.evidence_policy)):
-        if mi.is_fact(value):
-            fields[name] = value
+    fields = mi.use_case_fields(record.use_case)
     missing = []
     for name in assessment.unknown:
         fact = fields[name]
@@ -1584,8 +1753,10 @@ def _recommendation(assessor: _Assessor, ordered: list[_Assessed], primary: _Ass
             current = part.intent.material_profile if isinstance(part.intent.material_profile, str) else "unknown"
             sourcing = ("; make_buy becomes buy" if cpart.shaping_kind == "purchased" and part.sourcing == "make" else
                         "; make_buy becomes make" if cpart.shaping_kind != "purchased" and part.sourcing != "make" else "")
+            stock = "".join(f"; {change}" for change in assessor.stock_conflicts(cpart, part))
             proposed.append(f"{cpart.pn}: record material profile {cpart.material_label} and route "
-                            f"{' -> '.join(s.kind for s in cpart.route)} (now {current}, {now}){sourcing} through the approval gate")
+                            f"{' -> '.join(s.kind for s in cpart.route)} (now {current}, {now}){sourcing}{stock} through the "
+                            "approval gate")
     for entry in decision["optical"]:
         missing = [c["name"] for c in entry["purchase_criteria"] if c["status"] != "known"]
         if missing:

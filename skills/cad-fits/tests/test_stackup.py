@@ -1213,6 +1213,33 @@ class StackupCliTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertTrue((hw / "analysis" / "v1" / "pn-stack").is_dir())
 
+    def test_a_pn_stack_judges_the_obligation_of_the_surface_it_measures(self) -> None:
+        """TST-0001 has two seal surfaces on seal_groove: seal_inner (region inner) keeps the plain feature.fit id and
+        seal_outer (region outer) gets ~seal_outer. A stack of the outer region judges ~seal_outer. A stack that names
+        no region could be either surface, so it judges neither and says so."""
+        documents = closing_gap_documents()
+        documents["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+            {"id": f"seal_{side}", "feature": "seal_groove", "region": side, "role": "seal", "dimension_state": "assembled"}
+            for side in ("inner", "outer")]
+        cases = {"outer region": ({"region": "outer"}, "feature.fit@TST-0001#seal_groove~seal_outer", []),
+                 "no region": ({}, None, ["stack.obligation_ambiguous"])}
+        for case, (region, wanted, ambiguous) in cases.items():
+            with self.subTest(case), tempfile.TemporaryDirectory() as directory:
+                hw = fx.write_record(Path(directory) / "project" / "hw", documents)
+                stack = self.assembly_stack()
+                stack["subject"] = {"PN": "TST-0001", "feature": "seal_groove", **region}
+                stack_case = write_case(hw, "pn-stack", stack)
+                snapshot_version(hw)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                    stackup.main([str(stack_case), "--hw", str(hw), "--version", "v1"])
+                result = json.loads(out.getvalue())
+                self.assertEqual([row["obligation"] for row in result["obligations"]], [wanted] if wanted else [])
+                IntentStackContractTests.assert_schema_valid(self, result)
+                self.assertEqual([code for code in codes(result) if code == "stack.obligation_ambiguous"], ambiguous)
+                if wanted is None:
+                    self.assertIsNone(result["check_bundle"])
+
     def test_a_bundle_made_before_the_flag_is_refused_with_the_flag_off(self) -> None:
         """A bundle sealed with no flag key (the recipe before the flag) may hold a calibrated clearance. The flag-off rerun
         seals its own value, so it never reuses that bundle."""
@@ -1251,6 +1278,67 @@ class StackupCliTests(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
                 stackup.main([*args, "--replace"])
             self.assertFalse(json.loads(out.getvalue())["reused"])
+
+    def test_a_bundle_sealed_before_the_surface_binding_is_never_reused(self) -> None:
+        """Before the surface binding a stack that names neither of two regions was judged as the plain feature.fit and
+        passed. That bundle, sealed under the older revision, is another recipe: the upgraded CLI refuses it without
+        --replace (exit 2, no check bundle) and, with it, names the ambiguity (stack.obligation_ambiguous, exit 1)."""
+        documents = closing_gap_documents()
+        documents["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+            {"id": f"seal_{side}", "feature": "seal_groove", "region": side, "role": "seal", "dimension_state": "assembled"}
+            for side in ("inner", "outer")]
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", documents)
+            stack = self.assembly_stack()
+            stack["subject"] = {"PN": "TST-0001", "feature": "seal_groove"}
+            case = write_case(hw, "pn-stack", stack)
+            snapshot_version(hw)
+            args = ["uv", "run", "--quiet", "--script", str(SCRIPT), str(case), "--hw", str(hw), "--version", "v1"]
+            with unittest.mock.patch.object(stackup, "BASIS_REVISION", 1), \
+                    unittest.mock.patch.object(stackup._IntentStack, "obligation_id", stackup._IntentStack.obligation_base), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                stackup.main(args[5:])
+            self.assertTrue((hw / "checks" / "v1" / "stack-pn-stack").is_dir(), "the older code sealed a plain feature.fit check")
+            refused = subprocess.run(args, capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(refused.returncode, 2, refused.stdout[-300:])
+            self.assertIn("--replace", refused.stderr)
+            replaced = subprocess.run([*args, "--replace"], capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(replaced.returncode, 1, replaced.stderr)
+            result = json.loads(replaced.stdout)
+            self.assertFalse(result["reused"])
+            self.assertEqual(result["obligations"], [])
+            self.assertIn("stack.obligation_ambiguous", codes(result))
+            self.assertIsNone(result["check_bundle"])
+
+    def test_a_cached_outcome_that_binds_another_surface_is_refused_then_replaced(self) -> None:
+        """A bundle of the current recipe whose outcome names the plain feature.fit, where this run measures no single
+        surface, is not reused: the CLI exits 2 and publishes no check, and the --replace it names recovers (the obligation binding is
+        sealed in the recipe, so the stale bundle no longer matches)."""
+        documents = closing_gap_documents()
+        documents["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+            {"id": f"seal_{side}", "feature": "seal_groove", "region": side, "role": "seal", "dimension_state": "assembled"}
+            for side in ("inner", "outer")]
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", documents)
+            stack = self.assembly_stack()
+            stack["subject"] = {"PN": "TST-0001", "feature": "seal_groove"}
+            case = write_case(hw, "pn-stack", stack)
+            snapshot_version(hw)
+            args = ["uv", "run", "--quiet", "--script", str(SCRIPT), str(case), "--hw", str(hw), "--version", "v1"]
+            with unittest.mock.patch.object(stackup._IntentStack, "obligation_id", stackup._IntentStack.obligation_base), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                stackup.main(args[5:])
+            check = hw / "checks" / "v1" / "stack-pn-stack"
+            before = sorted(path.name for path in check.parent.iterdir())
+            rerun = subprocess.run(args, capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(rerun.returncode, 2, rerun.stdout[-300:])
+            self.assertIn("--replace", rerun.stderr)
+            self.assertEqual(before, sorted(path.name for path in check.parent.iterdir()))
+            replaced = subprocess.run([*args, "--replace"], capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(replaced.returncode, 1, replaced.stderr)
+            result = json.loads(replaced.stdout)
+            self.assertFalse(result["reused"])
+            self.assertIn("stack.obligation_ambiguous", codes(result))
 
     def test_rerun_reuses_bundle_and_recipe_change_requires_replace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

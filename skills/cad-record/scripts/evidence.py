@@ -283,7 +283,9 @@ def _obligation_path(obligation: Mapping[str, Any]) -> str:
 
 
 def _anchor(obligation_id: str) -> str:
-    return obligation_id.split("@", 1)[1] if "@" in obligation_id else ""
+    """The anchor of an obligation id, without the ~qualifier that separates checks sharing it."""
+    base = mi.obligation_base(obligation_id)
+    return base.split("@", 1)[1] if "@" in base else ""
 
 
 def _canonical_sha(value: Any) -> str:
@@ -610,12 +612,8 @@ def selection_gate(report: Mapping[str, Any], stage: str, *, approved: bool | No
         findings.append(Finding("gate.selection_approval", SELECTION_PATH,
                                 f"the selection is confirmed by {assessment.get('decision')}, which is missing or is not "
                                 "the user's approval"))
-    if status != "not_assessed":  # with no candidates at all, the not_assessed finding below says it once
-        for pn in (report.get("coverage") or {}).get("unselected") or ():
-            findings.append(Finding("gate.selection", SELECTION_PATH,
-                                    f"{pn} is a made part no selection candidate covers, so its material and process choice "
-                                    "is unknown" + (": a design freeze needs a confirmed selection for every made part" if final
-                                                    else "; exploration may continue"), graded))
+    unselected, status = _unselected_gate(report, status, final, graded)
+    findings += unselected
     if status == "final_ready" and confirmed:
         return findings
     refused = sorted({reason for decision in report.get("decisions") or () for reason in decision.get("refused_because") or ()})
@@ -629,6 +627,22 @@ def selection_gate(report: Mapping[str, Any], stage: str, *, approved: bool | No
                             reason + (": a design freeze needs the confirmed final choice" if final
                                       else "; exploration may continue, but no final choice is made"), graded))
     return findings
+
+
+def _unselected_gate(report: Mapping[str, Any], status: Any, final: bool, graded: str) -> tuple[list[Finding], Any]:
+    """(a gate.selection finding per made part no chosen candidate covers, the status to judge the rest by). When the
+    report is conditional only because of those parts (selection.part_unselected, every decision final_allowed), the
+    rest is judged as final_ready, so each part is named once and not again as an open choice."""
+    unselected = (report.get("coverage") or {}).get("unselected") or ()
+    found = [] if status == "not_assessed" else [  # with no candidates at all, the not_assessed finding says it once
+        Finding("gate.selection", SELECTION_PATH,
+                f"{pn} is a made part no selection candidate covers, so its material and process choice is unknown"
+                + (": a design freeze needs a confirmed selection for every made part" if final
+                   else "; exploration may continue"), graded) for pn in unselected]
+    decisions = report.get("decisions") or ()
+    if status == "conditional" and unselected and decisions and all(d.get("final_allowed") for d in decisions):
+        status = "final_ready"
+    return found, status
 
 
 def selection_summary(report: Mapping[str, Any], approved: bool | None) -> dict[str, Any]:
@@ -785,9 +799,18 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
             result, reasons = "unknown", (f"{ident} rests on refused evidence {', '.join(reliant[ident])}",)
             entry_findings = [*entry_findings, _reliant_finding(ident, reliant[ident])]
         findings.extend(entry_findings)
-        entry_results[ident] = result
         targets = _entry_targets(entry, record, expected)
+        derived = [target for target in targets if by_id[target].family.startswith(_DECIDED_FROM_RECORD)]
+        for target in derived:  # refused before its waiver or result reaches anything else
+            findings.append(Finding("evidence.record_derived", f"hw/manufacturing/evidence.yaml#/entries/{ident}",
+                                    f"{ident}: {target} is decided from the record, so a ledger {result} counts for "
+                                    "nothing; resolve what its basis names in the record instead", "warning", target))
+        if derived:
+            result = "unknown"
+        entry_results[ident] = result
         for target in targets:
+            if target in derived:
+                continue
             if result == "waived":
                 waivers.setdefault(target, entry.get("waiver") or {})
             candidates[target].append((result, ident, "; ".join(reasons)))
@@ -926,6 +949,27 @@ def _entry_targets(entry: Mapping[str, Any], record: Any, expected: Sequence[Any
     return [o.id for o in expected if o.requirement == requirement and o.family in (f"requirement.{level}", f"policy.{level}")]
 
 
+def _region_problem(subject: Mapping[str, Any], obligation: Any, expected: Mapping[str, Any]) -> tuple[str, str] | None:
+    """(code, why) when ledger evidence of `subject` is not evidence of `obligation`'s own surface region: it measured
+    another region (evidence.subject), it names none while the obligation is about one region of a feature that
+    another surface may share, or another surface of the feature shares that region (both evidence.subject_ambiguous:
+    the region cannot tell the surfaces apart). The anchor of an id holds no region, so it cannot tell."""
+    wanted, stated = obligation.subject.get("region"), subject.get("region")
+    if stated == wanted:
+        siblings = sorted(o.id for o in expected.values() if o.family == obligation.family and o.subject.get("region") == wanted
+                          and mi.obligation_base(o.id) == mi.obligation_base(obligation.id))
+        if len(siblings) > 1:
+            return ("evidence.subject_ambiguous", f"{', '.join(siblings)} share "
+                    + (f"region {wanted}" if wanted else "no region") + ", so the evidence cannot tell their surfaces apart; "
+                    "give each surface its own region and record the region the evidence measured")
+        return None
+    if stated is None:
+        return ("evidence.subject_ambiguous", f"the evidence names no region, so it may be of another surface than "
+                f"{obligation.id} (region {wanted}); record the region it measured")
+    return ("evidence.subject", f"the evidence is of region {stated}, but {obligation.id} is about "
+            + (f"region {wanted}" if wanted else "the whole feature") + ": evidence covers its own subject only")
+
+
 def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], version: str | None,
            manifest_sha256: str | None, geometry: Mapping[str, str | None], approved: Callable[[str | None], bool],
            today: date, artifact_sha: Callable[[str], str | None] | None = None,
@@ -946,6 +990,10 @@ def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], v
                                 f"{obligation.id} is about {_anchor(obligation.id)}: evidence covers its own subject only",
                                 obligation=obligation.id))
         return "unknown", (f"{ident} is about another subject",), findings
+    region = _region_problem(subject, obligation, expected) if entry.get("obligation") and obligation is not None else None
+    if region is not None and obligation is not None:
+        findings.append(Finding(region[0], path, f"{ident}: {region[1]}", obligation=obligation.id))
+        return "unknown", (region[1],), findings
     if result in ("planned", "unknown"):
         return result, (f"{ident} is {result}",), findings
     if result == "waived":
@@ -1358,6 +1406,62 @@ def version_acceptance(hw: Path, version: str, record: Any,
 
 _OBLIGATION_GATE_CODES = frozenset({"gate.fail", "gate.stale", "gate.unresolved", "release.waiver_forbidden",
                                     "release.trial_not_permitted"})
+# The packet problem of a packet whose expected checks are not the ones the record now implies.
+EXPECTED_CHANGED = "evidence.expected_changed"
+# The packet problem of a packet whose expected checks are not a list of checks with distinct text ids.
+EXPECTED_INVALID = "evidence.expected_invalid"
+_REGENERATE = ("regenerate the evidence packet (`evidence.py check --hw hw --version vN --out .cad-work/evidence.json`) "
+               "and stamp again")
+# The families only the record decides: an intent.* obligation (the use case, an unknown input, an obligation id
+# collision) or an assembly.joint resolves when the record changes, never from a ledger entry. A joint passes only when
+# assembly_operations finds every joint fact (retention, edge distance, host temperature) sourced and suitable, so a
+# generic ledger pass never stands in for a fact the record leaves unknown.
+_DECIDED_FROM_RECORD = impact.RECORD_FAMILIES
+
+
+def expected_problem(recorded: Any, recorded_sha256: Any, expected: Sequence[Any]) -> str | None:
+    """The packet problem of a packet's `recorded` expected checks against the record's `expected` ones, or None when
+    they agree: evidence.expected_invalid when they are not a list of checks with distinct text ids (checked first, so
+    a malformed list neither crashes the comparison nor collapses a repeated id), else evidence.expected_changed."""
+    invalid = _expected_invalid(recorded)
+    if invalid:
+        return f"{EXPECTED_INVALID}: its expected checks {invalid}; {_REGENERATE}"
+    changed = expected_change(recorded, expected)
+    if recorded_sha256 != expected_digest(expected) or changed:
+        return (f"{EXPECTED_CHANGED}: its expected checks are not the ones the record implies"
+                + (f" ({changed})" if changed else "") + ". A record change such as a region added to a critical surface "
+                f"changes an expected check, and a stamp made before it never carries over: {_REGENERATE}")
+    return None
+
+
+def _expected_invalid(recorded: Any) -> str:
+    """Why a packet's expected checks are malformed: not a list, an entry that is not a check, an id that is not text, or
+    an id given twice. Empty when they are well formed."""
+    if not isinstance(recorded, list):
+        return f"are a {type(recorded).__name__}, not a list"
+    ids = [item.get("id") if isinstance(item, Mapping) else None for item in recorded]
+    bad = [index for index, ident in enumerate(ids) if not isinstance(ident, str) or not ident]
+    if bad:
+        return f"hold entries without a text id (positions {', '.join(map(str, bad[:5]))})"
+    texts = [str(ident) for ident in ids]
+    repeated = sorted({ident for ident in texts if texts.count(ident) > 1})
+    if repeated:
+        return f"repeat the id(s) {', '.join(repeated[:5])}"
+    return ""
+
+
+def expected_change(recorded: Any, expected: Sequence[Any]) -> str:
+    """What differs between a packet's well-formed `recorded` expected checks (see expected_problem) and the record's
+    `expected` ones: the ids added, removed, and kept with another subject, level, stage, basis, requirement or
+    criterion. Empty when they agree."""
+    old = {o.get("id"): o for o in recorded or () if isinstance(o, Mapping)}
+    new = {o.id: o.as_dict() for o in expected}
+    parts = []
+    for label, idents in (("added", [i for i in new if i not in old]), ("removed", [i for i in old if i not in new]),
+                          ("changed", [i for i in new if i in old and impact.plain(old[i]) != impact.plain(new[i])])):
+        if idents:
+            parts.append(f"{label} {', '.join(map(str, idents[:5]))}{' …' if len(idents) > 5 else ''}")
+    return "; ".join(parts)
 
 
 def packet_problems(data: Any, *, record: Any, record_sha256: str, stage: str) -> list[str]:
@@ -1371,9 +1475,9 @@ def packet_problems(data: Any, *, record: Any, record_sha256: str, stage: str) -
     if data.get("record_sha256") != record_sha256:
         problems.append("it was computed from another record: hw/ changed during or after the check; check again")
     expected = mi.required_checks(record)
-    if data.get("expected_sha256") != expected_digest(expected) or \
-            [o.get("id") for o in data.get("expected") or ()] != [o.id for o in expected]:
-        problems.append("its expected checks are not the ones the record implies")
+    problem = expected_problem(data.get("expected"), data.get("expected_sha256"), expected)
+    if problem:
+        problems.append(problem)
     statuses = _mapping(data.get("statuses"))
     missing = [o.id for o in expected if not isinstance(statuses.get(o.id), Mapping)]
     if missing:

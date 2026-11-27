@@ -256,9 +256,9 @@
     "check_family": {"description": "A check family, such as process.fdm.support or interface.fit", "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*$"},
     "finding_code": {"description": "A stable finding code, such as process.fdm.overhang", "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)+$"},
     "obligation_id": {
-      "description": "family@anchor: anchor is product, a PN with optional .component, /operation and #feature, an IF with optional #feature, a REQ, or op:<assembly operation>",
+      "description": "family@anchor[~qualifier]: anchor is product, a PN with optional .component, /operation and #feature, an IF with optional #feature, a REQ, or op:<assembly operation>. A later check that shares an anchor with another adds ~<critical surface id> or ~<REQ>; the first keeps the plain id",
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*@(product|[A-Z]{2,5}-[0-9]{4}(\\.[a-z][a-z0-9_]*)?(/[a-z][a-z0-9_]*)?(#[a-z][a-z0-9_]*)?|IF-[0-9]{3}(#[a-z][a-z0-9_]*)?|REQ-[0-9]{3}|op:[a-z][a-z0-9_-]*)$"
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*@(product|[A-Z]{2,5}-[0-9]{4}(\\.[a-z][a-z0-9_]*)?(/[a-z][a-z0-9_]*)?(#[a-z][a-z0-9_]*)?|IF-[0-9]{3}(#[a-z][a-z0-9_]*)?|REQ-[0-9]{3}|op:[a-z][a-z0-9_-]*)(~([a-z][a-z0-9_]*|REQ-[0-9]{3}))?$"
     },
     "obligation": {
       "description": "One expected check, enumerated by manufacturing_intent.required_checks before any producer runs",

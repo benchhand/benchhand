@@ -282,6 +282,52 @@ class UnknownNeverPasses(unittest.TestCase):
         self.assertNotIn(INSPECTION, analysis, "a physical test may stay planned until the release")
         self.assertIn(INSPECTION, {f.obligation for f in result.gate("release") if f.severity == "error"})
 
+    def test_a_qualified_ledger_pass_cannot_resolve_a_record_derived_unknown(self) -> None:
+        """The collision obligation (two policy obligations no id separates) and the use case are decided from the
+        record. A ledger pass that names one, current and qualified as for any other check, leaves it unknown."""
+        docs = fx.with_subject_occurrences(documents(), {"PN": "TST-0003"})
+        docs["product.yaml"]["use_case"]["evidence_policy"] = {"decision": "DR-001", "obligations": [
+            {"subject": {"PN": "TST-0003", "occurrence": ref}, "level": "physically_validated"} for ref in ("@left", "@right")]}
+        base = normalized(docs)
+        targets = {"collision": ("intent.obligation_identity@TST-0003", {"PN": "TST-0003"}),
+                   "use case": ("intent.use_case@product", {"product": True})}
+        for case, (ident, subject) in targets.items():
+            with self.subTest(case):
+                entry = acceptance.entry(base, "EV-001", subject, "process_planned", obligation=ident, version="v1",
+                                         manifest_sha256=V1)
+                result = assess(normalized(docs, [entry]))
+                self.assertEqual(result.statuses[ident].result, "unknown")
+                (refused,) = [f for f in result.findings if f.code == "evidence.record_derived"]
+                self.assertEqual(refused.obligation, ident)
+
+    def test_an_approved_waiver_cannot_resolve_an_obligation_id_collision(self) -> None:
+        """An approved, scoped waiver of intent.obligation_identity does not separate the checks it names, so the
+        obligation stays unknown and still blocks the design freeze."""
+        ident = "intent.obligation_identity@TST-0003"
+        docs = fx.with_subject_occurrences(documents(), {"PN": "TST-0003"})
+        docs["product.yaml"]["use_case"]["evidence_policy"] = {"decision": "DR-001", "obligations": [
+            {"subject": {"PN": "TST-0003", "occurrence": ref}, "level": "physically_validated"} for ref in ("@left", "@right")]}
+        base = normalized(docs)
+        waived = acceptance.entry(base, "EV-001", {"PN": "TST-0003"}, "process_planned", "waived", obligation=ident,
+                                  waiver=acceptance.waiver({"PN": "TST-0003"}, "DR-002", obligation=ident))
+        result = assess(normalized(docs, [waived]))
+        self.assertEqual(result.statuses[ident].result, "unknown")
+        self.assertIn("evidence.record_derived", {f.code for f in result.findings if f.obligation == ident})
+        self.assertIn(ident, {f.obligation for f in result.gate("design_freeze") if f.severity == "error"})
+
+    def test_a_generic_ledger_pass_cannot_resolve_a_joint_the_record_leaves_unknown(self) -> None:
+        """fit_bearing's retention is not a sourced fact in the record, so assembly_operations judges its joint
+        unknown. A dimensional pass in the ledger says nothing about retention: the joint stays unknown."""
+        ident = "assembly.joint@op:fit_bearing"
+        base = normalized(documents())
+        self.assertEqual(assess(base).statuses[ident].result, "unknown")
+        self.assertIn("retention", " ".join(assess(base).statuses[ident].reasons))
+        generic = acceptance.entry(base, "EV-001", {"assembly_operation": "fit_bearing"}, "process_planned",
+                                   obligation=ident, version="v1", manifest_sha256=V1)
+        result = assess(normalized(documents(), [generic]))
+        self.assertEqual(result.statuses[ident].result, "unknown")
+        self.assertIn("evidence.record_derived", {f.code for f in result.findings if f.obligation == ident})
+
     def test_a_verification_csv_pass_is_not_evidence(self) -> None:
         docs = documents()
         record = normalized(docs)
@@ -426,6 +472,47 @@ class StaleEvidence(unittest.TestCase):
         part = acceptance.entry(self.base, "EV-002", {"PN": "TST-0001"}, "physically_validated", obligation=CREEP,
                                 version="v1", manifest_sha256=V1)
         self.assertEqual(assess(normalized(self.docs, [part])).statuses[CREEP].result, "pass")
+
+    def test_surface_evidence_binds_to_the_surface_it_measured(self) -> None:
+        """seal_inner (region inner) holds the plain feature.inspection id, seal_outer (region outer) holds ~seal_outer.
+        An inspection of the inner region never passes the outer surface's obligation, and one that names no region
+        could be either: both are refused with a named finding. The outer region's own inspection passes it."""
+        docs = copy.deepcopy(self.docs)
+        docs["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+            {"id": f"seal_{side}", "feature": "seal_groove", "region": side, "role": "seal", "dimension_state": "after_finish"}
+            for side in ("inner", "outer")]
+        base = normalized(docs)
+        outer = "feature.inspection@TST-0001#seal_groove~seal_outer"
+        cases = {"inner region": ({"region": "inner"}, "unknown", "evidence.subject"),
+                 "no region": ({}, "unknown", "evidence.subject_ambiguous"),
+                 "outer region": ({"region": "outer"}, "pass", None)}
+        for case, (region, wanted, code) in cases.items():
+            with self.subTest(case):
+                inspection = acceptance.entry(base, "EV-002", {"PN": "TST-0001", "feature": "seal_groove", **region},
+                                              "physically_validated", obligation=outer, version="v1", manifest_sha256=V1)
+                result = assess(normalized(docs, [inspection]))
+                self.assertEqual(result.statuses[outer].result, wanted)
+                refused = {f.code for f in result.findings if f.obligation == outer}
+                self.assertEqual(refused & {"evidence.subject", "evidence.subject_ambiguous"}, {code} - {None})
+
+    def test_evidence_that_cannot_tell_two_surfaces_apart_passes_neither(self) -> None:
+        """Two critical surfaces of one feature that share a region (or both leave it out) cannot be told apart by
+        region-equal evidence: each inspection is refused as evidence.subject_ambiguous, and neither obligation passes."""
+        for case, regions in {"shared region": ("outer", "outer"), "no region": (None, None)}.items():
+            with self.subTest(case):
+                docs = copy.deepcopy(self.docs)
+                docs["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+                    {"id": f"seal_{name}", "feature": "seal_groove", **({"region": region} if region else {}), "role": "seal",
+                     "dimension_state": "after_finish"} for name, region in zip(("a", "b"), regions)]
+                base = normalized(docs)
+                ids = ["feature.inspection@TST-0001#seal_groove", "feature.inspection@TST-0001#seal_groove~seal_b"]
+                entries = [acceptance.entry(base, f"EV-00{number}", {"PN": "TST-0001", "feature": "seal_groove",
+                                                                     **({"region": regions[0]} if regions[0] else {})},
+                                            "physically_validated", obligation=ident, version="v1", manifest_sha256=V1)
+                           for number, ident in enumerate(ids, start=2)]
+                result = assess(normalized(docs, entries))
+                self.assertEqual([result.statuses[ident].result for ident in ids], ["unknown", "unknown"])
+                self.assertEqual({f.obligation for f in result.findings if f.code == "evidence.subject_ambiguous"}, set(ids))
 
     def test_a_producer_outcome_whose_inputs_changed_since_the_build_is_stale(self) -> None:
         result = assess(self.base, packet(self.base), stale_since_build={SUPPORT: ("material",)})
@@ -886,6 +973,34 @@ class StampedPacket(unittest.TestCase):
         self.assertIn("not an evidence packet", evidence.packet_problems({"all_passed": True}, record=self.record,
                                                                          record_sha256=self.digest, stage="concept")[0])
 
+    def test_a_packet_from_before_a_region_was_added_names_the_regeneration(self) -> None:
+        """A region added to the pivot bore's critical surface changes that check's subject, so the expected digest
+        changes while the ids stay the same. The old packet cannot stamp, and the problem says to regenerate it."""
+        docs = documents()
+        surface = next(s for s in docs["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"]
+                       if s["feature"] == "pivot_bore")
+        surface["region"] = "bore_wall"
+        record = normalized(docs)
+        self.assertIn(INSPECTION, [o.id for o in mi.required_checks(record)])
+        problems = evidence.packet_problems(self.packet, record=record, record_sha256=self.digest, stage="concept")
+        (changed,) = [p for p in problems if p.startswith("evidence.expected_changed:")]
+        self.assertIn(INSPECTION, changed)
+        self.assertIn("regenerate the evidence packet", changed)
+
+    def test_malformed_expected_checks_are_refused_with_a_named_problem(self) -> None:
+        """A packet whose expected checks repeat an id, carry an id that is not text, or are not a list is refused as
+        evidence.expected_invalid before any comparison: no crash, and no duplicate collapsed into one check."""
+        expected = list(self.packet["expected"])
+        cases = {"duplicate id": [*expected, expected[0]],
+                 "list-valued id": [{**expected[0], "id": [expected[0]["id"]]}, *expected[1:]],
+                 "not a list": {"id": expected[0]["id"]}}
+        for case, malformed in cases.items():
+            with self.subTest(case):
+                packet = {**self.packet, "expected": malformed}
+                problems = evidence.packet_problems(packet, record=self.record, record_sha256=self.digest, stage="concept")
+                (invalid,) = [p for p in problems if p.startswith("evidence.expected_invalid:")]
+                self.assertIn("regenerate the evidence packet", invalid)
+
     def test_a_packet_flagged_passing_cannot_hide_a_due_unknown(self) -> None:
         forged = copy.deepcopy(assess(self.record).packet("parts", self.digest))
         forged["gate"] = {"stage": "parts", "passed": True, "findings": []}
@@ -1006,14 +1121,15 @@ class SelectionGate(unittest.TestCase):
     def test_a_made_part_no_candidate_covers_is_exploration_until_the_freeze_and_then_blocks(self) -> None:
         """A freeze and a release need a confirmed selection for every made part (decision 1): a made part no
         candidate names has an unknown material and process choice, a warning while exploring and an error from
-        the design freeze, even beside a confirmed final choice for the others. A catalogue buy needs none."""
+        the design freeze, even beside a confirmed final choice for the others. Selection itself names the part, so it
+        is not final_ready. A catalogue buy needs none."""
         docs = scenarios.qualified_polymer_cover()
         docs["parts/TST-0302/part.yaml"] = scenarios.made_part("TST-0302", "TST bezel", "fdm", "tst_polymer_c_printed",
                                                                "tst_printer")
         docs["parts/TST-0303/part.yaml"] = fx.part("TST-0303", "TST screw", process="purchased", make_buy="buy")
         docs, digest = recorded(docs, primary="printed_cover")
         report = evidence.selection.assess(selected(docs), input_sha256=digest)
-        self.assertEqual((report["status"], report["coverage"]), ("final_ready", {"made": ["TST-0301", "TST-0302"],
+        self.assertEqual((report["status"], report["coverage"]), ("conditional", {"made": ["TST-0301", "TST-0302"],
                                                                                   "unselected": ["TST-0302"]}))
         for stage, severity in (("intent", "warning"), ("detail", "warning"), ("design_freeze", "error"), ("release", "error")):
             found = self.gate(docs, digest, stage)
@@ -1089,10 +1205,14 @@ PASSING = "print(json.dumps({'status': 'pass'}))\n"
 class BuiltRecord(unittest.TestCase):
     """The TST record built as v1, with no independent movable joint."""
 
+    def documents(self) -> dict[str, Any]:
+        """The record documents the version is built from."""
+        return fx.tst_record()
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="cad-evidence-run-test-")
         self.addCleanup(temporary.cleanup)
-        self.hw = fx.write_record(Path(temporary.name) / "hw", fx.tst_record())
+        self.hw = fx.write_record(Path(temporary.name) / "hw", self.documents())
         add_flow_profile(self.hw)  # `evidence.py run` starts with validate.py, which needs a settled profile
         for pn in ("TST-0001", "TST-0002", "TST-0004"):
             (self.hw / "parts" / pn / "model.py").write_text(f"# {pn}\n", encoding="utf-8")
@@ -1429,6 +1549,45 @@ class EvidenceDigestCli(BuiltRecord):
                 self.assertNotIn("inventory", report)
                 self.assertEqual([f["path"] for f in report["findings"]], [self.FIELD], report)
                 self.assertIn(text, report["findings"][0]["message"])
+
+
+class ObligationIdsThroughTheCli(BuiltRecord):
+    """benchhand-yjq.4 through `evidence.py check`: the expected checks of the printed packet."""
+
+    def check(self) -> tuple[int, list[str]]:
+        done = subprocess.run([sys.executable, "-B", str(HERE.parent / "scripts" / "evidence.py"), "check", "--hw", str(self.hw),
+                               "--version", "v1", "--stage", "parts"], capture_output=True, text=True, check=False)
+        self.assertIn(done.returncode, (0, 1), done.stderr)
+        return done.returncode, [item["id"] for item in json.loads(done.stdout)["expected"]]
+
+
+class TwoSurfacesOnOneFeatureThroughTheCli(ObligationIdsThroughTheCli):
+    def documents(self) -> dict[str, Any]:
+        docs = fx.tst_record()
+        docs["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+            {"id": ident, "feature": "seal_groove", "role": "seal", "dimension_state": "after_finish"}
+            for ident in ("seal_inner", "seal_outer")]
+        return docs
+
+    def test_two_surfaces_on_one_feature_are_two_expected_checks(self) -> None:
+        code, ids = self.check()
+        wanted = {f"feature.{family}@TST-0001#seal_groove{suffix}" for family in ("fit", "inspection") for suffix in ("", "~seal_outer")}
+        self.assertLessEqual(wanted, set(ids))
+        self.assertEqual([ident for ident in ids if ident.startswith("intent.obligation_identity")], [])
+        self.assertEqual(code, 1, "the unproven expected checks keep the gate closed")
+
+
+class TwoOccurrencesOfOnePolicyThroughTheCli(ObligationIdsThroughTheCli):
+    def documents(self) -> dict[str, Any]:
+        docs = fx.with_subject_occurrences(fx.tst_record(), {"PN": "TST-0003"})
+        docs["product.yaml"]["use_case"]["evidence_policy"] = {"decision": "DR-001", "obligations": [
+            {"subject": {"PN": "TST-0003", "occurrence": ref}, "level": "physically_validated"} for ref in ("@left", "@right")]}
+        return docs
+
+    def test_checks_no_id_can_separate_are_named_and_hold_the_gate(self) -> None:
+        code, ids = self.check()
+        self.assertEqual((code, [ident for ident in ids if ident.startswith("intent.obligation_identity")]),
+                         (1, ["intent.obligation_identity@TST-0003"]))
 
 
 class EvidenceRunCli(BuiltRecord):

@@ -1,8 +1,8 @@
 {
  "counts": {
-  "C901": 168,
+  "C901": 167,
   "PLR0912": 85,
-  "PLR0915": 50
+  "PLR0915": 49
  },
  "offenders": [
   "C901 harness/generate.py::main",
@@ -66,7 +66,6 @@
   "C901 skills/cad-fits/scripts/stackup.py::_IntentStack.parse_contributor",
   "C901 skills/cad-fits/scripts/stackup.py::_IntentStack.qualify",
   "C901 skills/cad-fits/scripts/stackup.py::_IntentStack.statistical",
-  "C901 skills/cad-fits/scripts/stackup.py::main",
   "C901 skills/cad-flow/scripts/preflight.py::_harness_check",
   "C901 skills/cad-flow/scripts/scratch.py::validate_delivery",
   "C901 skills/cad-model/scripts/cadmodel/build.py::run",
@@ -276,7 +275,6 @@
   "PLR0915 skills/cad-drawings/scripts/part_views.py::plan_views",
   "PLR0915 skills/cad-drawings/scripts/sheet.py::_callout_markup",
   "PLR0915 skills/cad-drawings/tests/freecad_views_job.py::build",
-  "PLR0915 skills/cad-fits/scripts/stackup.py::main",
   "PLR0915 skills/cad-model/scripts/cadmodel/build.py::run",
   "PLR0915 skills/cad-model/scripts/cadmodel/check.py::check",
   "PLR0915 skills/cad-model/scripts/cadmodel/runner.py::feature_locators",
