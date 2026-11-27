@@ -1754,19 +1754,26 @@ class GuidelineLimitTests(Checks):
                         result = self.judged(data, service=service)
                         self.assertEqual(self.outcome(result, obligation), "pass", self.codes(result, obligation))
 
-    def test_a_recorded_standard_state_is_quoted_on_every_guideline_pass_and_changes_no_outcome(self) -> None:
+    def test_a_recorded_standard_state_is_quoted_beside_each_guideline_measurement_and_changes_no_outcome(self) -> None:
+        """The coverage joins one fragment per measurement, so the quote must follow every one of them."""
         state = FX.calibration_state("standard")
-        cases = {"wall": (walled(3.0), GEOMETRY), "small_feature": (walled(3.0, pins=(3.0,)), GEOMETRY),
-                 "small_hole": (walled(3.0, holes=(3.0,)), GEOMETRY), "support": (underside(30.0), SUPPORT),
-                 "failing wall": (walled(1.0), GEOMETRY), "failing support": (underside(60.0), SUPPORT)}
-        for name, (data, obligation) in cases.items():
+        quote = "(standard built-in calibration; guideline deviations apply)"
+        wall = f"thinnest wall 3.000 mm >= guideline 1.2 mm {quote}"
+        cases = {"wall": (walled(3.0), GEOMETRY, (wall,)),
+                 "small_feature": (walled(3.0, pins=(3.0,)), GEOMETRY, (wall, f"smallest pin 3 mm >= guideline 2 mm {quote}")),
+                 "small_hole": (walled(3.0, holes=(3.0,)), GEOMETRY, (wall, f"smallest hole 3 mm >= guideline 2 mm {quote}")),
+                 "support": (underside(30.0), SUPPORT, ()),
+                 "failing wall": (walled(1.0), GEOMETRY, ()), "failing support": (underside(60.0), SUPPORT, ())}
+        for name, (data, obligation, said) in cases.items():
             with self.subTest(name):
                 plain, stated = self.judged(data), self.judged(data, state=state)
                 self.assertEqual(self.outcome(stated, obligation), self.outcome(plain, obligation))
                 self.assertEqual(self.codes(stated, obligation), self.codes(plain, obligation))
-                quote = "standard built-in calibration; guideline deviations apply"
+                coverage = stated.outcome(obligation)["coverage"]
+                for fragment in said:
+                    self.assertIn(fragment, coverage)
                 if self.outcome(plain, obligation) == "pass":
-                    self.assertIn(quote, stated.outcome(obligation)["coverage"])
+                    self.assertIn("standard built-in calibration; guideline deviations apply", coverage)
                     self.assertNotIn("standard built-in", plain.outcome(obligation)["coverage"])
 
     def test_a_guideline_fail_fails_in_every_service_class(self) -> None:
