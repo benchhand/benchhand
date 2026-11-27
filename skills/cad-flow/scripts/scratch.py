@@ -374,14 +374,23 @@ def stage_lead_file(source: Path, expected: str) -> tuple[bytes, int]:
     return data, mode
 
 
-def drop_collisions(plan: list[str], present: set[str], lead: dict[str, str], conflicts: list[str]) -> list[str]:
-    """The planned paths that can be applied together: a file and a directory may not share a name once
-    the plan is applied to the files in `present`. A planned path that would collide is moved to
-    `conflicts`, and the check repeats because dropping one change can leave another colliding."""
+def drop_collisions(plan: list[str], files: set[str], dirs: set[str], lead: dict[str, str],
+                    conflicts: list[str]) -> list[str]:
+    """The planned paths that can be applied together. After the plan, `files` (the scratch files) minus the
+    removals plus the installs must not hold a path both as a file and as a directory, the directories
+    being the parents of those files and every scratch directory that is empty or still has a file. A
+    planned path that would clash moves to `conflicts`; the check repeats, since dropping one change can
+    leave another clashing."""
     while True:
-        final = (present - {path for path in plan if path not in lead}) | {path for path in plan if path in lead}
-        clashing = {path for path in final if any(parent.as_posix() in final for parent in PurePosixPath(path).parents[:-1])}
-        clashing |= {parent.as_posix() for path in clashing for parent in PurePosixPath(path).parents[:-1] if parent.as_posix() in final}
+        installs = {path for path in plan if path in lead}
+        after = (files - {path for path in plan if path not in lead}) | installs
+        parents = {path: [q.as_posix() for q in PurePosixPath(path).parents[:-1]] for path in after}
+        directories = {q for found in parents.values() for q in found}
+        directories |= {d for d in dirs if not any(f.startswith(f"{d}/") for f in files)
+                        or any(f.startswith(f"{d}/") for f in after)}
+        clashing = {path for path in installs if path in directories}
+        for path, above in parents.items():
+            clashing |= {name for parent in above if parent in after for name in (path, parent)}
         dropped = [path for path in plan if path in clashing]
         if not dropped:
             return plan
@@ -452,7 +461,8 @@ def apply_sync(hw: Path, unit: str, scratch_hw: Path, scratch_fd: int, work_fd: 
                baseline: dict[str, Any]) -> dict[str, Any]:
     own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
     base: dict[str, str] = baseline["files"]
-    lead, mine = lead_snapshot(hw), delivery_tree(scratch_hw)[0]
+    lead = lead_snapshot(hw)
+    mine, mine_dirs = delivery_tree(scratch_hw)
     added: list[str] = []
     modified: list[str] = []
     removed: list[str] = []
@@ -466,7 +476,8 @@ def apply_sync(hw: Path, unit: str, scratch_hw: Path, scratch_fd: int, work_fd: 
             conflicts.append(path)
             continue
         plan.append(path)
-    plan = drop_collisions(plan, set(mine), lead, conflicts)
+    plan = drop_collisions(plan, set(mine), mine_dirs, lead, conflicts)
+    plan.sort(key=lambda path: (path in lead, path))  # removals first, so a directory is empty before a file takes its name
     staged = {path: stage_lead_file(hw / path, lead[path]) for path in plan
               if path in lead and mine.get(path) != lead[path]}  # every source is read before the first change
     write_file(work_fd, "sync.pending", json.dumps({"plan": plan}).encode("utf-8"))
