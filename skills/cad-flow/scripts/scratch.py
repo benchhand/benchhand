@@ -53,17 +53,20 @@ sync    brings the lead's current record into the workspace: a part the lead ret
         carries it as the unit's change. A file the unit and the lead both changed, and any file of
         a part the unit owns, and a file that would collide with a directory (or the reverse) once
         applied, stays as it is and is listed under "conflicts" (exit 1). It reads the lead's
-        record twice and reads every file it will install before it changes anything. It refuses
-        (exit 2, nothing changed, a named "finding" in the JSON) on a symlink anywhere from / down
-        to the workspace, a delivery staged in HW/parts/ ("delivery-in-progress"), a lead file that
+        record twice and reads every file it will install before it writes anything. It is all or
+        nothing: under workspace.lock it builds the whole new state (hw/ and baseline.json) in a
+        sibling directory sync-<id>, a hard-linked copy of the workspace with the changes applied by
+        rename, verifies it, and swaps it in with three renames. A failure before the swap removes the
+        stage and changes nothing ("sync-failed"). A killed run leaves a stage that the next sync or
+        deliver settles under the lock, putting the old tree back or finding the swap done. It refuses
+        (exit 2, a named "finding" in the JSON) on a symlink anywhere from / down to the workspace or
+        in a cache path, a delivery staged in HW/parts/ ("delivery-in-progress"), a lead file that
         changed during the read ("lead-changed-during-read"), an unreadable directory
         ("unreadable-directory") and a workspace another sync or deliver holds ("workspace-busy").
-        Every change goes through directory descriptors opened without following links. The new files
-        and baseline.json are written together under workspace.lock; sync.pending marks the span, a
-        failure part way is "sync-half-applied" with the baseline matching what was changed, and
-        deliver refuses with "sync-interrupted" until a sync finishes. A baseline.json that is not
-        valid or has the wrong shape is "baseline-invalid" (exit 1) for every command that reads it.
-        It never writes HW, and it links stored builds of newly delivered parts into the scratch store.
+        Every write goes through directory descriptors opened without following links. A baseline.json
+        that is not valid or has the wrong shape is "baseline-invalid" (exit 1) for every command that
+        reads it. It never writes HW, and it links stored builds of newly delivered parts into the
+        scratch store.
         Run it before build whenever the lead has integrated a delivery or a decision.
 
 stdout: one JSON document; every path in it is absolute. build writes each tool's diagnostics to
