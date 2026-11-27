@@ -776,9 +776,9 @@ class RecheckHookTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
-    def stamp_refused(self, checks: Path, text: str, stage: str = "detail") -> None:
+    def stamp_refused(self, checks: Path, text: str, stage: str = "detail", code: int = 2) -> None:
         result = self.run_python(STAMP, "--stage", stage, "--checks", str(checks), "--passed", cwd=self.root)
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         self.assertIn(text, result.stderr)
         self.assertFalse((self.root / "hw" / ".cad" / "recheck.json").exists())
 
@@ -809,15 +809,19 @@ class RecheckHookTests(unittest.TestCase):
         checks.write_text(json.dumps(packet), encoding="utf-8")
         return checks
 
-    def test_a_version_1_packet_still_stamps_and_verifies(self) -> None:
-        """A stamp sealed before packet version 2 has no status scope and no rules digest; it still reads."""
-        def version_1(packet: dict[str, Any]) -> None:
-            packet["schema_version"] = 1
-            packet.pop("scope_rules_sha256", None)
-            for status in packet["statuses"].values():
-                status.pop("scope", None)
+    def test_a_new_stamp_refuses_a_version_1_packet(self) -> None:
+        """New stamps seal packet version 2 only: a version 1 packet carries no rules digest and no status scope."""
         self.stage_product("detail")
-        self.assertTrue(self.stamp_with(self.rewrite_packet(self.evidence_packet("detail"), version_1))["passed"])
+        self.stamp_refused(self.rewrite_packet(self.evidence_packet("detail"), as_version_1), "stamp.packet_version", code=1)
+
+    def test_an_existing_version_1_stamp_still_verifies(self) -> None:
+        """A stamp sealed before packet version 2 has no status scope and no rules digest; it still reads."""
+        self.stage_product("detail")
+        self.stamp(passed=True, stage="detail")
+        path = self.root / "hw" / ".cad" / "recheck.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        as_version_1(data["checks"])
+        path.write_text(json.dumps(data), encoding="utf-8")
         self.git("add", "hw/.cad/recheck.json")
         result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -970,6 +974,14 @@ class RecheckHookTests(unittest.TestCase):
             if separator and not path.startswith(b"hw/.cad/"):
                 digest.update(entry)
         return digest.hexdigest()
+
+
+def as_version_1(packet: dict[str, Any]) -> None:
+    """Rewrite an evidence packet in place as version 1, from before the scope was recorded."""
+    packet["schema_version"] = 1
+    packet.pop("scope_rules_sha256", None)
+    for status in packet["statuses"].values():
+        status.pop("scope", None)
 
 
 class CommittedFixtureTests(unittest.TestCase):
