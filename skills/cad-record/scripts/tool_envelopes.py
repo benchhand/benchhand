@@ -35,8 +35,8 @@ catalogue value, and a value no source gives is an estimate, each named in the e
     head thickness, so it is an estimate (0.4 s + 2 mm), and the handle is not covered;
   - square drive socket, ISO 2725-1:2017 Tables 1 to 3 (the larger of d1 max and d2 max over l max, type A), on
     the drive the name gives, else the smallest one the tables list the size for; the ratchet is not covered;
-  - engineer's pliers, ISO 5746:2021 Table 1 (jaws l3 by w3 max by t1 max, then the handles' 50 + 15 mm span to
-    the nominal length);
+  - engineer's pliers, ISO 5746:2021 Table 1 (jaws w3 max by t1 max out to l3 min, then the handles' 50 + 15 mm
+    span to the maximum length l max, so the wider part is covered at both ends of the l3 tolerance);
   - hand, ISO 15534-3:2000 Table 1: the index finger (breadth a5 P95 23 mm over its length t6 P5 59 mm), then
     the hand behind it (breadth a4 P95 97 mm, to the hand length t4 P5 152 mm).
 """
@@ -130,10 +130,10 @@ SOCKETS = {
            24.0: (33.0, 33.0, 46.0), 25.0: (33.4, 33.4, 46.0), 27.0: (36.7, 36.7, 48.0), 30.0: (40.5, 40.5, 50.0),
            32.0: (43.0, 43.0, 50.0), 34.0: (46.5, 46.5, 52.0)},
 }
-# ISO 5746:2021 Table 1, engineer's pliers: nominal length -> (l max, l3 nominal + tolerance, w3 max, t1 max).
-PLIERS = {125: (132.0, 31.0, 20.0, 9.0), 140: (149.0, 34.0, 23.0, 10.0), 160: (169.0, 37.0, 25.0, 11.2),
-          180: (189.0, 42.0, 28.0, 12.5), 200: (209.0, 48.0, 32.0, 14.0), 220: (234.0, 55.0, 36.0, 16.0),
-          250: (264.0, 62.0, 40.0, 18.0)}
+# ISO 5746:2021 Table 1, engineer's pliers: nominal length -> (l max, l3 nominal, l3 tolerance (+-), w3 max, t1 max).
+PLIERS = {125: (132.0, 28.0, 3.0, 20.0, 9.0), 140: (149.0, 30.0, 4.0, 23.0, 10.0), 160: (169.0, 32.0, 5.0, 25.0, 11.2),
+          180: (189.0, 36.0, 6.0, 28.0, 12.5), 200: (209.0, 40.0, 8.0, 32.0, 14.0), 220: (234.0, 45.0, 10.0, 36.0, 16.0),
+          250: (264.0, 50.0, 12.0, 40.0, 18.0)}
 PLIERS_HANDLE_SPAN_MM = 65.0  # ISO 5746:2021 Figure 1: 50 +15 -5 mm across the handles
 # ISO 15534-3:2000 Table 1.
 FINGER_BREADTH_MM, FINGER_LENGTH_MM, HAND_BREADTH_MM, HAND_LENGTH_MM = 23.0, 59.0, 97.0, 152.0
@@ -280,11 +280,14 @@ def _pliers(name: str, match: re.Match[str]) -> Entry:
         return Entry(name, NOTE, note=f"{name!r}: name the nominal length (one of {', '.join(map(str, PLIERS))} mm) "
                                      "for the ISO 5746 envelope")
     nominal = int(text)
-    length, jaws, width, thickness = PLIERS[nominal]
+    length, l3, tolerance, width, thickness = PLIERS[nominal]
+    # The jaws end anywhere from l3 - tolerance to l3 + tolerance, so the wider rest of the tool may begin at the
+    # shorter end: the jaw section stops there, and the rest, never narrower than the jaws, runs on to l max.
+    jaws, jaw_radius = l3 - tolerance, _round(math.hypot(width, thickness) / 2)
     return Entry(name, TOOL, Envelope("pliers", f"{nominal} mm engineer's pliers", (
-        Segment(0.0, jaws, _round(math.hypot(width, thickness) / 2)),
-        Segment(jaws, length - jaws, PLIERS_HANDLE_SPAN_MM / 2)),
-        (_standard(f"ISO 5746:2021 Table 1, {nominal} mm: l max {length:g} mm, l3 {jaws:g} mm (with tolerance), "
+        Segment(0.0, jaws, jaw_radius),
+        Segment(jaws, length - jaws, max(jaw_radius, PLIERS_HANDLE_SPAN_MM / 2))),
+        (_standard(f"ISO 5746:2021 Table 1, {nominal} mm: l max {length:g} mm, l3 {l3:g} +- {tolerance:g} mm, "
                    f"w3 max {width:g} mm, t1 max {thickness:g} mm; Figure 1 handle span 50 +15 mm"),)))
 
 
