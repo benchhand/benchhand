@@ -66,6 +66,7 @@ Dependency direction, as far as the repository shows it:
 - Every test file sits under a skill's `tests/` directory, which the installer skips. `ShippedSkillFilesTests` in `harness/test_install.py` fails when `skill_files()` returns a test file or a Python file that imports `harness` or `scripts`, or climbs to them with `parents[n] / "scripts"` on `sys.path`.
 - Skills are separate script trees. `cad-record` supplies the record schemas, `emit.py` and the validators that other skills read. Skills reach a sibling through a path built from the skill folder (for example `freecad_lookup.py` in `cad-analysis` adds `cad-flow`'s scripts to `sys.path`). No import checker enforces which skill may import which. Unverified.
 - The flow profile follows that direction. `cad-record/scripts/flow_profile_gate.py` is a pure function of the parsed product, the part records and an `approval` callable (it never reads the work tree and takes no `hw` path). `cad-flow/scripts/flow_profile.py` holds the questions, the `record` and `check` commands, loads the gate and judges the cited decision with `validate.py` `approval_problem`. `cad-record` never imports `cad-flow`.
+- `skills/cad-record/scripts/shared_module.py` `load_shared` is the one loader for a sibling module reached by path, once per name and safe for worker threads. `assembly_operations.py` puts its own folder on `sys.path` (appended, so no earlier folder is shadowed) and loads `tool_envelopes.py` through it. `cad-drawings` `drawing_intent.py` appends `cad-record`'s scripts folder and loads `cad-fits` through it. `cad-record` loads nothing from `cad-drawings` for it.
 - `skills/cad-record/scripts/stages.py` owns the stage list: it reads the stage enum from `product.schema.json` and imports only the standard library. `validate.py` and `decision_records.py` both load it by path, as `cad_record_stages`, and neither imports the other. This is the sibling-module convention. A test that copies `validate.py` to a temporary folder must copy `stages.py` beside it (`test_reports_info_when_concept_handoff_schema_is_missing`). `code_shas` hashes it only for a producer that reaches `decision_records.py`, as `fea_conditions.py` does; `validate.py` is `GATE_ONLY`, so a closure leaves it and `stages.py` out.
 - Code that `freecadcmd` runs must import on Python 3.11 with only PyYAML and jsonschema. `scripts/freecad_job_modules.txt` lists those modules, and CI checks them (`scripts/import_check.py --manifest`).
 - `scripts/test_docs_guard.py` and `scripts/docs_only.py` decide which paths no skill test reads, so a docs-only PR skips the skill shards.
@@ -181,6 +182,27 @@ The module:
 `skills/cad-record/scripts/assembly_operations.py` owns assembly order. An operation with `sub_build` belongs to a bench sub-build with its own base, state and closure; an `install` operation puts it into the main build as one unit. A `hold` cure figure counts only with a `datasheet` source (`CURE_SOURCES`). `access_plan` takes obstacles from each operation's own build. cad-drawings `assembly_check.drawing_operations` leaves install operations out of the item steps. Records without these fields give the same results as before (`SubBuildTests` in `skills/cad-record/tests/test_assembly_operations.py`).
 
 `skills/cad-record/scripts/quantities.py` holds the record's units table and the one quantity parser. `Quantity` and `IntentError` live there too. It needs only the standard library. `manufacturing_intent.py` loads it by path and re-exports every name. `assembly_operations.py` loads it directly, so `assembly_operations.py` and `cad-drawings` `assembly_check.py` stay free of PyYAML and jsonschema (`scripts/test_script_dependencies.py`). It runs on FreeCAD's Python 3.11, so `scripts/freecad_job_modules.txt` lists it.
+
+## Tool and hand envelopes
+
+The assembly access check never asks the user to model a tool or a hand.
+
+- Owner: `skills/cad-record/scripts/tool_envelopes.py`, stdlib only. It classifies each `tools` or `tool_access` entry as hand, observe, bench, tool or note, and returns the shipped envelope of hand work and of sized common tools. `assembly_operations.py` `access_plan` turns the entries into `reaches` and `notes`. `skills/cad-motion/scripts/access.py` builds each envelope as coaxial cylinders in the operated part's frame, with the tip at the entry's `tool_access` `contact` point.
+- Sources, copied into the tables with their table numbers:
+  - hex keys: ISO 2936:2014 Table 1
+  - Phillips PH1 to PH3: ISO 8764-1:2004 blade diameter and ISO 8764-2:2004 Table 1 series B length
+  - wrench heads: ISO 3318:2016 Table 1
+  - sockets: ISO 2725-1:2017 Tables 1 to 3
+  - engineer's pliers: ISO 5746:2021 Table 1
+  - hand: ISO 15534-3:2000 Table 1
+- Values that no standard gives, each named in the envelope's sources:
+  - Phillips handle diameter and length come from the FACOM ISORYL AP catalogue (supplier).
+  - Wrench head thickness is an estimate, 0.4 s + 2 mm.
+- Without a contact point, a tool that drives the part it installs or removes has its tip on the centre of the box face it arrives through: the face whose normal points most against the approach. A tool on a part that does not move (adjust, inspect), or an approach that meets two faces equally (45 degrees), needs the contact point, else the operation is unknown. The box centre is not where an off-centre feature is.
+- An entry is read as one tool phrase: the whole entry names the tool and its size, and a socket takes the drive it names. Hex, Allen and Inbus keys are one tool. A size or a tool word inside other text makes no tool.
+- A hold moves no part. `access_plan` plans its tools like any other step's. A tool that no shipped envelope or cited solid covers is advisory on a hold, and a hold whose tools are all advisory is `not_assessed` (`no_capability_profile`). An operation that moves no part and that nothing reaches carries its not-applicable reason (`AccessRequest.not_applicable`), which access puts in the row's coverage.
+- A cited STEP solid in `tool_access` overrides the shipped envelope. A `tools` entry for the same tool as a `tool_access` entry is checked once, as that entry. Same tool means the same shipped designation (type, size and a socket's drive), else the same text. A name that matches no envelope is an instruction note in the outcome's uncertainty.
+- Changes to `tool_envelopes.py` or `assembly_operations.py` change the access policy digest (`access.py` `policy_digest`), so the next run does not reuse a published packet.
 
 ## Feature flags
 

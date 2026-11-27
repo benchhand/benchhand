@@ -227,7 +227,7 @@
     },
     "sub_build_id": {"description": "A bench sub-build: a subassembly id, or a new id that only operations name", "type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
     "assembly_operation": {
-      "description": "One assembly operation. An installation step puts `part` into `into` along `direction` (in the receiving part's model frame) until the acceptance holds; the fit, insert or ring comes from the interface limit of the same kind. predecessors name the operations that must come first, closes the parts it encloses, and tool_access the tools that must reach. A tool name alone is display text: its reach stays unknown. path, when given, is the part's insertion path; without it the part travels in a straight line along direction, and checks report that default. edge_distance is a fastener, insert or heat-set joint's distance from its hole to the nearest edge against its sourced criterion. sub_build puts the operation in a bench sub-build with its own base, state and closure; an install operation puts that sub-build (its part is the sub-build id) into the main build as one unit. A hold keeps its part in a fixture for a duration in an orientation; a cure hold's time and temperature come from the adhesive's datasheet",
+      "description": "One assembly operation. An installation step puts `part` into `into` along `direction` (in the receiving part's model frame) until the acceptance holds; the fit, insert or ring comes from the interface limit of the same kind. predecessors name the operations that must come first, closes the parts it encloses, and tool_access the tools that must reach. A tool entry is written as the instructions read; hand work and a common tool named by type and size are checked with a shipped standard envelope, a cited envelope solid overrides it, and any other name stays an instruction note, except that such a tool_access entry keeps access unknown (on a hold, one given an approach or contact). path, when given, is the part's insertion path; without it the part travels in a straight line along direction, and checks report that default. edge_distance is a fastener, insert or heat-set joint's distance from its hole to the nearest edge against its sourced criterion. sub_build puts the operation in a bench sub-build with its own base, state and closure; an install operation puts that sub-build (its part is the sub-build id) into the main build as one unit. A hold keeps its part in a fixture for a duration in an orientation; a cure hold's time and temperature come from the adhesive's datasheet",
       "type": "object", "additionalProperties": false,
       "required": ["id", "kind", "part"],
       "properties": {
@@ -258,6 +258,7 @@
             "tool": {"type": "string", "minLength": 1},
             "capability": {"$ref": "manufacturing.schema.json#/$defs/profile_id"},
             "approach": {"$ref": "#/$defs/vector"},
+            "contact": {"description": "where the tool's tip engages, mm in the operated part's model frame; a shipped envelope on a part that does not move needs it", "$ref": "#/$defs/vector"},
             "reach": {"$ref": "manufacturing.schema.json#/$defs/quantity_fact"},
             "envelope": {"$ref": "manufacturing.schema.json#/$defs/text_fact"}
           }}},

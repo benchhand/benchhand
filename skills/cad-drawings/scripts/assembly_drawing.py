@@ -57,7 +57,10 @@ import drawing_contract  # noqa: E402
 import drawing_document  # noqa: E402
 import freecad_runtime  # noqa: E402
 import sheet_export  # noqa: E402
-from shared_module import load_shared  # noqa: E402
+RECORD_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-record" / "scripts"
+if str(RECORD_SCRIPTS) not in sys.path:
+    sys.path.append(str(RECORD_SCRIPTS))
+from shared_module import load_shared  # noqa: E402  cad-record's loader, reached once its folder is on sys.path
 from assembly_check import DIRECTIONS, AssemblyPlan, SheetPlan
 from drawing_document import ComposedSheet, CompositionError, CoverageReport, SheetMetadata
 from assembly_sheet import BalloonTarget, MeasuredView

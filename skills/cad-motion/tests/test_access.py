@@ -17,6 +17,7 @@ import copy
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 from unittest.mock import patch
 import shutil
@@ -126,7 +127,7 @@ class OrderTests(unittest.TestCase):
         self.assertEqual([(row["obligation"], row["outcome"]) for row in report.outcomes],
                          [("intent.assembly_operations@product", "unknown")])
 
-    def test_the_access_plan_lists_obstacles_and_keeps_a_named_tool_unknown(self) -> None:
+    def test_the_access_plan_lists_obstacles_and_keeps_an_unrecognised_tool_a_note(self) -> None:
         items = operations("blocked_socket.yaml")
         items[3]["tools"] = ["torque driver"]
         plan = {request.operation.id: request for request in ops.access_plan(ops.normalize({"operations": items}),
@@ -135,8 +136,74 @@ class OrderTests(unittest.TestCase):
         self.assertEqual(plan["fit-cover"].path_obstacles, frozenset({"TST-0102"}))
         self.assertEqual(plan["fasten-cover"].tool_obstacles, frozenset({"TST-0101", "TST-0102", "TST-0103", "TST-0105"}))
         self.assertEqual(plan["fasten-cover"].frame, "TST-0103")
-        self.assertIn("tool 'torque driver' is a name only: its reach and envelope are unknown",
-                      plan["fasten-cover"].unknown)
+        self.assertEqual(plan["fasten-cover"].unknown, ())
+        self.assertTrue(any("torque driver" in note for note in plan["fasten-cover"].notes))
+
+    def hold_row(self, **entries) -> dict:
+        """The access row of a hold of the bracket appended to the fixture sequence, before any geometry is measured."""
+        items = operations("blocked_socket.yaml")
+        items.append({"id": "hold-bracket", "kind": "hold", "part": "TST-0105", "fixture": "bench vice",
+                      "orientation": [0, 0, 1], "duration": fx.known(fx.quantity(10, "min")), **entries})
+        request = next(r for r in ops.access_plan(ops.normalize({"operations": items}), inventory())
+                       if r.operation.id == "hold-bracket")
+        entry = access.operation_access(request)
+        row = access.access_outcome(entry, access.access_findings(entry))
+        self.assertEqual(list(validator("obligation_outcome").iter_errors(row)), [])
+        return row
+
+    def test_a_tool_free_step_gets_an_explicit_not_applicable_row_with_its_reason_as_coverage(self) -> None:
+        for entries in ({}, {"tools": ["by eye"]}, {"tools": ["hold"]}):
+            with self.subTest(entries=entries):
+                row = self.hold_row(**entries)
+                self.assertEqual((row["obligation"], row["outcome"]), ("assembly.access@op:hold-bracket", "not_applicable"))
+                self.assertIn("hold-bracket", row["coverage"])
+                self.assertIn("reaches nothing" if not entries else "no tool or hand reaches it", row["coverage"])
+                self.assertNotIn("reason", row)
+
+    def test_a_hold_whose_tools_are_all_advisory_is_not_assessed(self) -> None:
+        row = self.hold_row(tools=["spring clamp"])
+        self.assertEqual((row["outcome"], row["reason"]), ("not_assessed", "no_capability_profile"))
+        self.assertIn("'spring clamp'", row["uncertainty"])
+
+    def test_a_recognised_tool_on_a_hold_is_measured_not_advised(self) -> None:
+        row = self.hold_row(tools=["spring clamp"], tool_access=[{"tool": "3 mm hex key", "approach": [0, 0, -1]}])
+        self.assertEqual(row["outcome"], "unknown", "no geometry is measured here, and its contact point is missing")
+        self.assertNotIn("reason", row)
+        self.assertIn("contact", row["uncertainty"])
+        self.assertIn("'spring clamp'", row["uncertainty"], "the advisory tool is still named")
+
+    def test_a_default_tip_sits_on_the_centre_of_the_face_the_tool_arrives_from(self) -> None:
+        # A 40 x 2 mm plate (x -20..20, z -1..1). The tool comes down from above, a little from +x: the tip is the
+        # top face's centre (0, 0, 1), on the part, wherever the projected box depth would put it.
+        low, high = (-20.0, -5.0, -1.0), (20.0, 5.0, 1.0)
+        slight = (-0.3 / math.hypot(0.3, 1.0), 0.0, -1.0 / math.hypot(0.3, 1.0))
+        forty = (-math.sin(math.radians(40)), 0.0, -math.cos(math.radians(40)))
+        cases = {(0.0, 0.0, -1.0): (0.0, 0.0, 1.0), slight: (0.0, 0.0, 1.0), forty: (0.0, 0.0, 1.0),
+                 (1.0, 0.0, 0.0): (-20.0, 0.0, 0.0)}
+        for approach, tip in cases.items():
+            with self.subTest(approach=approach):
+                self.assertEqual(access.envelope_tip(low, high, approach), tip)
+
+    def test_an_approach_that_meets_two_faces_equally_needs_a_contact_point(self) -> None:
+        low, high = (-20.0, -5.0, -1.0), (20.0, 5.0, 1.0)
+        half = math.sqrt(0.5)
+        for approach in ((-half, 0.0, -half), (0.0, half, -half)):
+            with self.subTest(approach=approach):
+                self.assertIsNone(access.envelope_tip(low, high, approach))
+
+    def test_an_unknown_access_row_keeps_its_instruction_notes(self) -> None:
+        items = operations("blocked_socket.yaml")
+        items.append({"id": "adjust-bracket", "kind": "adjust", "part": "TST-0105", "tools": ["frobnicator", "3 mm hex key"],
+                      "acceptance": {"kind": "adjusted", "features": ["bracket_foot"]}})
+        request = next(r for r in ops.access_plan(ops.normalize({"operations": items}), inventory())
+                       if r.operation.id == "adjust-bracket")
+        entry = access.operation_access(request)
+        findings = access.access_findings(entry)
+        row = access.access_outcome(entry, findings)
+        self.assertEqual(row["outcome"], "unknown", "a note never changes the verdict")
+        self.assertIn("no approach direction", row["uncertainty"])
+        self.assertIn("frobnicator", row["uncertainty"])
+        self.assertEqual(list(validator("obligation_outcome").iter_errors(row)), [])
 
 
 def access_record(items: list[dict]) -> dict:
@@ -249,7 +316,7 @@ class GeometricAccessTests(unittest.TestCase):
         self.assertEqual(result["findings"], [])
         coverage = next(row["coverage"] for row in result["outcomes"]
                         if row["obligation"] == "assembly.access@op:fasten-cover")
-        self.assertIn("curved paths, tool posture, hands, forces and other poses are not covered", coverage)
+        self.assertIn("curved paths, tool swing and posture, the hand's grip, forces and other poses are not covered", coverage)
         bundle = hw / "checks" / "v1" / "assembly-access"
         packet = json.loads((bundle / "result.json").read_text(encoding="utf-8"))
         self.assertEqual(list(validator("https://srobroek.com/cad/schemas/manufacturing-check-result.schema.json")
@@ -318,18 +385,112 @@ class GeometricAccessTests(unittest.TestCase):
                 self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
                 self.assertIn(f"interfaces.yaml#/interfaces/1/limits/{kind}", proc.stderr)
 
-    def test_a_tool_known_by_name_only_keeps_access_unknown(self) -> None:
-        items = reordered(operations("blocked_socket.yaml", self.socket_sha),
-                          "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
-        del items[2]["tool_access"]
-        items[2]["tools"] = ["3 mm hex key"]
-        hw = self.project("named", items)
+    def valid_order(self) -> list[dict]:
+        return reordered(operations("blocked_socket.yaml", self.socket_sha),
+                         "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
+
+    def test_a_named_common_tool_gets_its_standard_envelope_and_a_real_reach_result(self) -> None:
+        """Driven after the bracket is mounted: the bracket hole (r 3.5) passes a 3 mm hex key (ISO 2936 e max 3.39)
+        and a PH2 blade (ISO 8764-1, 6 mm), not an 8 mm hex key (e max 9.09)."""
+        cases = {"3 mm hex key": ("pass", "3 mm hex key"), "PH2 screwdriver": ("pass", "PH2 screwdriver"),
+                 "8 mm hex key": ("fail", "8 mm hex key")}
+        for name, (expected, designation) in cases.items():
+            with self.subTest(tool=name):
+                items = operations("blocked_socket.yaml", self.socket_sha)
+                del items[3]["tool_access"]
+                items[3]["tools"] = [name]
+                hw = self.project(f"named-{designation.replace(' ', '-')}", items)
+                code, result, _ = self.run_access(hw, *self.parts_args())
+                self.assert_schema_valid(result)
+                self.assertEqual(self.outcomes(result)["assembly.access@op:fasten-cover"], expected)
+                self.assertEqual(code, 0 if expected == "pass" else 1)
+                tool = next(p for p in result["detail"]["paths"]["fasten-cover"] if p["route"] == "standard_envelope")
+                self.assertEqual(tool["envelope"]["designation"], designation)
+                self.assertEqual(tool["status"], "clear" if expected == "pass" else "collision")
+                if expected == "fail":
+                    blocked = next(f for f in result["findings"] if f["code"] == "assembly.tool_blocked")
+                    self.assertIn("TST-0105", blocked["consequence"])
+
+    def test_a_cited_step_solid_overrides_the_standard_envelope(self) -> None:
+        """The cited socket solid is checked, not the 3 mm hex key the name would give: the bracket blocks it."""
+        items = operations("blocked_socket.yaml", self.socket_sha)
+        items[3]["tool_access"][0]["tool"] = "3 mm hex key"
+        hw = self.project("override", items)
         code, result, _ = self.run_access(hw, *self.parts_args())
+        self.assertEqual((code, self.outcomes(result)["assembly.access@op:fasten-cover"]), (1, "fail"))
+        routes = [p["route"] for p in result["detail"]["paths"]["fasten-cover"]]
+        self.assertEqual(routes, ["straight_default", "approach"])
+
+    def test_an_oblique_default_tip_needs_a_face_and_a_contact_on_it_finds_the_bracket(self) -> None:
+        """The screw head (x 17.2 to 22.8, z 12 to 27) is driven by a 3 mm hex key from 45 degrees, after the bracket is
+        mounted. That approach meets the head's top and side faces equally, so without a contact point the step is
+        unknown. With its tip on the head's top centre (20, 0, 27) the key, leaning to +x, runs into the bracket plate
+        (x 14 to 40, z 40 to 44): at z 40 its axis is at x 33."""
+        approach = [-1, 0, -1]
+        for contact, expected in ((None, "unknown"), ([20, 0, 27], "fail")):
+            with self.subTest(contact=contact):
+                items = operations("blocked_socket.yaml", self.socket_sha)
+                entry = {"tool": "3 mm hex key", "approach": approach}
+                if contact is not None:
+                    entry["contact"] = contact
+                items[3]["tool_access"] = [entry]
+                hw = self.project(f"oblique-{'contact' if contact else 'default'}", items)
+                code, result, stderr = self.run_access(hw, *self.parts_args())
+                self.assert_schema_valid(result)
+                row = next(r for r in result["outcomes"] if r["obligation"] == "assembly.access@op:fasten-cover")
+                self.assertEqual((code, row["outcome"]), (1, expected), stderr)
+                if expected == "unknown":
+                    self.assertIn("contact", row["uncertainty"])
+                else:
+                    blocked = next(f for f in result["findings"] if f["code"] == "assembly.tool_blocked")
+                    self.assertIn("TST-0105", blocked["consequence"])
+
+    def test_a_tool_is_placed_at_its_declared_contact_not_the_part_centre(self) -> None:
+        """A 3 mm hex key adjusts the cover (60 x 60, centred on the axis) from above, after the bracket is mounted:
+        at the cover's centre it clears everything; at x 30, under the bracket's solid plate (x 14 to 40, y -8 to 8,
+        z 40 to 44), the bracket blocks it, though the cover's box centre is clear."""
+        items = self.valid_order()
+        for ident, x in (("adjust-off-centre", 30), ("adjust-centre", 0)):
+            items.append({"id": ident, "kind": "adjust", "part": "TST-0103",
+                          "acceptance": {"kind": "adjusted", "features": ["cover_top"]},
+                          "tool_access": [{"tool": "3 mm hex key", "approach": [0, 0, -1], "contact": [x, 0, 24]}]})
+        hw = self.project("contact", items)
+        code, result, stderr = self.run_access(hw, *self.parts_args())
+        self.assert_schema_valid(result)
+        outcomes = self.outcomes(result)
+        self.assertEqual((outcomes["assembly.access@op:adjust-off-centre"], outcomes["assembly.access@op:adjust-centre"]),
+                         ("fail", "pass"), stderr)
         self.assertEqual(code, 1)
-        self.assertEqual(self.outcomes(result)["assembly.access@op:fasten-cover"], "unknown")
-        self.assertEqual(result["result"], "unknown")
-        unknown = next(f for f in result["findings"] if f["code"] == "assembly.access_unknown")
-        self.assertIn("is a name only", unknown["uncertainty"])
+        blocked = [f for f in result["findings"] if f["code"] == "assembly.tool_blocked"]
+        self.assertEqual([f["subject"] for f in blocked], [{"assembly_operation": "adjust-off-centre"}])
+        self.assertIn("TST-0105", blocked[0]["consequence"])
+
+    def test_a_hand_step_is_checked_with_the_hand_and_a_bench_step_is_not_applicable(self) -> None:
+        items = self.valid_order()
+        items[3]["tools"] = ["by hand"]
+        items.append({"id": "inspect-bracket", "kind": "inspect", "part": "TST-0105", "tools": ["by eye", "on the bench"],
+                      "acceptance": {"kind": "inspected", "features": ["bracket_foot"]}})
+        hw = self.project("hand", items)
+        code, result, stderr = self.run_access(hw, *self.parts_args())
+        self.assert_schema_valid(result)
+        outcomes = self.outcomes(result)
+        self.assertEqual(outcomes["assembly.access@op:mount-bracket"], "pass")
+        self.assertEqual(outcomes["assembly.access@op:inspect-bracket"], "not_applicable")
+        self.assertEqual((code, result["result"]), (0, "pass"), stderr)
+        hand = next(p for p in result["detail"]["paths"]["mount-bracket"] if p["route"] == "standard_envelope")
+        self.assertEqual((hand["envelope"]["kind"], hand["status"]), ("hand", "clear"))
+
+    def test_an_unrecognised_tool_name_is_a_note_not_an_unknown_obligation(self) -> None:
+        items = self.valid_order()
+        del items[2]["tool_access"]
+        items[2]["tools"] = ["frobnicator"]
+        hw = self.project("note", items)
+        code, result, _ = self.run_access(hw, *self.parts_args())
+        row = next(r for r in result["outcomes"] if r["obligation"] == "assembly.access@op:fasten-cover")
+        self.assertEqual((code, row["outcome"]), (0, "pass"))
+        self.assertIn("frobnicator", row["uncertainty"])
+        self.assertNotIn("assembly.access_unknown", {f["code"] for f in result["findings"]})
+        self.assertTrue(any("frobnicator" in note for note in result["detail"]["notes"]["fasten-cover"]))
 
     def test_a_tool_free_hold_is_not_applicable_and_a_declared_tool_on_a_hold_is_checked(self) -> None:
         items = operations("blocked_socket.yaml", self.socket_sha)
@@ -360,6 +521,52 @@ class GeometricAccessTests(unittest.TestCase):
         self.assertEqual(self.outcomes(result)["assembly.access@op:hold-screw"], "fail", "the bracket blocks the socket")
         self.assertIn("assembly.tool_blocked", {f["code"] for f in result["findings"]
                                                 if f["obligation"] == "assembly.access@op:hold-screw"})
+
+    def test_a_recognised_tool_on_a_hold_is_measured_and_blamed_by_its_own_name(self) -> None:
+        """The screw is held with a hex key in its head (top at z 27) after the bracket is mounted, beside an advisory
+        spring clamp. A 3 mm key (ISO 2936 e max 3.39) passes the bracket hole (r 3.5); an 8 mm key (e max 9.09) hits
+        the bracket, and the finding names the key, never the clamp listed before it."""
+        items = operations("blocked_socket.yaml", self.socket_sha)
+        valid = reordered(items, "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
+        for key, expected in (("3 mm hex key", "pass"), ("8 mm hex key", "fail")):
+            with self.subTest(key=key):
+                held = {"id": "hold-screw", "kind": "hold", "part": "TST-0104", "fixture": "bench vice",
+                        "orientation": [0, 0, 1], "duration": fx.known(fx.quantity(10, "min")), "tools": ["spring clamp"],
+                        "tool_access": [{"tool": key, "approach": [0, 0, -1], "contact": [20, 0, 27]}]}
+                code, result, stderr = self.run_access(self.project(f"hold-{key.split()[0]}", [*valid, held]),
+                                                       *self.parts_args())
+                self.assert_schema_valid(result)
+                row = next(r for r in result["outcomes"] if r["obligation"] == "assembly.access@op:hold-screw")
+                self.assertEqual((code, row["outcome"]), (0 if expected == "pass" else 1, expected), stderr)
+                self.assertNotIn("reason", row)
+                self.assertIn("'spring clamp'", row["uncertainty"])
+                [tool] = [p for p in result["detail"]["paths"]["hold-screw"] if p["route"] == "standard_envelope"]
+                self.assertEqual((tool["label"], tool["envelope"]["designation"]), ("hold-screw/tool/1", key))
+                if expected == "fail":
+                    [blocked] = [f for f in result["findings"] if f["code"] == "assembly.tool_blocked"
+                                 and f["obligation"] == "assembly.access@op:hold-screw"]
+                    self.assertIn(f"tool {key!r} collides with TST-0105", blocked["consequence"])
+
+    def test_a_positioned_special_tool_on_a_hold_keeps_it_unknown_beside_a_clear_key(self) -> None:
+        """The screw is held with a 3 mm hex key, which clears the bracket hole (as above), and a bearing puller placed
+        on the screw head. No shipped envelope or cited solid gives the puller's clearance, whether its envelope is
+        missing or recorded as unknown, so the hold is unknown and the finding names the puller, not a pass."""
+        items = operations("blocked_socket.yaml", self.socket_sha)
+        valid = reordered(items, "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
+        puller = {"tool": "bearing puller", "approach": [0, 0, -1], "contact": [20, 0, 27]}
+        for label, special in (("missing", puller), ("unknown", {**puller, "envelope": fx.unknown("no supplier CAD")})):
+            with self.subTest(envelope=label):
+                held = {"id": "hold-screw", "kind": "hold", "part": "TST-0104", "fixture": "bench vice",
+                        "orientation": [0, 0, 1], "duration": fx.known(fx.quantity(10, "min")),
+                        "tool_access": [{"tool": "3 mm hex key", "approach": [0, 0, -1], "contact": [20, 0, 27]}, special]}
+                code, result, stderr = self.run_access(self.project(f"hold-puller-{label}", [*valid, held]),
+                                                       *self.parts_args())
+                self.assert_schema_valid(result)
+                row = next(r for r in result["outcomes"] if r["obligation"] == "assembly.access@op:hold-screw")
+                self.assertEqual((code, row["outcome"]), (1, "unknown"), stderr)
+                [finding] = [f for f in result["findings"] if f["obligation"] == "assembly.access@op:hold-screw"]
+                self.assertEqual(finding["code"], "assembly.access_unknown")
+                self.assertIn("tool 'bearing puller'", finding["uncertainty"])
 
     def test_a_blocked_cited_tool_after_an_uncited_one_is_the_tool_blamed(self) -> None:
         items = operations("blocked_socket.yaml", self.socket_sha)
