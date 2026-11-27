@@ -220,6 +220,36 @@ class NamedLimit(unittest.TestCase):
                 self.assertIn("max", message)
                 self.assertIn(INTERFACE, message)
 
+    UNRESOLVED = {"min": "IF-006: at the min limit of J-001 the parts are within 0.15 mm, but nothing shows that the contact blocks the slide"}
+
+    def publish_slide_with_a_rail_only_limit(self, scenario: Scenario, outcome: str = "unknown") -> None:
+        """A slide whose minimum touches a rail only (no reaction, listed unresolved) and whose maximum reacts 30 N."""
+        data = entry(outcome, {"min": bare_end(), "max": end("bounded", 30.0)}, reason=None)
+        data["unresolved_limits"] = dict(self.UNRESOLVED)
+        scenario.publish({INTERFACE: data}, outcome=outcome)
+
+    def test_an_unresolved_limit_leaves_a_load_that_names_no_limit_unknown(self) -> None:
+        # The 50 N load clears the maximum's 30 N, but nothing is known of the minimum: the load may stand on neither.
+        for outcome in ("unknown", "fail"):
+            with self.subTest(outcome=outcome):
+                scenario = Scenario(self)
+                self.publish_slide_with_a_rail_only_limit(scenario, outcome)
+                message = scenario.refused("reaction_unknown")["error"]["message"]
+                self.assertIn("min limit", message)
+
+    def test_a_load_that_names_the_resolved_limit_still_stands_on_it(self) -> None:
+        scenario = Scenario(self)
+        self.publish_slide_with_a_rail_only_limit(scenario)
+        scenario.name_limit("max")
+        status, report = scenario.call()
+        self.assertEqual((status, report["status"]), (0, "pass"), report)
+
+    def test_a_load_that_names_the_unresolved_limit_is_unknown_with_its_reason(self) -> None:
+        scenario = Scenario(self)
+        self.publish_slide_with_a_rail_only_limit(scenario)
+        scenario.name_limit("min")
+        self.assertIn("nothing shows that the contact blocks the slide", scenario.refused("reaction_unknown")["error"]["message"])
+
     def test_a_named_stop_with_no_known_force_is_unknown_with_the_producers_reason(self) -> None:
         # The min limit touches but its force is unknown, so stop_reaction.py emits no reaction for it.
         reason = "IF-006 is a stop at the min limit of J1, but no load on it is recorded"

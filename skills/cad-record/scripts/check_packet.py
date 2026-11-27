@@ -78,6 +78,14 @@ def validate(packet: Mapping[str, Any]) -> None:
         raise PacketError(f"packet does not match manufacturing-check-result.schema.json: {problems}{more}")
 
 
+def dumps(value: Any) -> str:
+    """`value` as indented JSON text. NaN and Infinity are not JSON, so a value holding one is a PacketError and never a file."""
+    try:
+        return json.dumps(value, indent=2, allow_nan=False) + "\n"
+    except ValueError as error:
+        raise PacketError(f"the output holds a number that is not finite ({error}): it is not valid JSON") from None
+
+
 def emit(layout: Any, hw: Path, version: str | None, subject: str, producer: str, packet: Mapping[str, Any],
          detail: Mapping[str, Any], evidence: str, recipe: Mapping[str, Any], *, out: Path | None, replace: bool,
          record_version: int) -> tuple[dict[str, Any], str]:
@@ -91,7 +99,7 @@ def emit(layout: Any, hw: Path, version: str | None, subject: str, producer: str
         if out is not None:
             target = layout.scratch_path(hw, out, "--out")
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+            target.write_text(dumps(output), encoding="utf-8")
         return output, status
     if out is not None:
         raise PacketError("--out is only for an unversioned run")
@@ -104,9 +112,9 @@ def emit(layout: Any, hw: Path, version: str | None, subject: str, producer: str
         output = {**json.loads((reused / "result.json").read_text(encoding="utf-8")), "bundle": str(reused), "reused": True}
         return output, output["result"]
     stage = layout.staging(hw, "bundle.checks")
-    (stage / "result.json").write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
+    (stage / "result.json").write_text(dumps(packet), encoding="utf-8")
     (stage / "evidence").mkdir()
-    (stage / "evidence" / evidence).write_text(json.dumps(detail, indent=2) + "\n", encoding="utf-8")
+    (stage / "evidence" / evidence).write_text(dumps(detail), encoding="utf-8")
     published = layout.publish(hw, "bundle.checks", params, stage, recipe=recipe, producer=producer, status=status,
                                replace=replace)
     output.update(bundle=str(published.path), reused=published.reused)

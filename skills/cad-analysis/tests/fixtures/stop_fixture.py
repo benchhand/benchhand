@@ -27,6 +27,23 @@ VARIANT changes one thing:
   disk3  the same disc centered at x 13, so its rim is nearest the axis line at x 3, at the rim point (3, 2)
   round  the lever ends in a cylinder of radius 10 centered at x 70, so its farthest point from the axis, at x 80,
          is on an arc between sampled points
+  capped the disk variant with a cap over the lever for a slide with a stop at each end: a post beside the lever
+         (x 30..40, y 6..10, z -8..8) carries a block (x 30..40, y -10..10, z 8..12) whose underside is at z 8. A lever
+         sliding along +Z rests on the disc's top face at 0 and meets the cap's underside after 5 mm of travel
+         (its top face at z 3 rises to 8).
+  mateN  a slide's mating stop turned by N degrees about -Y: a block (x -10..10, y -4..4, z -10..0) and a plate on it
+         (z 0..10), both turned about the origin, so the plate's underside and the block's top face share one plane
+         whose normal is N degrees off the +Z slide axis. A plate sliding along +Z rests on the block at 0 and leaves
+         it by N cos degrees of travel. mate2 is a 2 deg stop, mate3 a 3 deg draft, mate45 a 45 deg chamfer.
+  chamfergap a 45 deg slide stop that the plate meets only if it is projected along the face normal: the block (x -10..10,
+         z -10..0) and a plate (x -30..-9.95, z 0.10..10.10), both turned 45 deg about -Y like mate45. The faces are 0.10 mm
+         apart along their normal and overlap by 0.05 mm across it. Sliding along +Z to meet the block's plane moves the
+         plate 0.10 / cos 45 deg = 0.1414 mm, which is 0.10 mm across the face, so the 0.05 mm overlap is gone.
+  mate60cap mate60 with a block above the plate whose underside is parallel to the plate's top face, 2.5 mm off it (x -10..10,
+         z 12.5..22.5, turned 60 deg), so a 5 mm slide meets it: the slide has a 60 deg stop at each end.
+  endstop a slide along +X with an end stop 0.05 mm from the lever's tip at 5 mm of travel: the default latched block
+         (x 7..13, top face at z -3) is a rail under the lever at both limits, and a block (x 85.05..90, y -4..4,
+         z -8..10) is the end face the lever meets at 5 mm, 0.05 mm short (within the 0.15 mm tolerance).
   pieces two separate overlaps of the lever at 0 deg, of different depths. The latched block's top is at z -2.5, so
          the lever's underside (z -3) enters it over x 7..13, y -4..4, z -3..-2.5: depth 0.5 mm, volume 24 mm3. A side
          block at x 30..40, y 2.5..10 cuts the lever's side face over x 30..40, y 2.5..4, z -3..3: depth 1.5 mm
@@ -138,27 +155,48 @@ def sphere_into_cylinder() -> dict[str, object]:
     return {"TST-0301": cylinder_, "TST-0302": BRepPrimAPI_MakeSphere(gp_Pnt(40, 0, 0), 5).Shape()}
 
 
+def slide_shapes(variant: str) -> dict[str, object] | None:
+    """The parts of a slide variant (mateN, endstop), or None for any other variant."""
+    if variant == "chamfergap":
+        return {"TST-0301": turned(box(-10, -4, -10, 10, 4, 0), 45.0), "TST-0302": turned(box(-30, -4, 0.10, -9.95, 4, 10.10), 45.0)}
+    if variant == "mate60cap":
+        return {"TST-0301": turned(fused(box(-10, -4, -10, 10, 4, 0), box(-10, -4, 12.5, 10, 4, 22.5)), 60.0),
+                "TST-0302": turned(box(-10, -4, 0, 10, 4, 10), 60.0)}
+    if variant.startswith("mate"):
+        degrees = float(variant[4:])
+        return {"TST-0301": turned(box(-10, -4, -10, 10, 4, 0), degrees), "TST-0302": turned(box(-10, -4, 0, 10, 4, 10), degrees)}
+    if variant == "endstop":
+        return {"TST-0301": fused(box(-30, -14, -16, 95, 14, -8), box(7, -4, -8, 13, 4, -3), box(85.05, -4, -8, 90, 4, 10)),
+                "TST-0302": box(0, -4, -3, 80, 4, 3)}
+    return None
+
+
 def shapes(latched_gap: float = 0.0, variant: str = "") -> dict[str, object]:
     if variant == "curved":
         return sphere_into_cylinder()
     if variant == "contained":
         return {"TST-0301": compound(box(-20, -20, -20, 120, 20, 110), box(200, 200, 200, 210, 210, 210)),
                 "TST-0302": box(0, -4, -3, 80, 4, 3)}
+    slide = slide_shapes(variant)
+    if slide is not None:
+        return slide
     base = box(-30, -14, -16, 30, 14, -8)
     if variant == "pieces":
         return {"TST-0301": fused(base, box(7, -4, -8, 13, 4, -2.5), box(30, 2.5, -8, 40, 10, 10)),
                 "TST-0302": box(0, -4, -3, 80, 4, 3)}
-    discs = variant in ("disk", "disk3")
+    discs = variant in ("disk", "disk3", "capped")
     if discs:
-        latched_stop = cylinder(10 if variant == "disk" else 13, 2, -8, "z", 10, 5 - latched_gap)
+        latched_stop = cylinder(13 if variant == "disk3" else 10, 2, -8, "z", 10, 5 - latched_gap)
     else:
         latched_stop = box(7, -4, -8, 13, 4, -3 - latched_gap)  # top face at z -3: the lever's underside rests on it at 0 deg
     if discs:  # the disc variants have the latched stop only, since their lever runs past the axis line
         bracket = fused(base, latched_stop)
+        if variant == "capped":
+            bracket = fused(bracket, box(30, 6, -8, 40, 10, 8), box(30, -10, 8, 40, 10, 12))
     else:
         open_stop = turned(box(0, -4, 3, 7, 4, 9), OPEN_DEGREES)  # its face lies in the lever's top plane at 75 deg
         bracket = fused(base, latched_stop, open_stop, box(-12, -4, -8, -4, 4, 10))
-    lever = box(-2 if variant == "disk" else 0, -4, -3, 80, 4, 3)
+    lever = box(-2 if variant in ("disk", "capped") else 0, -4, -3, 80, 4, 3)
     if variant == "round":
         lever = fused(box(0, -4, -3, 70, 4, 3), cylinder(70, -4, 0, "y", 10, 8))
     parts = {"TST-0301": bracket, "TST-0302": lever}

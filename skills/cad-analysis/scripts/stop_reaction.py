@@ -16,9 +16,9 @@ Usage: uv run --script stop_reaction.py --hw hw (--version vN | --parts-dir DIR 
 
 Obligations are cad-record required_checks' engineering.stop_reaction@IF-###.
 
-Pivot. The movable joints on the kinematic path between the interface's two parts: exactly one, a revolute
-joint, is the pivot. None means the interface is no stop (not applicable); several, a prismatic or a coupled
-pivot leave it unknown. The pivot is posed at its `min` and at its `max`, the other joints at nominal; an end
+Pivot. The movable joints on the kinematic path between the interface's two parts: exactly one, a revolute or a
+prismatic joint, is the pivot. None means the interface is no stop (not applicable); several or a coupled pivot
+leave it unknown. The pivot is posed at its `min` and at its `max`, the other joints at nominal; an end
 at which the two parts are at zero distance is a stop. A pivot whose limits touch nothing is no stop either
 (not applicable, with the gaps in the reason).
 
@@ -29,6 +29,18 @@ fixed part's face, signed so that a reaction that resists the load is positive. 
 
 Applied moment. The peak force of the interface's use-case loads times the moving part's farthest point from
 the axis. The record does not say where the force acts, so this arm is a conservative upper bound.
+
+Prismatic stop. A slide has no axis to turn about, so no arm, patch or moment is taken. A limit is a stop when the
+parts touch within the tolerance, without overlap, and a contact face has its normal within 60 degrees of directly
+against travel beyond the limit (the closest such face is taken, so a rail touching exactly never hides one a little
+farther off). A face along the travel is a rail: that limit is unknown, and its reason stands beside the verdicts of
+the other limits, where a known failure still wins. The axial reaction is the component of the use-case loads along
+the slide axis that presses the stop: at `min` the load component against the axis, at `max` along it, the largest
+over the loads, in N. A frictionless face theta off the axis needs the axial reaction over cos theta of normal force,
+and that bound is the design reaction; the end records theta and friction is not credited. Loads that are not known
+leave the stop unknown. A load direction is stated in the model frame of the part its `application` names, else in the
+assembly frame; it is normalised and rotated into the posed assembly frame at the limit, and a frame that cannot be
+resolved leaves the stop unknown. A recorded functional.contact.load below the bound is `understated` (fail, major).
 
 Design reaction. stop_statics.py: M over the smallest arm. A smallest arm of zero or less is `unbounded`
 (unknown, critical), and only an FEA contact case approved in a design record can close it. A recorded
@@ -51,7 +63,8 @@ import importlib.util
 import json
 import math
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+import dataclasses
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -99,13 +112,24 @@ CONTACT_MM = 1e-4  # parts at or under this distance touch; planes this close ar
 STOP_CONTACT_TOLERANCE_MM = 0.15
 STOP_CONTACT_EPSILON_MM = 1e-6  # float noise: a gap on the tolerance gets no verdict from rounding
 NORMAL_TOL = 1e-6  # |n1 . n2 + 1| under this: opposite-facing faces
+BLOCKING_COS = 0.5  # a contact face blocks a slide when its normal is within 60 deg of directly against travel
+COSINE_NOISE = 1e-12  # float rounding of a posed normal (about 1e-16): 60.00001 deg is 8.7e-8 under BLOCKING_COS, far outside it
 MIN_AREA_MM2 = 1e-6
 METHOD = ("rigid statics of the modelled stop contact: the peak use-case force times the moving part's farthest point "
           "from the pivot axis, over the smallest arm of the overlap of the touching planar faces (cad-analysis "
           "stop_reaction.py)")
 COVERAGE = ("the reaction of one pivot at its joint limits under the peak recorded force; the force is taken at the "
             "moving part's farthest point from the axis, perpendicular to the lever, because its location is not "
-            "recorded; strength and stiffness of the load path, friction, dynamics and non-planar contact are not covered")
+            "recorded; strength and stiffness of the "
+            "load path, friction, dynamics and non-planar contact are not covered")
+METHOD_AXIAL = ("statics of the modelled slide stop: the largest use-case load component along the slide axis that presses "
+                "the limit, placed in the assembly frame (cad-analysis stop_reaction.py)")
+COVERAGE_AXIAL = ("the reaction of one slide at its joint limits under the recorded loads, the component along the slide axis "
+                  "that presses each limit; strength and stiffness of the load path, friction, dynamics and contact that is "
+                  "not squarely against travel are not covered")
+RULE_SOURCE_AXIAL = {"kind": "policy", "reference": "cad-analysis stop reaction rule: a slide stop's reaction is the axial use-case load "
+                                                    "component along the slide axis", "origin": "benchhand",
+                     "document": "skills/cad-analysis/scripts/stop_reaction.py"}
 RULE_SOURCE = {"kind": "policy", "reference": "cad-analysis stop reaction rule: a stop's design reaction is the applied moment over "
                                               "its smallest contact arm", "origin": "benchhand",
                "document": "skills/cad-analysis/scripts/stop_reaction.py"}
@@ -239,15 +263,19 @@ def pivot_between(chain: Any, first: str, second: str) -> tuple[Pivot | None, st
     who, joint = movable[0]
     if joint.id in chain.couplings.laws:
         return None, f"{joint.id} is driven through a coupling: its limits are not independent stops"
-    if joint.type != "revolute":
-        return None, f"{joint.id} is {joint.type}: only a revolute stop is derived"
+    if joint.type not in ("revolute", "prismatic"):
+        return None, f"{joint.id} is {joint.type}: only a revolute or prismatic stop is derived"
     return Pivot(joint, who, second if who == first else first), ""
 
 
-def contact_faces(fixed: Any, moving: Any, tolerance: float) -> list[tuple[Any, Vec]]:
+def contact_faces(fixed: Any, moving: Any, tolerance: float, keep: Callable[[Vec], bool] = lambda normal: True,
+                  travel: Vec | None = None) -> list[tuple[Any, Vec]]:
     """(overlap face, outward normal of the fixed part's face) for the closest opposite-facing parallel planar faces
-    of the two parts, at most `tolerance` apart. The moving face moves onto the fixed face's plane first, so a
-    stop with a small gap in the model gives the same overlap as one that touches."""
+    of the two parts, at most `tolerance` apart, whose normal `keep` accepts: the closest is chosen among the kept
+    faces, so a face that is no candidate (a rail) never hides one a little farther off. The moving face moves onto
+    the fixed face's plane first, so a stop with a small gap in the model gives the same overlap as one that touches. A
+    slide moves it along `travel`, the slide axis, not along the normal: a face off square to the axis shifts across
+    itself as it closes the gap, and only the overlap at the pose it reaches along the slide is a contact."""
     moving_planes = [(face, plane_of(face)) for face in extrema.faces(moving)]
     found: list[tuple[float, Any, Vec]] = []
     for fixed_face in extrema.faces(fixed):
@@ -255,12 +283,19 @@ def contact_faces(fixed: Any, moving: Any, tolerance: float) -> list[tuple[Any, 
         if fixed_plane is None:
             continue
         for moving_face, moving_plane in moving_planes:
-            if moving_plane is None or abs(dot(fixed_plane[1], moving_plane[1]) + 1.0) > NORMAL_TOL:
+            if moving_plane is None or abs(dot(fixed_plane[1], moving_plane[1]) + 1.0) > NORMAL_TOL or not keep(fixed_plane[1]):
                 continue
             offset = dot(sub(moving_plane[0], fixed_plane[0]), fixed_plane[1])
             if abs(offset) > tolerance + STOP_CONTACT_EPSILON_MM:
                 continue
-            carried = pose.placed(moving_face, pose.Rigid.translation(fixed_plane[1], -offset))
+            if travel is None:
+                move = pose.Rigid.translation(fixed_plane[1], -offset)
+            else:
+                along = dot(fixed_plane[1], travel)
+                if abs(along) < BLOCKING_COS - COSINE_NOISE:  # a face this near a rail is never met by the slide
+                    continue
+                move = pose.Rigid.translation(travel, -offset / along)
+            carried = pose.placed(moving_face, move)
             found += [(abs(offset), face, fixed_plane[1]) for face in overlap(fixed_face, carried)]
     closest = min((offset for offset, _, _ in found), default=0.0)
     return [(face, normal) for offset, face, normal in found if offset <= closest + CONTACT_MM]
@@ -295,8 +330,33 @@ def patch_of(contact: Sequence[tuple[Any, Vec]], origin: Vec, axis: Vec, sign: f
 # --------------------------------------------------------------------------- the record's loads
 
 
-def applied_force(record: Any, interface: Any) -> tuple[float | None, list[dict[str, Any]], str]:
-    """(the peak force in N of the interface's use-case loads, the loads read, why there is none)."""
+def load_frame(chain: Any, ident: str, application: Mapping[str, Any] | None) -> tuple[str | None, str]:
+    """(the occurrence id whose model frame states load `ident`'s direction, "") or (None, "") for the assembly frame,
+    or (None, why) when the frame its application names cannot be resolved. The schema states a direction in the
+    model frame of the part `application` names, else in the assembly frame: only an omitted application takes that
+    default, and one that is present but not a subject (a scalar, an empty object) leaves the frame unknown."""
+    if application is None:
+        return None, ""
+    if not isinstance(application, Mapping) or not application:
+        return None, f"load {ident} has an application that is not a subject, so the frame of its direction is not known"
+    pn, occurrence = application.get("PN"), application.get("occurrence")
+    if pn is None and occurrence is None:
+        if application.get("product") is True or isinstance(application.get("interface"), str) \
+                or isinstance(application.get("assembly_operation"), str):
+            return None, ""  # the product, an interface or an assembly operation: the assembly frame
+        return None, (f"load {ident} has an application that names no part, product, interface or assembly operation "
+                      f"({', '.join(sorted(map(str, application)))}), so the frame of its direction is not known")
+    try:
+        found = chain.inventory.endpoint(pn, occurrence) if pn is not None else chain.inventory.resolve(occurrence)
+    except pose.assembly_data.UnresolvedReference as error:
+        return None, f"load {ident} is stated in the frame of {pn or occurrence}, which cannot be placed in the assembly frame: {error}"
+    return found.id, ""
+
+
+def applied_force(record: Any, interface: Any, chain: Any | None = None) -> tuple[float | None, list[dict[str, Any]], str]:
+    """(the peak force in N of the interface's use-case loads, the loads read, why there is none). Each load row
+    names the occurrence whose model frame states its unit direction, or None for the assembly frame. Frames are
+    resolved only with a `chain`: a pivot's moment takes no direction."""
     ids = list(interface.functional.raw.get("loads") or ())
     loads = record.use_case.loads
     if not ids or intent.is_fact(loads):
@@ -305,20 +365,112 @@ def applied_force(record: Any, interface: Any) -> tuple[float | None, list[dict[
     read: list[dict[str, Any]] = []
     for ident in ids:
         magnitude = by_id[ident].magnitude if ident in by_id else None
-        if magnitude is None or not magnitude.known or magnitude.value.dimension != "force":
+        if magnitude is None or not magnitude.known:
             return None, read, f"load {ident} has no known force magnitude"
-        read.append({"load": ident, "newtons": magnitude.value.to("N").bounds[1]})
+        newtons, why = force_bounds_n(ident, magnitude.value)
+        if newtons is None:
+            return None, read, why
+        row: dict[str, Any] = {"load": ident, "newtons": newtons}
+        if chain is not None:  # only a slide projects the load: a pivot's moment takes the force alone
+            placed, why = load_direction(chain, by_id[ident])
+            if placed is None:
+                return None, read, why
+            row.update(placed)
+        read.append(row)
     return max(row["newtons"] for row in read), read, ""
 
 
-def recorded_load_n(interface: Any) -> float | None:
-    """The upper bound in N of the interface's known functional.contact.load, else None."""
+def load_direction(chain: Any, load: Any) -> tuple[dict[str, Any] | None, str]:
+    """({"direction": the unit direction, "frame": the occurrence id that states it or None}, "") or (None, why not)."""
+    direction = load.direction
+    size = math.sqrt(dot(direction, direction)) if direction is not None else 0.0
+    if direction is None or not math.isfinite(size) or size <= 0.0:
+        return None, f"load {load.id} has no valid direction"
+    frame, why = load_frame(chain, load.id, load.application)
+    if why:
+        return None, why
+    return {"direction": list(scale(direction, 1.0 / size)), "frame": frame}, ""
+
+
+def force_bounds_n(ident: str, value: Any) -> tuple[float | None, str]:
+    """(the upper bound in N of a load's force, "") or (None, why not): `value` must be a force quantity with
+    finite, non-negative bounds, since a negative bound reverses the load and a bare number carries no unit."""
+    if not isinstance(value, intent.Quantity):
+        return None, f"load {ident} magnitude is not a quantity with a unit"
+    if value.dimension != "force":
+        return None, f"load {ident} has no known force magnitude"
+    lower, upper = value.to("N").bounds
+    if not (math.isfinite(lower) and math.isfinite(upper)):
+        return None, f"load {ident} magnitude is not finite"
+    if lower < 0:
+        return None, f"load {ident} magnitude is negative ({lower:.4g} N), which would reverse the load"
+    return upper, ""
+
+
+def assembly_direction(row: Mapping[str, Any], transforms: Mapping[str, Any]) -> Vec:
+    """The unit direction of a load row in the posed assembly frame: its part frame's rotation applied to it."""
+    direction = tuple(row["direction"])
+    if row["frame"] is None:
+        return (direction[0], direction[1], direction[2])
+    rotation = transforms[row["frame"]].rot
+    return (dot(rotation[0], direction), dot(rotation[1], direction), dot(rotation[2], direction))
+
+
+def axial_force(loads: Sequence[Mapping[str, Any]], axis: Vec, label: str, transforms: Mapping[str, Any]) -> float:
+    """The largest component in N of the loads along the slide axis that presses the stop at `label`: the joint
+    pushed down to `min` by the component against the axis, up to `max` by the one along it. The loads are placed
+    in the assembly frame at the posed limit (`transforms`)."""
+    sign = -1.0 if label == "min" else 1.0
+    return float(max(0.0, *(sign * row["newtons"] * dot(assembly_direction(row, transforms), axis) for row in loads)))
+
+
+def recorded_load_n(interface: Any) -> tuple[float | None, str]:
+    """(the upper bound in N of the interface's known functional.contact.load, "") or (None, why not). A load that is
+    not known is no rating (None, ""). A known one must be a force quantity with finite, non-negative bounds before it
+    is compared with a bound: anything else is the reason the rating cannot be judged."""
     contact = interface.functional.raw.get("contact")
     fact = contact.get("load") if isinstance(contact, Mapping) else None
-    if not isinstance(fact, Mapping) or fact.get("status") != "known":
-        return None
-    quantity = intent.quantity(fact["value"])
-    return float(quantity.to("N").bounds[1]) if quantity.dimension == "force" else None
+    if fact is None:
+        return None, ""
+    if not isinstance(fact, Mapping):
+        return None, f"the recorded contact load is not a fact ({fact!r})"
+    if fact.get("status") != "known":
+        return None, ""
+    if not isinstance(fact.get("value"), Mapping):
+        return None, f"the recorded contact load is not a force quantity ({fact.get('value')!r})"
+    try:
+        quantity = intent.quantity(fact["value"])
+        lower, upper = quantity.to("N").bounds
+    except (KeyError, TypeError, ValueError, intent.IntentError) as error:  # IntentError is a ValueError in cad-record, named for clarity
+        return None, f"the recorded contact load is not a force quantity ({error})"
+    if quantity.dimension != "force":
+        return None, f"the recorded contact load is a {quantity.dimension}, not a force"
+    if not (math.isfinite(lower) and math.isfinite(upper)):
+        return None, "the recorded contact load is not finite"
+    if lower < 0:
+        return None, f"the recorded contact load is negative ({lower:.4g} N)"
+    return float(upper), ""
+
+
+@dataclass(frozen=True)
+class Judging:
+    """What a stop is judged on: the peak force, the loads read and the recorded rating (None when none is known)."""
+
+    force: float
+    loads: list[dict[str, Any]]
+    recorded: float | None
+
+
+def judging_inputs(record: Any, interface: Any, chain: Any, pivot: Pivot) -> tuple[Judging | None, list[dict[str, Any]], str]:
+    """(what the stop is judged on, the loads read, "") or (None, the loads read, why not): a force that is not known, or a
+    rating that is not a finite force, leaves the stop unjudged."""
+    force, loads, why = applied_force(record, interface, chain if pivot.joint.type == "prismatic" else None)
+    if force is None:
+        return None, loads, why
+    recorded, why = recorded_load_n(interface)
+    if why:
+        return None, loads, why
+    return Judging(force, loads, recorded), loads, ""
 
 
 def contact_tolerance(interface: Any) -> tuple[float, str]:
@@ -362,7 +514,8 @@ def end_geometry(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, value
     transforms = chain.transforms(values)
     shapes = {name: pose.placed(definitions[chain.pn(occurrence)].shape, transforms[occurrence])
               for name, occurrence in (("moving", pivot.moving), ("fixed", pivot.fixed))}
-    return {"origin": origin, "axis": axis, "reach": extrema.reach(shapes["moving"], origin, axis), **shapes}
+    reach = extrema.reach(shapes["moving"], origin, axis) if pivot.joint.type == "revolute" else None
+    return {"origin": origin, "axis": axis, "reach": reach, "transforms": transforms, **shapes}
 
 
 def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: str, tolerance: float) -> dict[str, Any]:
@@ -378,11 +531,47 @@ def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: 
     patch, volume, depth = None, 0.0, 0.0
     if shared > pose.INTERFERENCE_MM3:
         volume, depth = shared, overlap_depth(geometry["moving"], geometry["fixed"])
-    if contact:
+    blocking = None
+    if contact and pivot.joint.type == "revolute":
         faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"], tolerance)
         patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)
+    elif contact:
+        blocking = blocking_contact(geometry, label, tolerance)
     return {"label": label, "value": value, "touching": contact, "gap": gap, "patch": patch, "reach": geometry["reach"],
-            "overlap_volume": volume, "overlap_depth": depth}
+            "blocking": blocking, "axis": geometry["axis"], "transforms": geometry["transforms"], "overlap_volume": volume, "overlap_depth": depth}
+
+
+def travel_cosine(normal: Vec, axis: Vec, label: str) -> float:
+    """cos of the angle between a fixed face's outward normal and the direction straight against travel beyond the
+    limit `label`. The normal points at the moving part, so a face opposes a motion along `beyond` when it points
+    against it: the cosine is 1 for a face square to the travel, 0 for a rail along it."""
+    return -dot(normal, scale(axis, -1.0 if label == "min" else 1.0))
+
+
+def blocking_contact(geometry: Mapping[str, Any], label: str, tolerance: float) -> dict[str, Any] | None:
+    """The contact that blocks travel beyond the limit `label`, or None: the closest faces of the two parts, among those
+    whose normal is within 60 deg of directly against travel (cos >= BLOCKING_COS). `cos` is the smallest cosine of those
+    faces, the one that needs the most normal force for a given axial reaction."""
+    axis = geometry["axis"]
+    faces = contact_faces(geometry["fixed"], geometry["moving"], tolerance,
+                          lambda normal: travel_cosine(normal, axis, label) >= BLOCKING_COS - COSINE_NOISE, travel=axis)
+    if not faces:
+        return None
+    cos = min(1.0, min(travel_cosine(normal, axis, label) for _, normal in faces))
+    return {"cos": cos, "angle_deg": math.degrees(math.acos(cos))}
+
+
+def unusable_contact(stops: Sequence[Mapping[str, Any]], pivot: Pivot, tolerance: float) -> dict[str, str]:
+    """Why each touching limit gives no contact to take statics on, by limit; empty when all do. A revolute stop needs a
+    contact patch, a prismatic one a face that blocks travel."""
+    if pivot.joint.type == "revolute":
+        bad, why = [s["label"] for s in stops if s["patch"] is None], \
+            "no parallel opposite-facing planar faces are that close, so no contact patch can be taken"
+    else:
+        bad, why = [s["label"] for s in stops if not s["blocking"]], \
+            ("no contact face has a normal within 60 degrees of directly against travel beyond the limit, so the contact "
+             "may be a rail along the travel and nothing shows that it blocks the slide")
+    return {label: f"{label} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, but {why}" for label in bad}
 
 
 def patch_report(patch: statics.Patch | None) -> dict[str, Any] | None:
@@ -393,9 +582,12 @@ def patch_report(patch: statics.Patch | None) -> dict[str, Any] | None:
 
 
 def reaction_report(result: statics.Reaction) -> dict[str, Any]:
-    return {"status": result.status, "moment_n_mm": result.moment_n_mm, "design_reaction_n": result.design_n,
-            "rigid_lower_bound_n": result.rigid_lower_n, "uniform_pressure_n": result.uniform_n,
-            "compliant_stop_n": result.compliant_n, "pin_load_bound_n": result.pin_load_n, "message": result.message}
+    report = {"status": result.status, "moment_n_mm": result.moment_n_mm, "design_reaction_n": result.design_n,
+              "rigid_lower_bound_n": result.rigid_lower_n, "uniform_pressure_n": result.uniform_n,
+              "compliant_stop_n": result.compliant_n, "pin_load_bound_n": result.pin_load_n, "message": result.message}
+    if result.axial_n is not None:
+        report["axial_component_n"] = result.axial_n
+    return report
 
 
 def unresolved(if_id: str, outcome: str, reason: str, **detail: Any) -> Assessment:
@@ -428,50 +620,94 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         return unresolved(if_id, "not_applicable" if why.startswith("no movable") else "unknown", f"{if_id}: {why}")
     tolerance, source = contact_tolerance(interface)
     states = [assess_end(chain, definitions, pivot, label, tolerance) for label in ("min", "max")]
-    detail: dict[str, Any] = {"pivot": pivot.joint.id, "moving": chain.ref(pivot.moving), "fixed": chain.ref(pivot.fixed),
+    detail: dict[str, Any] = {"pivot": pivot.joint.id, "joint_type": pivot.joint.type, "moving": chain.ref(pivot.moving), "fixed": chain.ref(pivot.fixed),
                               "contact_tolerance": {"mm": tolerance, "source": source}, "ends": {}}
-    for state in states:
-        detail["ends"][state["label"]] = {"joint_value": state["value"], "touching": state["touching"],
-                                          "gap_mm": state["gap"], "overlap_volume_mm3": state["overlap_volume"],
-                                          "overlap_depth_mm": state["overlap_depth"],
-                                          "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"])}
+    detail["ends"] = {state["label"]: end_detail(state, pivot) for state in states}
     stops = [state for state in states if state["touching"]]
+    not_a_stop = no_stop_assessment(if_id, states, stops, pivot, tolerance, detail)
+    if not_a_stop is not None:
+        return not_a_stop
+    unusable = unusable_contact(stops, pivot, tolerance)
+    if unusable and (pivot.joint.type == "revolute" or len(unusable) == len(stops)):
+        reason = f"{if_id}: at the {' and '.join(unusable)} " + next(iter(unusable.values())).split(" ", 1)[1]
+        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
+    stops = [state for state in stops if state["label"] not in unusable]  # a slide's other limits keep their own verdicts
+    if unusable:
+        detail["unresolved_limits"] = {label: f"{if_id}: at the {why}" for label, why in unusable.items()}
+    judging, loads, why = judging_inputs(record, interface, chain, pivot)
+    if judging is None:
+        reason = f"{if_id} is a stop at the {' and '.join(state['label'] for state in stops)} limit of {pivot.joint.id}, but {why}"
+        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
+    detail.update(loads=judging.loads, peak_force_n=judging.force)
+    reactions = stop_reactions(pivot, stops, judging.loads, judging.force, judging.recorded)
+    return judge_stops(if_id, stops, reactions, judging.recorded, detail)
+
+
+def end_detail(state: Mapping[str, Any], pivot: Pivot) -> dict[str, Any]:
+    """The evidence of one joint limit before any reaction: its pose and contact, and for a slide whether a face blocks."""
+    end = {"joint_value": state["value"], "touching": state["touching"], "gap_mm": state["gap"],
+           "overlap_volume_mm3": state["overlap_volume"], "overlap_depth_mm": state["overlap_depth"],
+           "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"])}
+    if pivot.joint.type == "prismatic":
+        blocking = state["blocking"]
+        end.update(blocks_travel=blocking is not None, contact_angle_deg=blocking["angle_deg"] if blocking else None)
+    return end
+
+
+def no_stop_assessment(if_id: str, states: Sequence[Mapping[str, Any]], stops: Sequence[Mapping[str, Any]], pivot: Pivot,
+                       tolerance: float, detail: Mapping[str, Any]) -> Assessment | None:
+    """The assessment that ends the check when no limit is a stop (not applicable) or the parts overlap at one (unknown)."""
     if not stops:
         gaps = ", ".join(f"{state['label']} {state['gap']:.4g} mm" for state in states)
         reason = (f"{if_id}: the parts are not in contact at either limit of {pivot.joint.id} "
                   f"(gaps: {gaps}; tolerance {tolerance:.4g} mm): not a stop")
         return Assessment(if_id, "not_applicable", [reason], {}, {"outcome": "not_applicable", "reason": reason, **detail})
     overlapping = [state for state in stops if state["overlap_volume"] > 0.0]
-    if overlapping:
-        where = " and ".join(f"at the {state['label']} limit ({state['value']:g} {pivot.joint.unit})" for state in overlapping)
-        depth = max(state["overlap_depth"] for state in overlapping)
-        reason = f"{if_id}: the parts overlap by {depth:.3g} mm {where}: a design defect, not a stop"
-        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
-    flat = [state["label"] for state in stops if state["patch"] is None]
-    if flat:
-        reason = (f"{if_id}: at the {' and '.join(flat)} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, "
-                  "but no parallel opposite-facing planar faces are that close, so no contact patch can be taken")
-        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
-    force, loads, why = applied_force(record, interface)
-    if force is None:
-        reason = f"{if_id} is a stop at the {' and '.join(state['label'] for state in stops)} limit of {pivot.joint.id}, but {why}"
-        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
-    detail.update(loads=loads, peak_force_n=force)
-    return judge_stops(if_id, stops, force, recorded_load_n(interface), detail)
+    if not overlapping:
+        return None
+    where = " and ".join(f"at the {state['label']} limit ({state['value']:g} {pivot.joint.unit})" for state in overlapping)
+    depth = max(state["overlap_depth"] for state in overlapping)
+    reason = f"{if_id}: the parts overlap by {depth:.3g} mm {where}: a design defect, not a stop"
+    return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
 
 
-def judge_stops(if_id: str, stops: Sequence[Mapping[str, Any]], force: float, recorded: float | None,
-                detail: dict[str, Any]) -> Assessment:
-    """The reaction at each stop against the recorded contact load, and the worst outcome."""
+def stop_reactions(pivot: Pivot, stops: Sequence[Mapping[str, Any]], loads: Sequence[Mapping[str, Any]], force: float,
+                   recorded: float | None) -> dict[str, statics.Reaction]:
+    """The reaction at each stop: a slide's axial normal-force bound, or a pivot's moment over its smallest arm."""
+    if pivot.joint.type == "prismatic":
+        return {state["label"]: statics.axial_reaction(axial_force(loads, state["axis"], state["label"], state["transforms"]),
+                                                       state["blocking"]["cos"], recorded) for state in stops}
+    return {state["label"]: statics.reaction(force, state["reach"], state["patch"], recorded) for state in stops}
+
+
+def non_finite_limits(reactions: Mapping[str, statics.Reaction]) -> list[str]:
+    """The limits whose reaction holds a number that is not finite: a load too large to bound overflows to infinity."""
+    return [label for label, result in reactions.items()
+            if any(isinstance(value, float) and not math.isfinite(value) for value in dataclasses.astuple(result))]
+
+
+def judge_stops(if_id: str, stops: Sequence[Mapping[str, Any]], reactions: Mapping[str, statics.Reaction],
+                recorded: float | None, detail: dict[str, Any]) -> Assessment:
+    """The reaction at each stop against the recorded contact load, and the worst outcome. A bound that is not finite
+    is unknown: it is no figure to judge a rating against, and Infinity is not JSON."""
+    overflowed = non_finite_limits(reactions)
+    if overflowed:  # only these limits are unresolved: a sibling's finite verdict and basis stand
+        unresolved_limits = dict(detail.get("unresolved_limits", {}))
+        for label in overflowed:
+            unresolved_limits[label] = (f"{if_id}: at the {label} limit the reaction bound is not finite (the load is too large "
+                                        "to bound), so the limit is not assessed")
+        detail["unresolved_limits"] = unresolved_limits
+        reactions = {label: result for label, result in reactions.items() if label not in overflowed}
+        stops = [state for state in stops if state["label"] not in overflowed]
     detail["recorded_contact_load_n"] = recorded
-    reactions: dict[str, statics.Reaction] = {}
     for state in stops:
-        reactions[state["label"]] = statics.reaction(force, state["reach"], state["patch"], recorded)
         detail["ends"][state["label"]]["reaction"] = reaction_report(reactions[state["label"]])
-    seen = {r.outcome for r in reactions.values()}
+    held = detail.get("unresolved_limits", {})  # limits with no reaction to judge: unknown, but a known failure still wins
+    seen = {r.outcome for r in reactions.values()} | ({"unknown"} if held else set())
     outcome = "fail" if "fail" in seen else "unknown" if "unknown" in seen else "pass"
     detail["outcome"] = outcome
-    return Assessment(if_id, outcome, [r.message for r in reactions.values() if r.outcome != "pass"], reactions, detail)
+    reasons = [r.message for r in reactions.values() if r.outcome != "pass"] + list(held.values())
+    return Assessment(if_id, outcome, reasons, dict(reactions), detail)
 
 
 # --------------------------------------------------------------------------- findings and packet
@@ -491,7 +727,8 @@ def unknown_finding(entry: Assessment, base: Mapping[str, Any]) -> dict[str, Any
 
 
 def reaction_finding(entry: Assessment, label: str, result: statics.Reaction, base: Mapping[str, Any]) -> dict[str, Any]:
-    where = f"the {label} limit of the pivot"
+    axial = entry.detail.get("joint_type") == "prismatic"
+    where = f"the {label} limit of the {'slide' if axial else 'pivot'}"
     ident = f"{slug(entry.interface)}_{label}_stop_reaction_{result.status}"
     if result.status == statics.UNBOUNDED:
         estimates = f"uniform pressure {result.uniform_n or 0:.4g} N and a compliant stop {result.compliant_n or 0:.4g} N"
@@ -503,6 +740,17 @@ def reaction_finding(entry: Assessment, label: str, result: statics.Reaction, ba
                                 f"the cheeks cannot be sized ({estimates} are estimates, not bounds)"),
                 "remedy": REMEDY_UNBOUNDED}
     recorded = entry.detail["recorded_contact_load_n"]
+    if axial:
+        return {"id": ident, "code": "engineering.stop_reaction_understated", **base, "severity": result.severity,
+                "outcome": "fail", "measured": {"value": recorded, "units": "N"},
+                "criterion": {"property": "contact_load", "operator": ">=", "value": result.design_n, "units": "N",
+                              "source": dict(RULE_SOURCE_AXIAL)},
+                "uncertainty": f"{where}: {result.message}",
+                "consequence": (f"{entry.interface} is sized for {recorded:.4g} N but its stop reacts {result.design_n:.4g} N "
+                                f"along the slide axis at {where}"),
+                "remedy": (f"record the face-normal force bound, {result.design_n:.4g} N (the axial component over the cosine of the "
+                           "face angle, larger than the axial component alone), as functional.contact.load and size the stop and "
+                           "its fasteners for it, or model the contact in an FEA contact case approved in a design record")}
     return {"id": ident, "code": "engineering.stop_reaction_understated", **base, "severity": result.severity,
             "outcome": "fail", "measured": {"value": recorded, "units": "N"},
             "criterion": {"property": "contact_load", "operator": ">=", "value": result.design_n, "units": "N",
@@ -513,20 +761,31 @@ def reaction_finding(entry: Assessment, label: str, result: statics.Reaction, ba
                        "load bound, or model the contact in an FEA contact case approved in a design record")}
 
 
+def method_of(entry: Assessment) -> str:
+    return METHOD_AXIAL if entry.detail.get("joint_type") == "prismatic" else METHOD
+
+
+def coverage_of(entry: Assessment) -> str:
+    return COVERAGE_AXIAL if entry.detail.get("joint_type") == "prismatic" else COVERAGE
+
+
 def findings_of(entry: Assessment, obligation: str) -> list[dict[str, Any]]:
     if entry.outcome in ("pass", "not_applicable"):
         return []
     subject = {"interface": entry.interface}
-    base = {"obligation": obligation, "subject": subject, "method": {"name": METHOD, "tool": PRODUCER},
+    base = {"obligation": obligation, "subject": subject, "method": {"name": method_of(entry), "tool": PRODUCER},
             "recheck": {"families": [FAMILY], "scope": [subject], "earliest_stage": "layout"}}
+    held = entry.detail.get("unresolved_limits", {})
     if not entry.reactions:
         return [unknown_finding(entry, base)]
-    return [reaction_finding(entry, label, result, base) for label, result in entry.reactions.items() if result.outcome != "pass"]
+    found = [reaction_finding(entry, label, result, base) for label, result in entry.reactions.items() if result.outcome != "pass"]
+    return found + ([unknown_finding(dataclasses.replace(entry, reasons=list(held.values())), base)] if held else [])
 
 
 def outcome_row(entry: Assessment, obligation: str, mine: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     row: dict[str, Any] = {"obligation": obligation, "outcome": entry.outcome, "level": "simulation_supported",
-                           "method": METHOD, "coverage": entry.reasons[0] if entry.outcome == "not_applicable" else COVERAGE}
+                           "method": method_of(entry),
+                           "coverage": entry.reasons[0] if entry.outcome == "not_applicable" else coverage_of(entry)}
     if mine:
         row["findings"] = [f["id"] for f in mine]
     if entry.outcome == "unknown":
@@ -546,7 +805,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
     dependencies = file_hashes(record_hw, ("assembly.yaml", "interfaces.yaml", "product.yaml"))
     if version is not None:
         dependencies["version_manifest"] = pose.input_sha256(args.version_dir)
-    detail: dict[str, Any] = {"interfaces": {}, "limits": [COVERAGE]}
+    detail: dict[str, Any] = {"interfaces": {}, "limits": [COVERAGE, COVERAGE_AXIAL]}
     outcomes: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
     if expected:
@@ -578,8 +837,7 @@ def main(argv: list[str] | None = None) -> int:
                   "code": code_shas.closure(Path(__file__), VERDICT_DATA)}
         output, status = check_packet.emit(LAYOUT, args.hw, version, SUBJECT, PRODUCER, result, detail, "stop-reaction.json",
                                            recipe, out=args.out, replace=args.replace, record_version=intent.RECORD_VERSION)
-        json.dump(output, sys.stdout, indent=2)
-        sys.stdout.write("\n")
+        sys.stdout.write(check_packet.dumps(output))
         if status != "pass":
             print(f"stop_reaction: {status}", file=sys.stderr)
         return 0 if status in ("pass", "not_assessed") else 1  # D37: a packet that assessed nothing blocks nothing

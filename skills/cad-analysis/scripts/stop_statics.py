@@ -62,6 +62,7 @@ class Reaction:
     compliant_n: float | None
     pin_load_n: float | None
     message: str
+    axial_n: float | None = None  # a slide's axial load component; design_n is the normal force that reacts it
 
 
 def reaction(force_n: float, load_arm_mm: float, patch: Patch, recorded_n: float | None = None) -> Reaction:
@@ -90,3 +91,21 @@ def reaction(force_n: float, load_arm_mm: float, patch: Patch, recorded_n: float
     return result(BOUNDED, "pass", "info", design,
                   f"design reaction {design:.4g} N (M {moment:.4g} N*mm over the smallest arm {patch.min_arm:.4g} mm); "
                   f"the pivot carries {design + force_n:.4g} N")
+
+
+def axial_reaction(axial_n: float, cos_theta: float, recorded_n: float | None = None) -> Reaction:
+    """The reaction of a prismatic stop: the load component along the slide axis that presses the stop, `axial_n`.
+    A frictionless face whose normal is theta off the axis (cos_theta = cos theta) needs axial_n / cos_theta of normal
+    force to react it, and that conservative bound is the design reaction, judged against the recorded contact load
+    `recorded_n` when there is one. A slide has no pivot axis, so there is no arm, no moment and no spread over the
+    contact. Friction is not credited."""
+    if not (math.isfinite(axial_n) and axial_n >= 0 and math.isfinite(cos_theta) and 0.0 < cos_theta <= 1.0):
+        raise ValueError(f"axial load {axial_n} N must be finite and not negative, and cos theta {cos_theta} in (0, 1]")
+    bound = axial_n / cos_theta
+    how = f"axial component {axial_n:.4g} N over cos theta {cos_theta:.6g} (frictionless face)"
+    if recorded_n is not None and recorded_n < bound * (1.0 - RECORDED_TOLERANCE):
+        return Reaction(UNDERSTATED, "fail", "major", 0.0, bound, axial_n, None, None, None,
+                        f"the recorded contact load {recorded_n:.4g} N is below the axial normal-force bound {bound:.4g} N ({how})",
+                        axial_n)
+    return Reaction(BOUNDED, "pass", "info", 0.0, bound, axial_n, None, None, None,
+                    f"axial normal-force bound {bound:.4g} N ({how})", axial_n)

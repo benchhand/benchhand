@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://srobroek.com/cad/schemas/stop-reaction-evidence.schema.json",
+  "title": "Stop reaction evidence (cad-analysis stop_reaction.py, hw/checks/<V>/stop-reaction/evidence/stop-reaction.json)",
+  "description": "The evidence file of the engineering.stop_reaction check: the assessment of each interface it was asked about. cad-analysis fea_reaction.py reads `ends.<limit>.reaction.design_reaction_n` and `status` from it to size an FEA load. A revolute pivot's design reaction is the applied moment over the smallest contact arm. A prismatic slide's design reaction is the axial load component over cos(theta) of the contact face, a frictionless normal-force bound; its ends record `blocks_travel` and `contact_angle_deg`, and its `loads` rows carry the direction and frame",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interfaces", "limits"],
+  "properties": {
+    "interfaces": {"description": "The assessment of each obligation's interface, by interface id", "type": "object", "propertyNames": {"pattern": "^IF-[0-9]{3}$"}, "additionalProperties": {"$ref": "#/$defs/assessment"}},
+    "limits": {"description": "What the check does not cover, as text", "type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "nullable_number": {"type": ["number", "null"]},
+    "vector": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+    "assessment": {
+      "description": "One interface: its outcome and the reason it stopped early (a non-stop, an overlap, an unknown), or the pivot, its ends and its loads",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {"enum": ["pass", "fail", "unknown", "not_applicable"]},
+        "reason": {"type": "string"},
+        "pivot": {"description": "The id of the joint between the interface's two parts", "type": "string"},
+        "joint_type": {"enum": ["revolute", "prismatic"]},
+        "moving": {"type": "string"},
+        "fixed": {"type": "string"},
+        "contact_tolerance": {
+          "type": "object", "additionalProperties": false, "required": ["mm", "source"],
+          "properties": {"mm": {"type": "number"}, "source": {"type": "string"}}
+        },
+        "ends": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"min": {"$ref": "#/$defs/end"}, "max": {"$ref": "#/$defs/end"}}
+        },
+        "loads": {"description": "The use-case loads read for the interface. A slide's rows also hold each unit direction and the occurrence whose part frame states it (null for the assembly frame); a revolute pivot takes the force alone", "type": "array", "items": {"$ref": "#/$defs/load"}},
+        "peak_force_n": {"type": "number"},
+        "recorded_contact_load_n": {"description": "The recorded functional.contact.load in N, or null when none is known", "$ref": "#/$defs/nullable_number"},
+        "unresolved_limits": {"description": "A slide's limit with contact but no face that blocks travel, by limit, with the reason. The other limit keeps its own reaction", "type": "object", "additionalProperties": false, "properties": {"min": {"type": "string"}, "max": {"type": "string"}}}
+      }
+    },
+    "load": {
+      "type": "object", "additionalProperties": false, "required": ["load", "newtons"],
+      "properties": {
+        "load": {"type": "string"},
+        "newtons": {"type": "number"},
+        "direction": {"description": "The unit direction of the load, as stated in `frame`", "$ref": "#/$defs/vector"},
+        "frame": {"description": "The occurrence id whose model frame states the direction, or null for the assembly frame", "type": ["string", "null"]}
+      }
+    },
+    "end": {
+      "description": "One joint limit: the pose, the contact there and, when it is a stop, the reaction",
+      "type": "object", "additionalProperties": false,
+      "required": ["joint_value", "touching", "gap_mm", "overlap_volume_mm3", "overlap_depth_mm", "farthest_point_from_axis_mm", "patch"],
+      "properties": {
+        "joint_value": {"type": "number"},
+        "touching": {"type": "boolean"},
+        "gap_mm": {"type": "number"},
+        "overlap_volume_mm3": {"type": "number"},
+        "overlap_depth_mm": {"type": "number"},
+        "farthest_point_from_axis_mm": {"description": "A revolute pivot's reach; null for a slide", "$ref": "#/$defs/nullable_number"},
+        "patch": {"description": "A revolute stop's contact patch, null for a slide or without contact", "oneOf": [{"type": "null"}, {"$ref": "#/$defs/patch"}]},
+        "blocks_travel": {"description": "A slide only: whether a contact face has its normal within 60 degrees of directly against travel beyond this limit", "type": "boolean"},
+        "contact_angle_deg": {"description": "A slide only: theta, the angle between the blocking face's normal and directly against travel (the largest of the blocking faces); null when no face blocks", "type": ["number", "null"]},
+        "reaction": {"$ref": "#/$defs/reaction"}
+      }
+    },
+    "patch": {
+      "type": "object", "additionalProperties": false,
+      "required": ["min_arm_mm", "max_arm_mm", "area_mm2", "integral_arm_mm3", "integral_arm_squared_mm4"],
+      "properties": {
+        "min_arm_mm": {"type": "number"}, "max_arm_mm": {"type": "number"}, "area_mm2": {"type": "number"},
+        "integral_arm_mm3": {"type": "number"}, "integral_arm_squared_mm4": {"type": "number"}
+      }
+    },
+    "reaction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "moment_n_mm", "design_reaction_n", "rigid_lower_bound_n", "uniform_pressure_n", "compliant_stop_n", "pin_load_bound_n", "message"],
+      "properties": {
+        "status": {"enum": ["bounded", "unbounded", "understated"]},
+        "moment_n_mm": {"description": "The applied moment; 0 for a slide", "type": "number"},
+        "design_reaction_n": {"description": "The design reaction in N, the value FEA takes as a force minimum; null when unbounded", "$ref": "#/$defs/nullable_number"},
+        "rigid_lower_bound_n": {"$ref": "#/$defs/nullable_number"},
+        "uniform_pressure_n": {"$ref": "#/$defs/nullable_number"},
+        "compliant_stop_n": {"$ref": "#/$defs/nullable_number"},
+        "pin_load_bound_n": {"$ref": "#/$defs/nullable_number"},
+        "axial_component_n": {"description": "A slide only: the load component along the slide axis, in N. The design reaction is this over cos(theta)", "type": "number"},
+        "message": {"type": "string"}
+      }
+    }
+  }
+}
