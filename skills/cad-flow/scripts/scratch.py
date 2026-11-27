@@ -310,13 +310,62 @@ def workspace_lock(work_fd: int) -> Iterator[None]:
         os.close(fd)
 
 
-def pending_sync(work_fd: int) -> bool:
-    """Whether a sync began and never finished: sync.pending is written before its first change and removed after its baseline."""
-    try:
-        os.stat("sync.pending", dir_fd=work_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return False
-    return True
+STAGE = re.compile(r"^sync-[0-9a-f]{8}$")
+
+
+def link_tree(source_fd: int, dest_fd: int) -> None:
+    """Make `dest_fd` a hard-linked copy of the tree under `source_fd`. No file data is copied; a staged
+    file is only ever replaced by a rename, which leaves the original inode alone. Directories keep their
+    mode plus owner access, so a stage can always be removed. Links stay links."""
+    with os.scandir(source_fd) as entries:
+        for entry in entries:
+            name = entry.name
+            if entry.is_symlink():
+                os.symlink(os.readlink(name, dir_fd=source_fd), name, dir_fd=dest_fd)
+            elif entry.is_dir(follow_symlinks=False):
+                os.mkdir(name, 0o700, dir_fd=dest_fd)
+                below_source, below_dest = os.open(name, DIR_FLAGS, dir_fd=source_fd), os.open(name, DIR_FLAGS, dir_fd=dest_fd)
+                try:
+                    link_tree(below_source, below_dest)
+                    os.fchmod(below_dest, (os.fstat(below_source).st_mode & 0o7777) | 0o700)
+                finally:
+                    os.close(below_source)
+                    os.close(below_dest)
+            else:
+                os.link(name, name, src_dir_fd=source_fd, dst_dir_fd=dest_fd, follow_symlinks=False)
+
+
+def discard_stage(work_fd: int, name: str) -> None:
+    shutil.rmtree(name, dir_fd=work_fd)
+
+
+def recover_staging(work_fd: int) -> None:
+    """Under the lock, settle every staging directory a killed sync left. The workspace is then the old
+    one or the new one, never a mix: swap_in's three steps leave hw/ missing (put old-hw back), the new hw/
+    in place with its baseline still staged (put the old one back), or all done (nothing to undo)."""
+    with os.scandir(work_fd) as entries:
+        names = sorted(entry.name for entry in entries if STAGE.match(entry.name) and entry.is_dir(follow_symlinks=False))
+    for name in names:
+        stage_fd = os.open(name, DIR_FLAGS, dir_fd=work_fd)
+        try:
+            if not exists_at(work_fd, "hw"):
+                if not exists_at(stage_fd, "old-hw"):
+                    raise Finding("workspace-damaged", f"{name} holds no old-hw and the workspace has no hw/; restore it with `scratch.py init --reset`")
+                os.rename("old-hw", "hw", src_dir_fd=stage_fd, dst_dir_fd=work_fd)
+            elif exists_at(stage_fd, "old-hw") and exists_at(stage_fd, "baseline.json"):
+                os.rename("hw", "hw", src_dir_fd=work_fd, dst_dir_fd=stage_fd)
+                os.rename("old-hw", "hw", src_dir_fd=stage_fd, dst_dir_fd=work_fd)
+        finally:
+            os.close(stage_fd)
+        discard_stage(work_fd, name)
+
+
+def swap_in(work_fd: int, stage_fd: int) -> None:
+    """Put the staged hw/ and baseline.json in the workspace: the old hw/ goes into the stage, the new one
+    takes its name, then the baseline is replaced. recover_staging undoes a swap that stops part way."""
+    os.rename("hw", "old-hw", src_dir_fd=work_fd, dst_dir_fd=stage_fd)
+    os.rename("hw", "hw", src_dir_fd=stage_fd, dst_dir_fd=work_fd)
+    os.replace("baseline.json", "baseline.json", src_dir_fd=stage_fd, dst_dir_fd=work_fd)
 
 
 def write_baseline(work_fd: int, baseline: dict[str, Any]) -> None:
@@ -512,65 +561,110 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
 
 def sync_workspace(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
     with workspace_lock(work_fd):
+        recover_staging(work_fd)
         baseline = load_baseline(work, work_fd)
         if Path(baseline["hw"]) != hw:
             raise UsageError(f"{work} was initialised from {baseline['hw']}, not {hw}")
-        scratch_hw = work / "hw"
         scratch_fd = descend(work_fd, ["hw"])
         try:
-            report = apply_sync(hw, unit, scratch_hw, scratch_fd, work_fd, baseline)
+            report = stage_and_swap(hw, unit, work, work_fd, scratch_fd, baseline)
         finally:
             os.close(scratch_fd)
     return (1 if report["conflicts"] else 0), report
 
 
-def apply_sync(hw: Path, unit: str, scratch_hw: Path, scratch_fd: int, work_fd: int,
-               baseline: dict[str, Any]) -> dict[str, Any]:
-    own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
-    base: dict[str, str] = baseline["files"]
-    lead = lead_snapshot(hw)
-    mine, mine_dirs = delivery_tree(scratch_hw)
-    added: list[str] = []
-    modified: list[str] = []
-    removed: list[str] = []
-    conflicts: list[str] = []
-    plan: list[str] = []
-    seeded = seed_store(hw, scratch_fd)  # refuses a linked cache directory before anything else is written
-    for path in sorted(set(lead) | set(base)):
-        if lead.get(path) == base.get(path):
-            continue
-        if path.startswith(own) or (mine.get(path) != base.get(path) and mine.get(path) != lead.get(path)):
-            conflicts.append(path)
-            continue
-        plan.append(path)
-    plan = drop_collisions(plan, set(mine), mine_dirs, lead, conflicts)
-    plan.sort(key=lambda path: (path in lead, path))  # removals first, so a directory is empty before a file takes its name
-    staged = {path: stage_lead_file(hw / path, lead[path]) for path in plan
-              if path in lead and mine.get(path) != lead[path]}  # every source is read before the first change
-    write_file(work_fd, "sync.pending", json.dumps({"plan": plan}).encode("utf-8"))
-    done: list[str] = []
-    try:
-        for path in plan:
-            if path not in lead:
-                remove_synced(scratch_fd, path)
-                removed.append(path)
-                base.pop(path, None)
+class SyncPlan:
+    """What a sync will do, decided from reads alone: nothing in the workspace has been written yet."""
+
+    def __init__(self, hw: Path, scratch_hw: Path, baseline: dict[str, Any]) -> None:
+        own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
+        base: dict[str, str] = baseline["files"]
+        self.lead = lead_snapshot(hw)
+        self.mine, mine_dirs = delivery_tree(scratch_hw)
+        self.conflicts: list[str] = []
+        paths = []
+        for path in sorted(set(self.lead) | set(base)):
+            if self.lead.get(path) == base.get(path):
+                continue
+            if path.startswith(own) or (self.mine.get(path) != base.get(path) and self.mine.get(path) != self.lead.get(path)):
+                self.conflicts.append(path)
+                continue
+            paths.append(path)
+        paths = drop_collisions(paths, set(self.mine), mine_dirs, self.lead, self.conflicts)
+        self.paths = sorted(paths, key=lambda path: (path in self.lead, path))  # removals first
+        self.sources = {path: stage_lead_file(hw / path, self.lead[path]) for path in self.paths
+                        if path in self.lead and self.mine.get(path) != self.lead[path]}  # every source is read now
+
+    def expected(self) -> dict[str, str]:
+        """The files the staged hw/ must hold: the scratch files with the plan applied."""
+        files = dict(self.mine)
+        for path in self.paths:
+            if path in self.lead:
+                files[path] = self.lead[path]
             else:
-                if path in staged:
-                    install_synced(scratch_fd, path, staged[path])
-                (modified if path in base else added).append(path)
-                base[path] = lead[path]
-            done.append(path)
-    except OSError as error:
-        write_baseline(work_fd, baseline)  # the baseline then matches what was changed, so deliver proposes nothing extra
-        os.unlink("sync.pending", dir_fd=work_fd)
-        raise Finding("sync-half-applied", f"sync changed {len(done)} of {len(plan)} paths ({', '.join(done) or 'none'}) and stopped at {path}: {error}; the baseline records the changed paths; fix the cause and run sync again") from error
-    write_baseline(work_fd, baseline)
-    os.unlink("sync.pending", dir_fd=work_fd)
-    report = {"status": "conflict" if conflicts else "synced", "unit": unit, "scratch_hw": str(scratch_hw),
-              "added": added, "modified": modified, "removed": removed, "conflicts": sorted(conflicts),
-              "seeded_store_files": seeded}
-    if conflicts:
+                files.pop(path, None)
+        return files
+
+
+def build_stage(hw: Path, scratch_fd: int, stage_fd: int, plan: SyncPlan, baseline: dict[str, Any]) -> dict[str, Any]:
+    """Fill the staging directory: a hard-linked copy of the scratch hw/ with the plan and the cache seeding
+    applied, and the new baseline beside it. Only the staging directory is written."""
+    files: dict[str, str] = baseline["files"]
+    report: dict[str, Any] = {"added": [], "modified": [], "removed": []}
+    os.mkdir("hw", 0o700, dir_fd=stage_fd)
+    new_fd = os.open("hw", DIR_FLAGS, dir_fd=stage_fd)
+    try:
+        link_tree(scratch_fd, new_fd)
+        os.fchmod(new_fd, (os.fstat(scratch_fd).st_mode & 0o7777) | 0o700)
+        for path in plan.paths:
+            if path not in plan.lead:
+                remove_synced(new_fd, path)
+                report["removed"].append(path)
+                files.pop(path, None)
+            else:
+                if path in plan.sources:
+                    install_synced(new_fd, path, plan.sources[path])
+                report["modified" if path in files else "added"].append(path)
+                files[path] = plan.lead[path]
+        report["seeded_store_files"] = seed_store(hw, new_fd)
+    finally:
+        os.close(new_fd)
+    write_baseline(stage_fd, baseline)
+    return report
+
+
+def stage_and_swap(hw: Path, unit: str, work: Path, work_fd: int, scratch_fd: int,
+                   baseline: dict[str, Any]) -> dict[str, Any]:
+    """All or nothing. Preflight with reads only, build the whole new workspace state (hw/ and baseline) in
+    a sibling staging directory made with an exclusive mkdir, verify it, then swap it in. Any failure before
+    the swap removes the stage and leaves the workspace as it was; a killed run leaves a stage that the next
+    sync or deliver settles under the lock."""
+    plan = SyncPlan(hw, work / "hw", baseline)
+    name = f"sync-{secrets.token_hex(4)}"
+    os.mkdir(name, 0o700, dir_fd=work_fd)
+    stage_fd = os.open(name, DIR_FLAGS, dir_fd=work_fd)
+    try:
+        try:
+            report = build_stage(hw, scratch_fd, stage_fd, plan, baseline)
+            if delivery_tree(work / name / "hw")[0] != plan.expected():
+                raise Finding("sync-verify-failed", f"the staged hw/ in {work / name} does not match the plan; nothing was changed")
+        except Exception as error:
+            with contextlib.suppress(OSError):
+                discard_stage(work_fd, name)
+            if isinstance(error, OSError):
+                raise Finding("sync-failed", f"sync stopped before it changed anything: {error}") from error
+            raise
+        try:
+            swap_in(work_fd, stage_fd)
+        except OSError as error:
+            recover_staging(work_fd)
+            raise Finding("sync-failed", f"the swap stopped and was undone: {error}") from error
+        discard_stage(work_fd, name)
+    finally:
+        os.close(stage_fd)
+    report.update({"status": "conflict" if plan.conflicts else "synced", "unit": unit,
+                   "scratch_hw": str(work / "hw"), "conflicts": sorted(plan.conflicts)})
+    if plan.conflicts:
         report["note"] = "left these as they are: the unit and the lead both changed them, or the lead changed a part the unit owns"
     return report
 
@@ -743,8 +837,7 @@ def deliver(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
 
 def deliver_workspace(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
     with workspace_lock(work_fd):
-        if pending_sync(work_fd):
-            raise Finding("sync-interrupted", f"a sync of {work} did not finish, so its baseline may lag the files; run sync again before deliver")
+        recover_staging(work_fd)
         return deliver_locked(hw, unit, work, work_fd)
 
 
