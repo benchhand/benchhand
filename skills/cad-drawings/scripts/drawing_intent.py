@@ -1148,9 +1148,11 @@ class Measurer:
                               "does not border it; name the plane the cut opens through")
         surface = first[0]
         inward = fg.scale(fg.unit(surface.normal), -1.0)   # the normal points out of the material
-        if any(fg.dot(fg.unit(f.normal), inward) > 0 or any(
-                abs(fg.dot(fg.sub(p, surface.point), inward)) >= EPS for p in (f.point, *f.boundary_points()))
-               for f in first):   # one sense, and every point of every face on the plane, not just its centroid
+
+        def on_plane(f: Face, g: Face) -> bool:   # f faces the way g does, and every point of f lies on g's plane
+            return fg.dot(fg.unit(f.normal), fg.unit(g.normal)) > 0 and all(
+                abs(fg.dot(fg.sub(p, g.point), fg.unit(g.normal))) < EPS for p in (f.point, *f.boundary_points()))
+        if not all(on_plane(f, g) for f in first for g in first):   # every face against every plane: order-free
             raise IntentError("measurement_failed", f"engraving {feature.id} borders faces of {name} that are not "
                               "one plane; name the single plane the cut opens through")
         for group in _connected(own, index):
