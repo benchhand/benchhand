@@ -320,6 +320,22 @@ class Gate(unittest.TestCase):
                 self.assertEqual((found.state, [item.path for item in found.malformed]), ("unknown", [field]))
                 self.assertTrue(found.asks)
 
+    def test_a_route_that_fails_the_part_schema_is_a_finding_at_every_stage_and_never_rules_fdm_out(self) -> None:
+        cap = {"status": "unknown", "reason": "no profile yet"}
+        for name, route in (("an upper-case operation kind", [{"id": "print", "kind": "FDM", "capability": cap}]),
+                            ("an operation without an id", [{"kind": "cnc", "capability": cap}]),
+                            ("a made operation without a capability", [{"id": "mill", "kind": "cnc"}]),
+                            ("an unknown route without a reason", {"status": "unknown"})):
+            for stage in ("ground", "intent", "specify"):
+                with self.subTest(name, stage=stage):
+                    parts = {"A": {"process": "cnc", "intent": {"route": route}}}
+                    product = self.with_profile(fx.flow_profile() if stage == "specify" else None, stage)
+                    product["manufacturing"] = {"processes": ["cnc"]}
+                    _stage, found = gate_module.gate(product, parts, approved)
+                    self.assertEqual([(item.code, item.path) for item in found],
+                                     [("flow.applicability", "parts/A/intent/route")])
+                    self.assertTrue(gate_module.fdm_applicability(product, parts).asks)
+
     def test_the_gate_blocks_on_a_malformed_plan_and_names_the_field(self) -> None:
         product = self.with_profile(fx.flow_profile(), "specify")
         product["manufacturing"] = {"processes": "fdm"}
