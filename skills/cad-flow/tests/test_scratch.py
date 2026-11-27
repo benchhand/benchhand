@@ -13,6 +13,7 @@ checkout's lamp example (seven CadQuery parts) in a scratch workspace, so a cold
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import importlib.util
 import io
@@ -613,26 +614,6 @@ class Sync(ScratchCase):
             module.sync(hw, "unit-a")
         self.assertIn("changed while sync read it", str(raised.exception))
 
-    def test_sync_records_the_digest_of_the_bytes_it_installed(self) -> None:
-        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
-        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
-            stream.write("# first lead edit\n")
-        module = load_scratch()
-        real = module.copy_bytes
-
-        def copy(source, *rest):
-            with source.open("a", encoding="utf-8") as stream:  # the lead edits again after the snapshot
-                stream.write("# second lead edit\n")
-            return real(source, *rest)
-
-        with mock.patch.object(module, "copy_bytes", copy):
-            code, report = module.sync(self.hw.resolve(), "unit-a")
-        self.assertEqual((code, report["status"]), (0, "synced"), report)
-        installed = hashlib.sha256((scratch_hw / "interfaces.yaml").read_bytes()).hexdigest()
-        baseline = json.loads((scratch_hw.parent / "baseline.json").read_text(encoding="utf-8"))
-        self.assertEqual(baseline["files"]["interfaces.yaml"], installed)
-        self.assertTrue((scratch_hw / "interfaces.yaml").read_text(encoding="utf-8").endswith("# second lead edit\n"))
-
     def test_a_lead_file_over_a_directory_holding_a_local_draft_is_a_conflict_and_records_nothing_for_it(self) -> None:
         (self.hw / "notes").mkdir()
         (self.hw / "notes" / "a.txt").write_text("lead note\n", encoding="utf-8")
@@ -716,6 +697,64 @@ class Sync(ScratchCase):
         with mock.patch.object(module, "drop_collisions", swap), self.assertRaises(module.UsageError):
             module.sync(self.hw.resolve(), "unit-a")
         self.assertEqual(tree(outside), before)
+
+    def test_sync_installs_nothing_when_a_lead_file_changes_after_the_snapshot(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# first lead edit\n")
+        (self.hw / "manufacturing" / "lead-note.yaml").write_text("lead\n", encoding="utf-8")
+        module = load_scratch()
+        real = module.lead_snapshot
+
+        def snapshot(hw):
+            result = real(hw)
+            with (hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:  # the lead edits after the snapshot
+                stream.write("# second lead edit\n")
+            return result
+
+        before = tree(scratch_hw.parent)
+        with mock.patch.object(module, "lead_snapshot", snapshot), self.assertRaises(module.UsageError) as raised:
+            module.sync(self.hw.resolve(), "unit-a")
+        self.assertEqual(raised.exception.finding, "lead-changed-during-read")
+        self.assertEqual(tree(scratch_hw.parent), before)
+
+    def test_a_half_applied_sync_is_a_named_finding_and_the_baseline_matches_what_was_installed(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        (self.hw / "manufacturing" / "lead-note.yaml").write_text("lead\n", encoding="utf-8")
+        (scratch_hw / "manufacturing").chmod(0o555)
+        self.addCleanup((scratch_hw / "manufacturing").chmod, 0o755)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"], report["finding"]), (2, "error", "sync-half-applied"), report)
+        self.assertIn("interfaces.yaml", report["error"])
+        (scratch_hw / "manufacturing").chmod(0o755)
+        self.assertTrue((scratch_hw / "interfaces.yaml").read_text(encoding="utf-8").endswith("# lead edit\n"))
+        self.assertFalse((scratch_hw.parent / "sync.pending").exists())
+        self.deliver_and_expect_no_proposal("unit-a")
+
+    def test_sync_and_deliver_refuse_while_another_process_holds_the_workspace_lock(self) -> None:
+        work = Path(self.init("unit-a", "PRT-0001")["scratch_hw"]).parent
+        with (work / "workspace.lock").open("w", encoding="utf-8") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            for command in ("sync", "deliver"):
+                with self.subTest(command=command):
+                    code, report = self.scratch(command, "--hw", "hw", "--unit", "unit-a")
+                    self.assertEqual((code, report["status"], report["finding"]), (2, "error", "workspace-busy"), report)
+
+    def test_deliver_refuses_after_an_interrupted_sync_and_sync_recovers(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        (scratch_hw.parent / "sync.pending").write_text("{}\n", encoding="utf-8")
+        before = tree(self.hw)
+        code, report = self.scratch("deliver", "--hw", "hw", "--unit", "unit-a")
+        self.assertEqual((code, report["finding"]), (2, "sync-interrupted"), report)
+        self.assertEqual(tree(self.hw), before)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (0, "synced"), report)
+        self.assertFalse((scratch_hw.parent / "sync.pending").exists())
+        self.deliver_and_expect_no_proposal("unit-a")
 
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
