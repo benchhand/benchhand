@@ -131,6 +131,35 @@ class ExtractTests(unittest.TestCase):
         code, result = run(*self.args(plain))
         self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["unsupported_type"]))
 
+    def test_a_symlinked_sources_folder_is_refused_and_nothing_is_written_through_it(self) -> None:
+        outside = Path(self._tmp.name) / "outside"
+        outside.mkdir()
+        part = self.hw / "parts" / "PIN-0001"
+        part.mkdir(parents=True)
+        (part / "sources").symlink_to(outside, target_is_directory=True)
+        code, result = run(*self.args(HTML))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["symlink_refused"]))
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_a_symlinked_target_file_is_refused_and_its_destination_keeps_its_bytes(self) -> None:
+        sources = self.hw / "parts" / "PIN-0001" / "sources"
+        sources.mkdir(parents=True)
+        victim = Path(self._tmp.name) / "victim.txt"
+        victim.write_text("keep me", encoding="utf-8")
+        (sources / "thumb_screw_table.html").symlink_to(victim)
+        code, result = run(*self.args(HTML))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["symlink_refused"]))
+        self.assertEqual(victim.read_text(encoding="utf-8"), "keep me")
+
+    def test_a_symlinked_parts_folder_is_refused(self) -> None:
+        outside = Path(self._tmp.name) / "elsewhere"
+        outside.mkdir()
+        self.hw.mkdir()
+        (self.hw / "parts").symlink_to(outside, target_is_directory=True)
+        code, result = run(*self.args(HTML))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["symlink_refused"]))
+        self.assertEqual(list(outside.iterdir()), [])
+
     def test_bad_arguments_exit_2(self) -> None:
         for argv in (["lower-1", str(HTML)], ["PIN-0001"], ["PIN-0001", str(HTML), "--bogus"]):
             with self.subTest(argv=argv):
