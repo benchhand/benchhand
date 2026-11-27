@@ -18,8 +18,9 @@ and gives it a role:
     whole entry must be that one phrase ("Allen key (3 mm)", "8 mm socket with 1/2-inch drive"; hex, Allen and
     Inbus keys are one tool), so a size or a tool word inside other text ("PH2 alignment marker") makes no tool,
     and a socket takes the drive the entry names, or none when the standard lists no such drive.
-  - note: anything else, including a tool type without a size. It stays an instruction note; it is never an
-    access obligation, and a cited STEP solid (tool_access envelope) is the way to check a special tool.
+  - note: anything else, including a tool type without a size. As a plain `tools` name it stays an instruction
+    note, never an access obligation; as a tool_access entry outside a hold its access stays unknown until a cited
+    STEP solid (tool_access envelope) checks the special tool.
 
 An envelope is a stack of coaxial cylinders along the tool axis, from the tip (0 mm, at the work) away from the
 work. A cylinder bounds every rotation of the tool about its axis, so the tool's angle about the axis is not

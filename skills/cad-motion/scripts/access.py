@@ -45,8 +45,9 @@ d_i + d_j > |s_j - s_i|; segments not proven are halved down to --min-step-mm. E
 most samples without the kernel; ambiguous ones are kernel-measured. A shared volume above pose's
 interference threshold is a collision. A segment still unproven, a cited envelope that cannot be read, a
 missing direction or geometry keeps the operation unknown, never a pass. A visual, timed or bench entry
-reaches nothing; a tool name that matches no shipped envelope is an instruction note in the outcome's
-uncertainty, never an unknown; an operation that moves no part and that nothing reaches is not applicable.
+reaches nothing; a `tools` name that matches no shipped envelope is an instruction note in the outcome's
+uncertainty, never an unknown, while such a tool_access entry outside a hold keeps the operation unknown;
+an operation that moves no part and that nothing reaches is not applicable.
 Not covered: curved motion between declared points, part or tool rotation, tool swing and posture, the
 hand's grip, forces, deflection, and any joint pose but the nominal. No path planner: the path is the
 declared one.
