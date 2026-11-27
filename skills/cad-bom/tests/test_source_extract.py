@@ -205,23 +205,57 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual(sidecar["sha256"], hashlib.sha256((sources / "shared.html").read_bytes()).hexdigest())
         self.assertEqual(sorted(p.name for p in sources.iterdir()), ["shared.html", "shared.html.source.json"])
 
-    def test_a_failed_store_never_unlinks_an_entry_another_writer_put_in_place(self) -> None:
+    def test_a_store_never_unlinks_a_published_name(self) -> None:
+        sources = self.hw / "parts" / "PIN-0001" / "sources"
+        sources.mkdir(parents=True)
+        (sources / "thumb_screw_table.html.source.json").write_text('{"origin": "earlier"}', encoding="utf-8")
+        removed: list[str] = []
+        real_unlink = extract.os.unlink
+
+        def spy(path: str, *args: object, **kwargs: object) -> None:
+            removed.append(str(path))
+            real_unlink(path, *args, **kwargs)
+
+        with mock.patch.object(extract.os, "unlink", spy):
+            code, result = run(*self.args(HTML))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["sidecar_invalid"]))
+        self.assertTrue(removed)
+        self.assertTrue(all(name.startswith(".tmp-") for name in removed), removed)
+        self.assertFalse((sources / "thumb_screw_table.html").exists())
+
+    def test_a_replacement_installed_before_the_target_link_survives_and_the_sidecar_stays(self) -> None:
         sources = self.hw / "parts" / "PIN-0001" / "sources"
         target = sources / "thumb_screw_table.html"
         real = extract._link_new
 
-        def other_writer_takes_the_names(directory_fd: int, name: str, payload: bytes) -> object:
-            if name.endswith(".source.json"):
-                target.unlink()
+        def other_writer_takes_the_target(directory_fd: int, name: str, payload: bytes) -> object:
+            if name == target.name:
                 target.write_text("another writer's page", encoding="utf-8")
-                (sources / name).write_text('{"sha256": "someone else"}', encoding="utf-8")
             return real(directory_fd, name, payload)
 
-        with mock.patch.object(extract, "_link_new", other_writer_takes_the_names):
+        with mock.patch.object(extract, "_link_new", other_writer_takes_the_target):
             code, result = run(*self.args(HTML))
-        self.assertEqual(code, 1)
-        self.assertEqual(len(result["findings"]), 1)
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["name_conflict"]))
         self.assertEqual(target.read_text(encoding="utf-8"), "another writer's page")
+        stored = json.loads((sources / "thumb_screw_table.html.source.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["sha256"], hashlib.sha256(HTML.read_bytes()).hexdigest())
+
+    def test_a_later_run_with_the_same_content_completes_a_store_that_left_only_its_sidecar(self) -> None:
+        sources = self.hw / "parts" / "PIN-0001" / "sources"
+        real = extract._link_new
+
+        def target_link_fails(directory_fd: int, name: str, payload: bytes) -> object:
+            if name == "thumb_screw_table.html":
+                raise OSError("disk full")
+            return real(directory_fd, name, payload)
+
+        with mock.patch.object(extract, "_link_new", target_link_fails):
+            code, result = run(*self.args(HTML))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["storage_error"]))
+        self.assertTrue((sources / "thumb_screw_table.html.source.json").exists())
+        code, result = run(*self.args(HTML))
+        self.assertEqual(code, 0)
+        self.assertEqual((sources / "thumb_screw_table.html").read_bytes(), HTML.read_bytes())
 
     def test_a_part_folder_that_is_a_file_is_a_storage_finding(self) -> None:
         self.hw.mkdir()
