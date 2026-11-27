@@ -31,11 +31,13 @@ Applied moment. The peak force of the interface's use-case loads times the movin
 the axis. The record does not say where the force acts, so this arm is a conservative upper bound.
 
 Prismatic stop. A slide has no axis to turn about, so no arm, patch or moment is taken. At each limit that is a
-stop (the parts touch within the tolerance, without overlap), the reaction is the component of the use-case
+stop (the parts touch within the tolerance, without overlap, and a contact face squarely opposes travel beyond the
+limit: a face along the travel is a rail, not a stop, and leaves the stop unknown), the reaction is the component of the use-case
 loads along the slide axis that presses the stop: at `min` the load component against the axis, at `max` along
 it, the largest over the loads, in N. Loads that are not known leave the stop unknown. A load direction is stated in
 the model frame of the part its `application` names, else in the assembly frame; it is normalised and rotated into
-the posed assembly frame at the limit, and a frame that cannot be resolved leaves the stop unknown. A recorded functional.contact.load below that reaction is `understated` (fail, major).
+the posed assembly frame at the limit, and a frame that cannot be resolved leaves the stop unknown. A recorded
+functional.contact.load below that reaction is `understated` (fail, major).
 
 Design reaction. stop_statics.py: M over the smallest arm. A smallest arm of zero or less is `unbounded`
 (unknown, critical), and only an FEA contact case approved in a design record can close it. A recorded
@@ -106,6 +108,7 @@ CONTACT_MM = 1e-4  # parts at or under this distance touch; planes this close ar
 STOP_CONTACT_TOLERANCE_MM = 0.15
 STOP_CONTACT_EPSILON_MM = 1e-6  # float noise: a gap on the tolerance gets no verdict from rounding
 NORMAL_TOL = 1e-6  # |n1 . n2 + 1| under this: opposite-facing faces
+BLOCKING_COS = 0.999  # a contact face blocks a slide when its normal is within about 2.6 deg of the axis, squarely against travel
 MIN_AREA_MM2 = 1e-6
 METHOD = ("rigid statics of the modelled stop contact: the peak use-case force times the moving part's farthest point "
           "from the pivot axis, over the smallest arm of the overlap of the touching planar faces (cad-analysis "
@@ -445,11 +448,38 @@ def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: 
     patch, volume, depth = None, 0.0, 0.0
     if shared > pose.INTERFERENCE_MM3:
         volume, depth = shared, overlap_depth(geometry["moving"], geometry["fixed"])
-    if contact and pivot.joint.type == "revolute":
+    blocks = None
+    if contact:
         faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"], tolerance)
-        patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)
+        if pivot.joint.type == "revolute":
+            patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)
+        else:
+            blocks = blocks_travel(faces_in_contact, geometry["axis"], label)
     return {"label": label, "value": value, "touching": contact, "gap": gap, "patch": patch, "reach": geometry["reach"],
-            "axis": geometry["axis"], "transforms": geometry["transforms"], "overlap_volume": volume, "overlap_depth": depth}
+            "blocks": blocks, "axis": geometry["axis"], "transforms": geometry["transforms"], "overlap_volume": volume, "overlap_depth": depth}
+
+
+def blocks_travel(contact: Sequence[tuple[Any, Vec]], axis: Vec, label: str) -> bool:
+    """Whether a contact face squarely opposes the slide's travel beyond the limit `label`. A fixed face's outward
+    normal points at the moving part, so it opposes a motion along `beyond` when it points against it. A face along
+    the travel (a rail) has a normal square to the axis and resists no axial motion."""
+    beyond = scale(axis, -1.0 if label == "min" else 1.0)
+    return any(dot(normal, beyond) <= -BLOCKING_COS for _, normal in contact)
+
+
+def unusable_contact(stops: Sequence[Mapping[str, Any]], pivot: Pivot, tolerance: float) -> str:
+    """Why the touching limits give no contact to take statics on, or "" when they do: a revolute stop needs a contact
+    patch, a prismatic one a face that blocks travel."""
+    if pivot.joint.type == "revolute":
+        bad, why = [s["label"] for s in stops if s["patch"] is None], \
+            "no parallel opposite-facing planar faces are that close, so no contact patch can be taken"
+    else:
+        bad, why = [s["label"] for s in stops if not s["blocks"]], \
+            ("no contact face has a normal squarely against travel beyond the limit, so the contact may be a rail along "
+             "the travel and nothing shows that it blocks the slide")
+    if not bad:
+        return ""
+    return f"at the {' and '.join(bad)} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, but {why}"
 
 
 def patch_report(patch: statics.Patch | None) -> dict[str, Any] | None:
@@ -501,7 +531,8 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         detail["ends"][state["label"]] = {"joint_value": state["value"], "touching": state["touching"],
                                           "gap_mm": state["gap"], "overlap_volume_mm3": state["overlap_volume"],
                                           "overlap_depth_mm": state["overlap_depth"],
-                                          "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"])}
+                                          "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"]),
+                                          "blocks_travel": state["blocks"]}
     stops = [state for state in states if state["touching"]]
     if not stops:
         gaps = ", ".join(f"{state['label']} {state['gap']:.4g} mm" for state in states)
@@ -514,10 +545,9 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         depth = max(state["overlap_depth"] for state in overlapping)
         reason = f"{if_id}: the parts overlap by {depth:.3g} mm {where}: a design defect, not a stop"
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
-    flat = [state["label"] for state in stops if state["patch"] is None] if pivot.joint.type == "revolute" else []
-    if flat:
-        reason = (f"{if_id}: at the {' and '.join(flat)} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, "
-                  "but no parallel opposite-facing planar faces are that close, so no contact patch can be taken")
+    unusable = unusable_contact(stops, pivot, tolerance)
+    if unusable:
+        reason = f"{if_id}: {unusable}"
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
     force, loads, why = applied_force(record, interface, chain if pivot.joint.type == "prismatic" else None)
     if force is None:
