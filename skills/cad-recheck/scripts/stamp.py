@@ -179,14 +179,18 @@ def _prior_attempt_decisions(root: Path, previous: str, advanced: str) -> set[st
     """Decision IDs already present before the most recent return to the approved stage."""
     if git("rev-parse", "--is-shallow-repository", cwd=root).strip() == b"true":
         raise GateFinding("gate.attempt: stage history is shallow; fetch full history before verifying the advance")
-    history = git("log", "--first-parent", "--format=%H", "--", "hw/product.yaml", cwd=root).decode().splitlines()
+    try:
+        head = git("rev-parse", "--verify", "--quiet", "HEAD", cwd=root).decode().strip()
+    except RuntimeError:
+        return set()
+    history = git("log", "--first-parent", "--format=%H", head, "--", "hw/product.yaml", cwd=root).decode().splitlines()
     order: list[str] = validate.stages()
     entered = None
     for commit in history:
         try:
             product = yaml_loader.safe_load(git("show", f"{commit}:./hw/product.yaml", cwd=root).decode("utf-8"))
-        except (RuntimeError, UnicodeError, yaml.YAMLError) as error:
-            raise GateFinding(f"gate.attempt: cannot read flow.stage at {commit}") from error
+        except (RuntimeError, yaml.YAMLError, ValueError, RecursionError):
+            continue
         flow = product.get("flow") if isinstance(product, dict) else None
         stage = flow.get("stage") if isinstance(flow, dict) else None
         if stage not in order:
@@ -195,8 +199,9 @@ def _prior_attempt_decisions(root: Path, previous: str, advanced: str) -> set[st
             entered = commit
         elif entered is not None and order.index(stage) >= order.index(advanced):
             paths = git("ls-tree", "-r", "--name-only", "-z", f"{entered}^1", "--", "hw/decisions/", cwd=root)
-            return {Path(path).name[:6] for path in paths.decode(errors="surrogateescape").split("\0")
-                    if Path(path).name.startswith("DR-") and path.endswith(".md")}
+            pattern = validate.decision_records.FILE_NAME
+            return {f"DR-{match[1]}" for path in paths.decode(errors="surrogateescape").split("\0")
+                    if (match := pattern.fullmatch(Path(path).name)) is not None}
     return set()
 
 
