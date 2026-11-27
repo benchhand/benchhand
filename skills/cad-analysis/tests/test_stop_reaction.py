@@ -604,6 +604,16 @@ class StopGeometryTests(unittest.TestCase):
                 self.assertIn("contact load", row["uncertainty"])
                 self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
 
+    def test_a_load_application_that_is_not_a_subject_is_a_named_unknown(self) -> None:
+        # `application` is a subject object. The scalar "lever" names no frame, so the direction's frame is not known:
+        # only an omitted application takes the assembly frame.
+        code, result = self.run_stop("slide-scalar-application", joint=self.SLIDE, variant="disk",
+                                     load_overrides=[{"application": "lever"}] * 2)
+        [row] = result["outcomes"]
+        self.assertEqual((code, row["outcome"]), (1, "unknown"))
+        self.assertIn("application", row["uncertainty"])
+        self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
     def test_a_part_frame_direction_is_rotated_into_the_assembly_frame(self) -> None:
         # By hand: a 30 N load along the lever's own +Z, with the lever turned 180 deg about X, acts along the
         # assembly's -Z, which presses the lower stop with 30 N. Read as an assembly direction it points up and
