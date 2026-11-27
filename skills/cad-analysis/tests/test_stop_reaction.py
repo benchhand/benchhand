@@ -407,6 +407,15 @@ class StopGeometryTests(unittest.TestCase):
                 self.assertIn(reason, row["uncertainty"])
                 self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
 
+    def test_a_rounded_direction_is_normalised_before_it_is_projected(self) -> None:
+        # By hand: (0, 0, -1.0000005) has norm 1.0000005, inside the schema's 1e-6 tolerance. Unnormalised it projects
+        # 30 * 1.0000005 = 30.000015 N and fails a recorded 30 N rating; normalised it is 30 N and passes.
+        code, result = self.run_stop("slide-rounded", joint=self.SLIDE, variant="disk", contact_load=30.0,
+                                     direction=(0, 0, -1.0000005))
+        reaction = result["detail"]["interfaces"]["IF-006"]["ends"]["min"]["reaction"]
+        self.assertAlmostEqual(reaction["design_reaction_n"], 30.0, places=9)
+        self.assertEqual((code, result["result"], result["findings"]), (0, "pass", []))
+
     def test_a_prismatic_stop_with_unknown_loads_is_unknown_never_pass(self) -> None:
         code, result = self.run_stop("slide-unknown", joint=self.SLIDE, variant="disk", loads="unknown")
         [row] = result["outcomes"]
