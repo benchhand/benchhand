@@ -614,6 +614,17 @@ class StopGeometryTests(unittest.TestCase):
         self.assertIn("application", row["uncertainty"])
         self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
 
+    def test_a_face_at_60_degrees_blocks_and_one_past_it_does_not(self) -> None:
+        # By hand: cos 60 deg = 0.5 blocks, so the bound is 30 / 0.5 = 60 N. cos 60.00001 deg = 0.49999991 is under it.
+        code, at_limit = self.run_stop("slide-mate60", joint=self.SLIDE, variant="mate60")
+        end = at_limit["detail"]["interfaces"]["IF-006"]["ends"]["min"]
+        self.assertEqual((code, at_limit["result"], end["blocks_travel"]), (0, "pass", True))
+        self.assertAlmostEqual(end["reaction"]["design_reaction_n"], 60.0, places=6)
+        code, past = self.run_stop("slide-mate60-past", joint=self.SLIDE, variant="mate60.00001")
+        [row] = past["outcomes"]
+        self.assertEqual((code, row["outcome"]), (1, "unknown"))
+        self.assertFalse(past["detail"]["interfaces"]["IF-006"]["ends"]["min"]["blocks_travel"])
+
     def test_a_part_frame_direction_is_rotated_into_the_assembly_frame(self) -> None:
         # By hand: a 30 N load along the lever's own +Z, with the lever turned 180 deg about X, acts along the
         # assembly's -Z, which presses the lower stop with 30 N. Read as an assembly direction it points up and
