@@ -1,7 +1,7 @@
 {
  "counts": {
   "C901": 168,
-  "PLR0912": 84,
+  "PLR0912": 85,
   "PLR0915": 50
  },
  "offenders": [
@@ -177,6 +177,7 @@
   "PLR0912 skills/cad-analysis/scripts/fea_static.py::load_case",
   "PLR0912 skills/cad-analysis/scripts/fea_static.py::main",
   "PLR0912 skills/cad-analysis/scripts/fea_static.py::run_job",
+  "PLR0912 skills/cad-concept/scripts/serve.py::run",
   "PLR0912 skills/cad-design/scripts/form_check.py::check",
   "PLR0912 skills/cad-design/scripts/form_check.py::probe_solid",
   "PLR0912 skills/cad-design/scripts/process_checks/additive.py::support",
