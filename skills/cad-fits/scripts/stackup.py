@@ -122,7 +122,8 @@ PRODUCER = "cad-fits stackup.py"
 INTENT_VERSION = 2
 # The revision of how a contributor's limits are qualified, sealed in the recipe: a bundle of another revision (or of none,
 # before benchhand-c7q.30 let a guideline value qualify a printed contributor) is never reused. Bump it when a verdict can change.
-BASIS_REVISION = 1
+# Revision 2: a stack judges the obligation of the surface its region names, or none when it is ambiguous.
+BASIS_REVISION = 2
 CATEGORIES = ("manufacture", "assembly", "thermal", "moisture", "wear", "deformation", "coating", "adhesive", "joining")
 STATES = ("as_manufactured", "after_finish", "assembled")
 CONSEQUENCES = ("collision", "binding", "loss_of_function", "critical_fit", "performance", "appearance", "other")
@@ -1447,7 +1448,13 @@ def main(argv: list[str] | None = None) -> int:
                       **GUIDELINES.calibration_recipe(calibration)}  # sealed on or off: another setting never reuses a bundle
             reused = LAYOUT.reusable(args.hw, "bundle.analysis", params, recipe, replace=args.replace)
             if reused is not None:
-                result = json.loads((reused / "results.json").read_text(encoding="utf-8"))
+                cached = json.loads((reused / "results.json").read_text(encoding="utf-8"))
+                stale = sorted({row.get("obligation") for row in cached.get("obligations") or ()}
+                               ^ {row["obligation"] for row in result.get("obligations") or ()}, key=str)
+                if stale:  # a cached outcome that no longer binds to the surface this run measures is never published again
+                    raise StackError(f"the reused bundle judged {', '.join(map(str, stale))}, which is not the obligation "
+                                     "this run binds to the measured surface; rerun with --replace")
+                result = cached
                 result["bundle"] = str(reused)
                 result["reused"] = True
                 status = result["status"]
