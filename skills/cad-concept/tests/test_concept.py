@@ -807,7 +807,7 @@ class ServerTimeout(InProcessServer):
             read_fd = -1
         self.assertTrue(exited, "a stdout nobody reads kept the server running after its idle timeout")
 
-    def test_a_client_that_connects_while_the_stop_is_notified_is_never_cut_off(self) -> None:
+    def test_a_reconnect_after_the_idle_stop_meets_a_closed_listener_before_the_stop_notice_finishes(self) -> None:
         read_fd, write_fd = os.pipe()
         pipe_out = os.fdopen(write_fd, "w", encoding="utf-8")
         self.addCleanup(lambda: os.close(read_fd) if read_fd >= 0 else None)
@@ -824,46 +824,32 @@ class ServerTimeout(InProcessServer):
                 os.set_blocking(write_fd, True)
 
         self.on_ready = fill_pipe
-        cut_off = []
+        refused_after = None
         with contextlib.redirect_stdout(pipe_out):
             self.start_server(0.3)
             host, port = self.url.removeprefix("http://").rstrip("/").split(":")
-            deadline = time.monotonic() + 4
-            while not self._server_done.is_set() and time.monotonic() < deadline and not cut_off:
+            started = time.monotonic()
+            deadline = started + 4
+            # Poll with bare connects (no request, so no activity) until the listener refuses: that is what an
+            # EventSource reconnect meets once the server has stopped accepting. The deadline is checked on
+            # every iteration, so a listener that never closes fails the test instead of hanging it.
+            while time.monotonic() < deadline:
                 try:
-                    sock = socket.create_connection((host, int(port)), timeout=0.5)
+                    socket.create_connection((host, int(port)), timeout=0.2).close()
+                except ConnectionRefusedError:
+                    refused_after = time.monotonic() - started
+                    break
                 except OSError:
-                    break  # no longer accepting: the server is gone
-                with sock:
-                    sock.settimeout(0.5)
-                    try:
-                        sock.sendall(f"GET /events HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode())
-                        head = sock.recv(4096)
-                        if b" 200 " not in head.split(b"\r\n")[0]:
-                            continue  # never answered: it was told nothing, not cut off
-                        # A client that got its stream holds the server open: the stream must stay up for a
-                        # second. The deadline is checked on every read, heartbeats included, so a stream that
-                        # keeps talking cannot hold the test past it.
-                        sock.settimeout(0.2)
-                        held_until = min(deadline, time.monotonic() + 1.0)
-                        received = head
-                        while time.monotonic() < held_until:
-                            try:
-                                chunk = sock.recv(4096)
-                            except TimeoutError:
-                                continue
-                            received += chunk
-                            if not chunk:
-                                if b"event: hello" in received:
-                                    cut_off.append("EOF on an accepted /events stream")
-                                break  # a retry notice ends on purpose: the client reconnects
-                    except OSError:
-                        pass
-                    if self._server_done.is_set():
-                        break
-            os.close(read_fd)
+                    pass
+                time.sleep(0.02)
+            still_blocked_on_stdout = not self._server_done.is_set()
+            os.close(read_fd)  # releases a notice that is stuck, so a failure does not leak a hung thread
             read_fd = -1
-        self.assertEqual(cut_off, [])
+        self.assertIsNotNone(
+            refused_after, "reconnect never met a closed listener: the server kept accepting 4 s after its idle stop")
+        self.assertTrue(
+            still_blocked_on_stdout,
+            "the server only stopped accepting after its stop notice finished: it must stop accepting first")
 
     def test_an_events_request_that_loses_the_race_with_the_idle_stop_gets_a_stream_the_client_retries(self) -> None:
         # EventSource treats a non-200 answer as terminal and never reconnects, so a refused /events must be a
