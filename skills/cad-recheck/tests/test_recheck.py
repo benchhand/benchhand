@@ -424,6 +424,33 @@ class RecheckHookTests(unittest.TestCase):
         self.assertIn("version_manifest_sha256:", result.stderr)
         self.assertIn("missing from the index", result.stderr)
 
+    def test_committed_gate_verifies_with_only_its_manifest_in_a_clean_checkout(self) -> None:
+        self.provisional_gate("parts", decision=None)
+        (self.root / ".gitignore").write_text("/hw/versions/\n", encoding="utf-8")
+        self.git("add", ".gitignore")
+        product_path = self.root / "hw/product.yaml"
+        product = json.loads(product_path.read_text(encoding="utf-8"))
+        product["flow"]["frozen"] = {"version": "v1"}
+        product_path.write_text(json.dumps(product), encoding="utf-8")
+        self.git("add", "hw/product.yaml")
+        artifact = b"STEP fixture\n"
+        (self.root / "hw/versions/v1/assembly.step").write_bytes(artifact)
+        digest = self.stage_manifest("v1", json.dumps({"label": "v1", "files": {
+            "assembly.step": hashlib.sha256(artifact).hexdigest(),
+        }}))
+        write_test_decision(self.root / "hw", "DR-001", status="accepted", date=DAY, gate=LAYOUT_GATE,
+                            gate_build=("v1", digest))
+        self.git("add", "hw/decisions")
+        stamped = self.stamp_gate("layout", manifest_sha256=digest)
+        self.assertEqual(stamped.returncode, 0, stamped.stderr)
+        self.assertEqual(self.verify().returncode, 0)
+        self.git("commit", "-qm", "advance with only the manifest tracked")
+        clean = self.root.parent / "clean"
+        self.git("clone", "-q", ".", str(clean))
+        self.assertFalse((clean / "hw/versions/v1/assembly.step").exists())
+        result = self.run_python(STAMP, "--verify", "--committed", cwd=clean)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_a_malformed_decision_record_is_a_refusal(self) -> None:
         self.provisional_gate("parts")
         decision_path(self.root / "hw", "DR-001").write_text("not a record\n", encoding="utf-8")
