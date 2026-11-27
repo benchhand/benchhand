@@ -618,5 +618,80 @@ sys.exit(code)
         self.assertEqual(result["status"], "fail")
         self.assertIn("procurement_incomplete", [f["code"] for f in result["findings"]])
 
+
+# LMP-0005 with two features off the pin's axes: a flat cut into the head whose normal (1, 0.4, 0.5) is oblique to
+# every frame axis, and a flat-floored tapered pocket whose axis (0.2, 0.1, -1) leans off the frame's z axis.
+# The hook names them `flat` (a plane_face) and `tilted_cone` (a taper).
+OBLIQUE_CUTS = """\
+    tool = cq.Workplane(cq.Plane((3.5, 0.0, 52.0), (0.0, 1.0, -0.8), (1.0, 0.4, 0.5))).rect(30, 30).extrude(15).val()
+    pocket = cq.Solid.makeCone(1.0, 0.7, 1.5, cq.Vector(0.0, 2.7, 53.8), cq.Vector(0.2, 0.1, -1.0))
+    return shape.transformShape(plane.rG).cut(tool).cut(pocket)
+"""
+OBLIQUE_HOOK = """\
+        elif patch["support_type"] == "cone" and abs(
+                cq.Vector(*BRepAdaptor_Surface(face.wrapped).Cone().Axis().Direction().Coord()).dot(axis)) < 0.999:
+            name = "tilted_cone"
+        elif patch["support_type"] == "plane" and 0.3 < abs(cq.Vector(*patch["normal"]).dot(axis)) < 0.6:
+            name = "flat"
+"""
+
+
+class ObliqueFeatures(unittest.TestCase):
+    """A feature turned off every frame axis gets a named finding, never a crash and never a silent pass."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory(prefix="cad-oblique-drawing-")
+        cls.hw = Path(cls.tmp.name) / "hw"
+        PinDrawingGate.fx().migrated_copy(TEMPLATE, cls.hw)
+        pin = cls.hw / "parts" / "LMP-0005"
+        model = (pin / "model.py").read_text(encoding="utf-8")
+        cone = '        elif patch["support_type"] == "cone":\n'
+        for old, new in (("    return shape.transformShape(plane.rG)\n", OBLIQUE_CUTS),
+                         (cone, OBLIQUE_HOOK + cone),
+                         ('"tip_face": "plane_face"}', '"tip_face": "plane_face", "flat": "plane_face", "tilted_cone": "taper"}')):
+            assert old in model, old
+            model = model.replace(old, new)
+        (pin / "model.py").write_text(model, encoding="utf-8")
+        text = (pin / "part.yaml").read_text(encoding="utf-8")
+        cls.base_yaml = with_finished_route(text, FINISHED_ROUTES["LMP-0005"]).replace(
+            "    tip_face: {size: general}\n", "    tip_face: {size: general}\n    flat: {size: general}\n"
+            "    tilted_cone: {size: general}\n")
+        (pin / "part.yaml").write_text(cls.base_yaml, encoding="utf-8")
+        build = run(UV, "run", "--script", str(CAD_MODEL), "run", str(cls.hw), "--label", "v1", "--kernel", "auto")
+        if build.returncode != 0:
+            raise AssertionError(f"oblique pin build failed: {build.stdout[-2000:]} {build.stderr[-2000:]}")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    draw = PinDrawingGate.draw
+
+    def test_an_oblique_end_that_no_dimension_locates_is_named_once(self) -> None:
+        code, result = self.draw("v1", "oblique")
+        self.assertEqual((code, result["status"]), (1, "fail"), result)
+        found = [f for f in result["findings"] if f.get("feature") == "tilted_cone"]
+        self.assertEqual([f["code"] for f in found], ["dimension_coverage_incomplete"], found)
+        self.assertIn("not a frame axis", found[0]["message"])
+        flat = [f for f in result["findings"] if f.get("feature") == "flat"]
+        self.assertEqual([f["code"] for f in flat], ["dimension_coverage_incomplete"], flat)   # its own, not doubled
+
+    def test_a_view_perpendicular_to_an_oblique_feature_is_a_named_finding_not_an_error(self) -> None:
+        part = self.hw / "parts" / "LMP-0005" / "part.yaml"
+        view = "    - {id: groove_detail, kind: detail, feature: groove}\n"
+        self.assertIn(view, self.base_yaml)
+        extra = "    - {id: flat_view, kind: orthographic, perpendicular_to: flat}\n"
+        part.write_text(self.base_yaml.replace(view, view + extra), encoding="utf-8")
+        try:
+            code, result = self.draw("v1", "oblique-view")
+        finally:
+            part.write_text(self.base_yaml, encoding="utf-8")
+        self.assertEqual((code, result["status"]), (1, "fail"), result)
+        self.assertEqual(result["error"]["code"], "invalid_drawing_intent", result)
+        self.assertIn("flat", result["error"]["message"])
+        self.assertIn("oblique", result["error"]["message"])
+
+
 if __name__ == "__main__":
     unittest.main()
