@@ -13,6 +13,8 @@ checkout's lamp example (seven CadQuery parts) in a scratch workspace, so a cold
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import fcntl
 import hashlib
 import importlib.util
@@ -719,21 +721,6 @@ class Sync(ScratchCase):
         self.assertEqual(raised.exception.finding, "lead-changed-during-read")
         self.assertEqual((tree(scratch_hw), baseline.read_bytes()), (before, baseline_before))
 
-    def test_a_half_applied_sync_is_a_named_finding_and_the_baseline_matches_what_was_installed(self) -> None:
-        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
-        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
-            stream.write("# lead edit\n")
-        (self.hw / "manufacturing" / "lead-note.yaml").write_text("lead\n", encoding="utf-8")
-        (scratch_hw / "manufacturing").chmod(0o555)
-        self.addCleanup((scratch_hw / "manufacturing").chmod, 0o755)
-        code, report = self.sync("unit-a")
-        self.assertEqual((code, report["status"], report["finding"]), (2, "error", "sync-half-applied"), report)
-        self.assertIn("interfaces.yaml", report["error"])
-        (scratch_hw / "manufacturing").chmod(0o755)
-        self.assertTrue((scratch_hw / "interfaces.yaml").read_text(encoding="utf-8").endswith("# lead edit\n"))
-        self.assertFalse((scratch_hw.parent / "sync.pending").exists())
-        self.deliver_and_expect_no_proposal("unit-a")
-
     def test_sync_and_deliver_refuse_while_another_process_holds_the_workspace_lock(self) -> None:
         work = Path(self.init("unit-a", "PRT-0001")["scratch_hw"]).parent
         with (work / "workspace.lock").open("w", encoding="utf-8") as held:
@@ -742,20 +729,6 @@ class Sync(ScratchCase):
                 with self.subTest(command=command):
                     code, report = self.scratch(command, "--hw", "hw", "--unit", "unit-a")
                     self.assertEqual((code, report["status"], report["finding"]), (2, "error", "workspace-busy"), report)
-
-    def test_deliver_refuses_after_an_interrupted_sync_and_sync_recovers(self) -> None:
-        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
-        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
-            stream.write("# lead edit\n")
-        (scratch_hw.parent / "sync.pending").write_text("{}\n", encoding="utf-8")
-        before = tree(self.hw)
-        code, report = self.scratch("deliver", "--hw", "hw", "--unit", "unit-a")
-        self.assertEqual((code, report["finding"]), (2, "sync-interrupted"), report)
-        self.assertEqual(tree(self.hw), before)
-        code, report = self.sync("unit-a")
-        self.assertEqual((code, report["status"]), (0, "synced"), report)
-        self.assertFalse((scratch_hw.parent / "sync.pending").exists())
-        self.deliver_and_expect_no_proposal("unit-a")
 
     def test_a_lead_file_over_an_untouched_directory_replaces_it_and_deliver_proposes_nothing(self) -> None:
         (self.hw / "notes").mkdir()
@@ -892,6 +865,92 @@ class Sync(ScratchCase):
         self.assertEqual((scratch_hw / "notes" / "a.txt").read_text(encoding="utf-8"), "lead note\n")
         self.assertTrue((scratch_hw / "notes" / "drafts").is_dir())
         self.assertEqual(self.scratch_state(scratch_hw), before)
+
+    def crash(self, module, unit: str, point: str) -> None:
+        """Run a sync in this process and kill it at `point`: SystemExit is not an OSError, so nothing cleans up after it."""
+        real_rename, real_replace, calls = module.os.rename, module.os.replace, []
+
+        def rename(*args, **kwargs):
+            calls.append(args)
+            if point == "before the swap's first rename" and len(calls) == 1 or point == "after the old tree moved aside" and len(calls) == 2:
+                raise SystemExit("killed")
+            return real_rename(*args, **kwargs)
+
+        def replace(*args, src_dir_fd=None, dst_dir_fd=None, **kwargs):
+            if point == "after the new tree is in place" and src_dir_fd != dst_dir_fd:  # the baseline moving out of the staging directory
+                raise SystemExit("killed")
+            return real_replace(*args, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd, **kwargs)
+
+        def killed_write_baseline(*args, **kwargs):
+            raise SystemExit("killed")
+
+        patches = [mock.patch.object(module.os, "rename", rename), mock.patch.object(module.os, "replace", replace)]
+        if point == "after the changes, before the baseline":
+            patches = [mock.patch.object(module, "write_baseline", killed_write_baseline)]
+        with contextlib.ExitStack() as stack, self.assertRaises(SystemExit):
+            for patch in patches:
+                stack.enter_context(patch)
+            module.sync(self.hw.resolve(), unit)
+
+    def test_a_crash_at_any_step_followed_by_a_lead_revert_proposes_nothing_stale(self) -> None:
+        original = (self.hw / "interfaces.yaml").read_bytes()
+        points = ("after the changes, before the baseline", "before the swap's first rename",
+                  "after the old tree moved aside", "after the new tree is in place")
+        for number, point in enumerate(points):
+            with self.subTest(point=point):
+                unit = f"unit-{number}"
+                scratch_hw = Path(self.init(unit, "PRT-0001")["scratch_hw"])
+                with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+                    stream.write("# lead edit that is reverted\n")
+                self.crash(load_scratch(), unit, point)
+                (self.hw / "interfaces.yaml").write_bytes(original)
+                code, report = self.sync(unit)
+                self.assertEqual((code, report["status"], report["added"], report["modified"], report["removed"]),
+                                 (0, "synced", [], [], []), report)
+                self.assertEqual([p.name for p in scratch_hw.parent.glob("sync-*")], [])
+                self.assertEqual((scratch_hw / "interfaces.yaml").read_bytes(), original)
+                self.deliver_and_expect_no_proposal(unit)
+
+    def test_a_failure_after_the_preflight_leaves_the_workspace_byte_identical(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        self.assertEqual(self.sync("unit-a")[0], 0)  # nothing to sync yet; this run only creates the lock file
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        (self.hw / "manufacturing" / "lead-note.yaml").write_text("lead\n", encoding="utf-8")
+        module = load_scratch()
+        real, calls = module.install_synced, []
+
+        def install(*args):
+            calls.append(args[1])
+            if len(calls) == 2:
+                raise OSError(errno.EIO, "disk trouble")
+            return real(*args)
+
+        before = self.scratch_state(scratch_hw)
+        with mock.patch.object(module, "install_synced", install), self.assertRaises(module.Finding) as raised:
+            module.sync(self.hw.resolve(), "unit-a")
+        self.assertEqual(raised.exception.finding, "sync-failed")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.scratch_state(scratch_hw), before)
+        self.assertEqual([p.name for p in scratch_hw.parent.glob("sync-*")], [])
+        code, report = self.sync("unit-a")  # and a retry works
+        self.assertEqual((code, report["status"]), (0, "synced"), report)
+        self.deliver_and_expect_no_proposal("unit-a")
+
+    def test_a_stranded_staging_directory_is_removed_and_an_aside_tree_is_put_back(self) -> None:
+        work = Path(self.init("unit-a", "PRT-0001")["scratch_hw"]).parent
+        (work / "sync-deadbeef" / "hw").mkdir(parents=True)  # a sync killed before its swap
+        self.deliver_and_expect_no_proposal("unit-a")
+        self.assertFalse((work / "sync-deadbeef").exists())
+        (work / "sync-cafef00d").mkdir()  # a sync killed after it moved the old tree aside
+        (work / "hw").rename(work / "sync-cafef00d" / "old-hw")
+        (work / "sync-cafef00d" / "hw").mkdir()
+        before = tree(self.hw)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (0, "synced"), report)
+        self.assertTrue((work / "hw" / "parts" / "PRT-0001" / "part.yaml").is_file())
+        self.assertFalse((work / "sync-cafef00d").exists())
+        self.assertEqual(tree(self.hw), before)
 
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
