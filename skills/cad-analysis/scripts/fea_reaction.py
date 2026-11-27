@@ -15,7 +15,8 @@ solves, fea_static reads the stop-reaction bundle that cad-analysis stop_reactio
 - reaction_unbounded: a stop of the interface touches the pivot axis, so its rigid reaction has no bound. Only a
   contact case approved in a design record closes it, never a load copied from a number.
 - reaction_unknown: the interface is no stop, or its reaction is not established (a stop whose force is unknown has
-  none). The bundle's reason follows.
+  none, or a slide's limit with contact but no face that blocks travel). The bundle's reason follows. A load that names
+  no limit is unknown while any limit is unresolved, even when the other limit has a reaction.
 - reaction_below_design: the load is smaller than the design reaction. With two stops, the larger one governs, unless
   the load names `limit: min | max`: then only that stop's reaction and status apply. A limit with no stop (the parts
   do not touch there) is invalid_case.
@@ -115,6 +116,12 @@ def _basis(layout: Any, hw: Path, bundle: Path, interface: str, entry: Mapping[s
         raise ReactionRefused("reaction_unknown", f"the reaction of {interface} is not established: "
                                                   f"{entry.get('reason') or 'the interface is no stop'}")
     ends = {label: end for label, end in (entry.get("ends") or {}).items() if isinstance(end, Mapping)}
+    unresolved = entry.get("unresolved_limits") if isinstance(entry.get("unresolved_limits"), Mapping) else {}
+    if unresolved and (limit is None or limit in unresolved):
+        # A limit the producer could not resolve has no reaction. A load that names no limit may stand on it, and a load
+        # that names it has nothing to be held to: neither may pass on the other limit's reaction.
+        why = "; ".join(str(unresolved[label]) for label in sorted(unresolved) if limit in (None, label))
+        raise ReactionRefused("reaction_unknown", f"the reaction of {interface} is not established: {why}")
     stops = sorted(label for label, end in ends.items() if end.get("touching") is True)  # a stop exists where the parts touch
     if limit is not None:
         if limit not in stops:
