@@ -754,6 +754,24 @@ class ScopeBeforeRelease(unittest.TestCase):
         self.assertIn("not owed by fit_assembly", strength["scope"]["reason"])
         self.assertEqual(data["statuses"][READBACK]["scope"]["disposition"], "required")
 
+    def test_the_packet_follows_its_schema(self) -> None:
+        registry = load("cad_record_schema_registry", HERE.parent / "scripts" / "schema_registry.py")
+        validator = registry.document_validator(HERE.parent / "schemas", "evidence-packet.schema.json")
+        record = normalized(documents("appearance_concept"))
+        packets = {"fit_assembly": self.assessed("fit_assembly").packet("design_freeze", "c" * 64),
+                   "not_assessed": assess(record, not_assessed_packet(record)).packet("release", "c" * 64),
+                   "no service class": assess(normalized(documents())).packet("concept", "c" * 64)}
+        for label, data in packets.items():
+            with self.subTest(packet=label):
+                self.assertEqual([f"{list(e.absolute_path)}: {e.message}" for e in validator.iter_errors(data)], [])
+
+    def test_the_schema_names_the_results_and_dispositions_the_code_uses(self) -> None:
+        schema = json.loads((HERE.parent / "schemas" / "evidence-packet.schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(schema["properties"]["schema_version"], {"const": evidence.PACKET_SCHEMA_VERSION})
+        self.assertEqual(schema["$defs"]["result"]["enum"], list(evidence.RESULTS))
+        self.assertEqual(schema["$defs"]["scope"]["properties"]["disposition"]["enum"],
+                         list(evidence.project_scope.DISPOSITIONS))
+
 
 class StampTimeScope(unittest.TestCase):
     """What cad-recheck's require_evidence recomputes when it stamps: packet_problems, then packet_blocking, the

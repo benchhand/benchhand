@@ -814,6 +814,12 @@ class RecheckHookTests(unittest.TestCase):
         self.stage_product("detail")
         self.stamp_refused(self.rewrite_packet(self.evidence_packet("detail"), as_version_1), "stamp.packet_version", code=1)
 
+    def test_a_new_stamp_refuses_a_packet_that_breaks_its_schema(self) -> None:
+        def unscoped(packet: dict[str, Any]) -> None:
+            next(iter(packet["statuses"].values())).pop("scope")
+        self.stage_product("detail")
+        self.stamp_refused(self.rewrite_packet(self.evidence_packet("detail"), unscoped), "stamp.packet_schema", code=1)
+
     def test_an_existing_version_1_stamp_still_verifies(self) -> None:
         """A stamp sealed before packet version 2 has no status scope and no rules digest; it still reads."""
         self.stage_product("detail")
