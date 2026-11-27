@@ -46,13 +46,14 @@ Tools. Every `tools` and `tool_access` entry keeps its text for the instructions
 (tool_envelopes.py): hand work reaches with a shipped standard hand envelope; visual, timed and bench
 entries reach nothing; a common tool named by type and size (a "3 mm hex key", a "PH2 screwdriver")
 reaches with a parametric envelope from its cited standard; any other `tools` name is an instruction
-note, never an access obligation. A `tool_access` entry outside a hold says the tool must reach: one that
+note, never an access obligation. A `tool_access` entry says the tool must reach: one that
 neither a shipped envelope nor a cited solid covers keeps access unknown. A `tool_access` entry may name a capability profile, an approach (receiver-local,
 like `direction`), a contact point, a reach and an envelope; an envelope fact whose source carries an artifact (a STEP
 solid of the tool and holder in the operated part's model frame at the engaged pose) overrides the
 shipped envelope, and is how a special tool is checked. An entry without an approach approaches along
 the operation's direction. A hold moves no part: its tools are planned the same way, and one that matches no
-shipped envelope and cites no solid is advisory, never measured. A `tools` entry that names the same tool as a `tool_access` entry (the same shipped
+shipped envelope and cites no solid is advisory, never measured, unless its `tool_access` entry gives an approach or
+contact point: that one keeps access unknown. A `tools` entry that names the same tool as a `tool_access` entry (the same shipped
 designation, so "3 mm hex key" and "Allen key (3 mm)" are one; else the same text) is that entry: it is checked
 once, as the `tool_access` entry says, and keeps its own text for the instructions. An operation that moves no part and that nothing reaches has no access to
 check: its access is not applicable.
@@ -946,19 +947,21 @@ class Reach:
 def _reach(op: AssemblyOperation, index: int, tool: Tool, travels: bool, unknown: list[str],
            notes: list[str], advisory: list[str]) -> Reach | None:
     """The reach of one tool entry; an entry that reaches nothing adds its note, if any, and gives None. A
-    tool_access entry outside a hold says the tool must reach, so one that neither a shipped envelope nor a cited
-    solid covers keeps access unknown. A shipped
+    tool_access entry says the tool must reach, so one that neither a shipped envelope nor a cited solid covers
+    keeps access unknown; on a hold, that holds for an entry given an approach or contact point, while one named
+    without either stays advisory. A shipped
     envelope on a part that travels engages the part it drives; on a part that stays put it acts on one feature of
     it, so it needs the declared contact point: the part's box center is no stand-in for that feature."""
     entry = tool_envelopes.classify(tool.name)
     artifact = tool.envelope_artifact if tool.declared else None
     if artifact is None and entry.role not in tool_envelopes.REACHING:
-        if entry.role == tool_envelopes.NOTE and op.kind == "hold":
-            advisory.append(tool.name)  # a hold's only access is its tools': one no check covers is advised on
-        elif entry.role == tool_envelopes.NOTE and tool.declared:
+        placed = tool.approach is not None or tool.contact is not None
+        if entry.role == tool_envelopes.NOTE and tool.declared and (op.kind != "hold" or placed):
             unknown.append(f"tool {tool.name!r} must reach {op.part} (tool_access), but no shipped envelope or cited "
                            "STEP solid establishes its clearance: cite a STEP solid of the tool as its tool_access "
                            "envelope")
+        elif entry.role == tool_envelopes.NOTE and op.kind == "hold":
+            advisory.append(tool.name)  # a hold's only access is its tools': one no check covers is advised on
         elif entry.role == tool_envelopes.NOTE:
             notes.append(f"{entry.note}: kept as an instruction note, its reach is not checked; cite a STEP solid of "
                          "the tool in tool_access to check it")

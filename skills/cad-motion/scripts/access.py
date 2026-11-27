@@ -46,7 +46,8 @@ most samples without the kernel; ambiguous ones are kernel-measured. A shared vo
 interference threshold is a collision. A segment still unproven, a cited envelope that cannot be read, a
 missing direction or geometry keeps the operation unknown, never a pass. A visual, timed or bench entry
 reaches nothing; a `tools` name that matches no shipped envelope is an instruction note in the outcome's
-uncertainty, never an unknown, while such a tool_access entry outside a hold keeps the operation unknown;
+uncertainty, never an unknown, while such a tool_access entry keeps the operation unknown (on a hold, one given
+an approach or contact point);
 an operation that moves no part and that nothing reaches is not applicable.
 Not covered: curved motion between declared points, part or tool rotation, tool swing and posture, the
 hand's grip, forces, deflection, and any joint pose but the nominal. No path planner: the path is the

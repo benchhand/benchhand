@@ -19,8 +19,8 @@ and gives it a role:
     Inbus keys are one tool), so a size or a tool word inside other text ("PH2 alignment marker") makes no tool,
     and a socket takes the drive the entry names, or none when the standard lists no such drive.
   - note: anything else, including a tool type without a size. As a plain `tools` name it stays an instruction
-    note, never an access obligation; as a tool_access entry outside a hold its access stays unknown until a cited
-    STEP solid (tool_access envelope) checks the special tool.
+    note, never an access obligation; as a tool_access entry its access stays unknown until a cited STEP solid
+    (tool_access envelope) checks the special tool. On a hold, an entry without an approach or contact is advisory.
 
 An envelope is a stack of coaxial cylinders along the tool axis, from the tip (0 mm, at the work) away from the
 work. A cylinder bounds every rotation of the tool about its axis, so the tool's angle about the axis is not
