@@ -643,6 +643,22 @@ class FEASolverCheckTests(unittest.TestCase):
 
 
 class InfoStatusTests(unittest.TestCase):
+    def test_the_report_schema_rejects_negative_counts_and_durations(self) -> None:
+        import jsonschema
+
+        schema = json.loads((SCRIPT.parents[2] / "cad-record" / "schemas" / "preflight-report.schema.json")
+                            .read_text(encoding="utf-8"))
+        validator = jsonschema.Draft202012Validator(schema)
+        report = preflight.Report((preflight.Check("uv", "uv", "pass", True, "d", "", 0.5),)).as_json()
+        validator.validate(report)
+        for mutate in (lambda r: r["counts"].__setitem__("pass", -1), lambda r: r["counts"].__setitem__("fail", -1),
+                       lambda r: r["counts"].__setitem__("warn", -1),
+                       lambda r: r["checks"][0].__setitem__("elapsed_s", -0.1)):
+            broken = json.loads(json.dumps(report))
+            mutate(broken)
+            with self.assertRaises(jsonschema.ValidationError):
+                validator.validate(broken)
+
     def test_the_json_report_with_every_status_matches_its_schema(self) -> None:
         import jsonschema
 
@@ -735,6 +751,13 @@ class StandaloneRunChecksFEATests(unittest.TestCase):
                 setting = preflight.project_fea(Path(directory))
             finally:
                 hw.chmod(0o755)
+        self.assertFalse(setting.enabled)
+        self.assertIn("product.yaml", setting.invalid or "")
+
+    def test_hw_that_is_a_file_is_a_finding_not_absent_configuration(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-hwfile-") as directory:
+            (Path(directory) / "hw").write_text("not a folder\n", encoding="utf-8")
+            setting = preflight.project_fea(Path(directory))
         self.assertFalse(setting.enabled)
         self.assertIn("product.yaml", setting.invalid or "")
 
@@ -914,11 +937,23 @@ class WarmStatusPerProjectTests(unittest.TestCase):
             project = Path(directory) / "project"
             (project / "hw").mkdir(parents=True)
             (project / "hw" / "product.yaml").write_text("flow: [a]\n", encoding="utf-8")
-            code, text = preflight.warm_status(environ, wait_s=0, cwd=project)
+            code, text = preflight.warm_status(environ, wait_s=0.1, cwd=project)
             self.assertEqual(code, 1, text)
             self.assertIn("flow", text)
             (project / "hw" / "product.yaml").write_text("name: widget\n", encoding="utf-8")
-            self.assertEqual(preflight.warm_status(environ, wait_s=0, cwd=project)[0], preflight.EXIT_RUNNING)
+            self.assertEqual(preflight.warm_status(environ, wait_s=0.1, cwd=project)[0], preflight.EXIT_RUNNING)
+
+    def test_a_profile_repaired_between_two_reads_still_reports_the_first_failure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-race-") as directory:
+            environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+            preflight._write_record(preflight.warm_record_path(environ),
+                                    {"state": "running", "pid": os.getpid(), "started_at": "t0"})
+            broken = preflight.FeaSetting(False, f"{directory}/hw/product.yaml: flow.profile must be a mapping")
+            reads = [broken, preflight.FeaSetting(False, None), preflight.FeaSetting(False, None)]
+            with patch.object(preflight, "project_fea", side_effect=reads):
+                code, text = preflight.warm_status(environ, wait_s=0.1, cwd=Path(directory))
+        self.assertEqual(code, 1, text)
+        self.assertIn("flow.profile must be a mapping", text)
 
     def test_info_is_no_evidence_for_a_mandatory_warm_up_check(self) -> None:
         checks = tuple(preflight.Check(i, i, "info" if i == "uv" else "pass", i != "uv", "d", "")
@@ -926,6 +961,27 @@ class WarmStatusPerProjectTests(unittest.TestCase):
         code, text = self.status(None, checks=checks)
         self.assertEqual(code, preflight.EXIT_NO_WARM, text)
         self.assertIn("uv", text)
+
+    def test_a_cached_row_with_a_wrong_field_type_is_unreadable(self) -> None:
+        good = preflight.Report(tuple(preflight.Check(i, i, "pass", True, "ok", "") for i in self.COMPLETE)).as_json()["checks"]
+        for field, value in (("required", "no"), ("required", 0), ("elapsed_s", "1.5"), ("elapsed_s", -1),
+                             ("elapsed_s", True), ("detail", 5), ("id", ""), ("extra", 1)):
+            rows = [*good[:-1], {**good[-1], field: value}]
+            with self.subTest(field=field, value=value), tempfile.TemporaryDirectory(prefix="cad-preflight-bad-") as directory:
+                environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+                preflight._write_record(preflight.warm_record_path(environ), {
+                    "state": "finished", "pid": 1, "started_at": "t0", "finished_at": "t1",
+                    "report": {"checks": rows}})
+                project = Path(directory) / "project"
+                project.mkdir()
+                code, text = preflight.warm_status(environ, cwd=project)
+                self.assertEqual(code, preflight.EXIT_NO_WARM, text)
+                self.assertIn("unreadable", text)
+
+    def test_a_failed_mandatory_check_marked_optional_still_fails_the_status(self) -> None:
+        checks = tuple(preflight.Check(i, i, "fail" if i == "uv" else "pass", i != "uv", "d", "fix")
+                       for i in self.COMPLETE)
+        self.assertEqual(self.status(None, checks=checks)[0], 1)
 
     def test_a_malformed_record_is_not_a_warm_up(self) -> None:
         good = [asdict_check for asdict_check in preflight.Report(tuple(
