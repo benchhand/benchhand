@@ -26,7 +26,7 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "scripts" / "flow_profile.py"
 SKILLS = HERE.parents[1]
 sys.path.insert(0, str(SKILLS.parent / "scripts"))
-from decision_fixture import write_test_decision  # noqa: E402 - the path to scripts/ is put on sys.path just above
+from decision_fixture import decision_path, write_test_decision  # noqa: E402 - the path to scripts/ is put on sys.path just above
 from modload import load_module  # noqa: E402 - the path to scripts/ is put on sys.path just above
 
 flow_profile = load_module("cad_flow_profile", SCRIPT)
@@ -212,7 +212,7 @@ class Record(unittest.TestCase):
             self.assertEqual(asked[field]["status"], "not_applicable", field)
             self.assertEqual(asked[field]["decision"], "DR-001")
             self.assertIn("no FDM process is planned", asked[field]["reason"])
-        record = next((self.hw / "decisions").glob("DR-001-*.md")).read_text(encoding="utf-8")
+        record = decision_path(self.hw, "DR-001").read_text(encoding="utf-8")
         self.assertEqual([line for line in record.splitlines() if line.endswith("| stated |")],
                          ["| motion | auto | stated |"])
         self.assertIn("| processes.fdm.supports | allowed | not applicable |", record)
