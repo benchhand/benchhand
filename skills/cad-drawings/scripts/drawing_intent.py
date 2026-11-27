@@ -1147,15 +1147,16 @@ class Measurer:
             raise IntentError("measurement_failed", f"engraving {feature.id} has no flat floor, and plane {name} "
                               "does not border it; name the plane the cut opens through")
         surface = first[0]
-        if any(not (fg.parallel(f.normal, surface.normal)
-                    and abs(fg.dot(fg.sub(f.point, surface.point), surface.normal)) < EPS) for f in first):
+        inward = fg.scale(fg.unit(surface.normal), -1.0)   # the normal points out of the material
+        if any(fg.dot(fg.unit(f.normal), inward) > 0 or any(
+                abs(fg.dot(fg.sub(p, surface.point), inward)) >= EPS for p in (f.point, *f.boundary_points()))
+               for f in first):   # one sense, and every point of every face on the plane, not just its centroid
             raise IntentError("measurement_failed", f"engraving {feature.id} borders faces of {name} that are not "
                               "one plane; name the single plane the cut opens through")
         for group in _connected(own, index):
             if not borders(group):
                 raise IntentError("measurement_failed", f"engraving {feature.id} has a groove that does not open "
                                   f"through plane {name}; one depth cannot state grooves on different planes")
-        inward = fg.scale(fg.unit(surface.normal), -1.0)   # the normal points out of the material
         depth = max((fg.dot(fg.sub(p, surface.point), inward) for f in own for p in f.boundary_points()), default=0.0)
         if depth < EPS:
             raise IntentError("measurement_failed", f"engraving {feature.id} reaches no depth into the material "
