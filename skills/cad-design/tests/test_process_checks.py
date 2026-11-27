@@ -754,17 +754,17 @@ class RouteProviderTests(Checks):
         return row["outcome"], self.codes(result, row["obligation"])
 
     def test_an_omitted_provider_is_checked_as_the_part_sourcing(self) -> None:
-        for name, sourcing, provider, wanted, unwanted in (
-                ("made to drawing on a local profile", self.BOUGHT, "local", {"route.provider_mismatch"}, set()),
-                ("made to drawing with no named supplier", self.BOUGHT, "outsourced", {"route.supplier_unknown"},
+        for name, sourcing, provider, verdict, wanted, unwanted in (
+                ("made to drawing on a local profile", self.BOUGHT, "local", "fail", {"route.provider_mismatch"}, set()),
+                ("made to drawing with no named supplier", self.BOUGHT, "outsourced", "unknown", {"route.supplier_unknown"},
                  {"route.provider_mismatch"}),
-                ("made in-house on a local profile", {}, "local", set(), {"route.provider_mismatch", "route.supplier_unknown"})):
+                ("made in-house on a local profile", {}, "local", "pass", set(),
+                 {"route.provider_mismatch", "route.supplier_unknown"})):
             with self.subTest(name):
                 outcome, codes = self.route_codes(sourcing, provider)
+                self.assertEqual(outcome, verdict, codes)
                 self.assertTrue(wanted <= set(codes), codes)
                 self.assertEqual(unwanted & set(codes), set(), codes)
-                if "route.provider_mismatch" in wanted:
-                    self.assertEqual(outcome, "fail")
 
 
 # --- row 17: dispatch by process -----------------------------------------------------------------------------------
