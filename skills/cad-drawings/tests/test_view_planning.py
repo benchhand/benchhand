@@ -513,6 +513,47 @@ class FailedBindings(unittest.TestCase):
                 self.assertEqual(finding["code"], "measurement_failed")
                 self.assertIn("mark", finding["message"])
 
+    def v_cut_with_two_opening_faces(self, second: Face, order: tuple[int, int]) -> drawing_intent.Measured:
+        """A 1 mm V-cut whose flanks border two faces of the named opening: the plane z = 10 and ``second``."""
+        def flank(index: int, y: float, other: int) -> Face:
+            top, low = ((10.0, y, 10.0), (50.0, y, 10.0)), ((10.0, 0.0, 9.0), (50.0, 0.0, 9.0))
+            return Face(index, "plane", 1.0, (10.0, y, 9.0, 50.0, 0.0, 10.0),
+                        (Edge(0, top), Edge(1, top), Edge(other, low)), (), point=(30.0, y / 2, 9.5),
+                        normal=(0.0, 0.7071, 0.7071))
+        faces = [rectangle(0, 0, -30, 60, 30, 10), second, flank(2, -1.0, 3), flank(3, 1.0, 2),
+                 rectangle(6, 0, -30, 60, 30, 0)]
+        features = {"bed": ResolvedFeature("bed", "plane_face", (6,)),
+                    "opening": ResolvedFeature("opening", "plane_face", order),
+                    "mark": ResolvedFeature("mark", "engraving", (2, 3), relations={"on": ("opening",)})}
+        part = self.part(features={"bed": {}, "opening": {}, "mark": {}}, notes=[{"reference": "mark"}])
+        return drawing_intent.measure("TST-0013", part, {}, [], Binding(features, {}, ()), faces)
+
+    def assert_v_cut_refused(self, measured: drawing_intent.Measured) -> None:
+        self.assertEqual([c for c in measured.characteristics if c.operation == "depth"], [])
+        (finding,) = [f for f in measured.findings if f.get("feature") == "mark"]
+        self.assertEqual(finding["code"], "measurement_failed")
+        self.assertIn("mark", finding["message"])
+        self.assertIn("one plane", finding["message"])
+
+    def test_a_v_cut_opening_with_a_face_of_opposite_sense_is_refused_whatever_the_face_order(self) -> None:
+        """A face on the same plane that faces the other way is no part of one opening: 1 mm or none, by order."""
+        back = Face(1, "plane", 3600.0, (0.0, -30.0, 10.0, 60.0, 30.0, 10.0), (), (), point=(30.0, 0.0, 10.0),
+                    normal=(0.0, 0.0, -1.0))
+        for order in ((0, 1), (1, 0)):
+            with self.subTest(opening_faces=order):
+                self.assert_v_cut_refused(self.v_cut_with_two_opening_faces(back, order))
+
+    def test_a_v_cut_opening_with_a_face_tilted_off_the_plane_is_refused_whatever_the_face_order(self) -> None:
+        """Parallel within tolerance and level at the centroid, yet 0.02 mm off the plane at its ends: 1.00 or 1.02 mm."""
+        corners = [(10.0, -30.0, 9.98), (50.0, -30.0, 10.02), (50.0, 30.0, 10.02), (10.0, 30.0, 9.98)]
+        edges = tuple(Edge(None, (corners[k], corners[(k + 1) % 4])) for k in range(4))
+        tilted = Face(1, "plane", 2400.0, (10.0, -30.0, 9.98, 50.0, 30.0, 10.02), edges, (), point=(30.0, 0.0, 10.0),
+                      normal=(-0.001, 0.0, 1.0))
+        self.assertTrue(fg.parallel(tilted.normal, (0.0, 0.0, 1.0)))
+        for order in ((0, 1), (1, 0)):
+            with self.subTest(opening_faces=order):
+                self.assert_v_cut_refused(self.v_cut_with_two_opening_faces(tilted, order))
+
     def test_an_axis_distance_between_a_bound_cylinder_and_a_bound_plane_is_named(self) -> None:
         features = {"bed": ResolvedFeature("bed", "plane_face", (0,)), "pin": ResolvedFeature("pin", "shaft", (1,))}
         part = self.part(features={"bed": {}, "pin": {}}, dimensions=[
