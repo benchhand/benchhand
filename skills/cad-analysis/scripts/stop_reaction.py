@@ -312,13 +312,31 @@ def applied_force(record: Any, interface: Any) -> tuple[float | None, list[dict[
     read: list[dict[str, Any]] = []
     for ident in ids:
         magnitude = by_id[ident].magnitude if ident in by_id else None
-        if magnitude is None or not magnitude.known or magnitude.value.dimension != "force":
+        if magnitude is None or not magnitude.known:
             return None, read, f"load {ident} has no known force magnitude"
+        newtons, why = force_bounds_n(ident, magnitude.value)
+        if newtons is None:
+            return None, read, why
         direction = by_id[ident].direction
         if direction is None:
             return None, read, f"load {ident} has no valid direction"
-        read.append({"load": ident, "newtons": magnitude.value.to("N").bounds[1], "direction": list(direction)})
+        read.append({"load": ident, "newtons": newtons, "direction": list(direction)})
     return max(row["newtons"] for row in read), read, ""
+
+
+def force_bounds_n(ident: str, value: Any) -> tuple[float | None, str]:
+    """(the upper bound in N of a load's force, "") or (None, why not): `value` must be a force quantity with
+    finite, non-negative bounds, since a negative bound reverses the load and a bare number carries no unit."""
+    if not isinstance(value, intent.Quantity):
+        return None, f"load {ident} magnitude is not a quantity with a unit"
+    if value.dimension != "force":
+        return None, f"load {ident} has no known force magnitude"
+    lower, upper = value.to("N").bounds
+    if not (math.isfinite(lower) and math.isfinite(upper)):
+        return None, f"load {ident} magnitude is not finite"
+    if lower < 0:
+        return None, f"load {ident} magnitude is negative ({lower:.4g} N), which would reverse the load"
+    return upper, ""
 
 
 def axial_force(loads: Sequence[Mapping[str, Any]], axis: Vec, label: str) -> float:
