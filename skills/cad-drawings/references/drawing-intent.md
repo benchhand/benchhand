@@ -158,7 +158,10 @@ A catalogue item (`procurement.mode: catalog`) with `drawing.type: vendor_specif
 - The procurement table prints designation, manufacturer and part numbers, specification and hash.
 
 `procurement` needs `designation`, `manufacturer`, `manufacturer_part_number` and `specification`
-(`reference`, `revision`, `sha256`, and an `artifact` under `hw/` or a `url`). A standard part names its
+(`reference`, `revision`, `sha256`, and an `artifact` or a `url`). Store the artifact in the part's
+own `hw/parts/<PN>/sources/` directory. Record its path relative to `hw/`.
+
+A standard part names its
 product standard in `standard` (such as `DIN 471`, from ISO, IEC, EN, DIN, BS, JIS, ANSI, ASME, SAE, NAS or
 MS) and is ordered by that standard's designation, which `designation` must state (`DIN 471 - 5x0.6`): any
 conforming source supplies it, so it needs no manufacturer or manufacturer part number. A field the buyer

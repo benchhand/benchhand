@@ -98,7 +98,7 @@
      "meaning": "the assessed material, process and architecture candidates and the recommendation a decision confirms"},
     {"id": "record.manufacturing_sources", "path": "hw/manufacturing/sources", "kind": "record",
      "writer": "lead, accepting supporting evidence", "stage": "ground", "mutability": "controlled",
-     "meaning": "frozen datasheets, standards, calibration records, test reports and supplier evidence that facts name with their sha256; design inputs every version snapshots",
+     "meaning": "hash-bound manufacturing evidence, including calibration records, tool evidence and material datasheets; not part procurement specifications",
      "files": [{"name": "**", "role": "evidence"}]},
     {"id": "record.manufacturing_guidelines", "path": "hw/manufacturing/guidelines", "kind": "record",
      "writer": "lead, adding a project guideline set", "stage": "ground", "mutability": "controlled",
@@ -324,7 +324,7 @@
      "action": "Scratch lives in the project's .cad-work/ beside hw/, never inside it. Move the tree there; nothing in it counts as record evidence. Nothing was changed."},
     {"code": "layout.misplaced", "referenced_by": "procurement/specification/artifact",
      "canonical": "hw/parts/{PN}/sources/{NAME}",
-     "message": "{PATH} is procurement evidence for {PN} outside its sources/ folder",
+     "message": "{PATH} is procurement evidence for {PN} outside hw/parts/{PN}/sources/",
      "action": "Move the file to hw/parts/{PN}/sources/ and update procurement/specification/artifact in hw/parts/{PN}/part.yaml; its sha256 is unchanged. Nothing was changed."}
   ],
   "classes": [

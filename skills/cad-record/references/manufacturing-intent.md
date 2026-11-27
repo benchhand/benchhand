@@ -16,7 +16,15 @@ An optical requirement is a hard constraint. Opaque routes are ineligible. Consi
 
 ## Version-2 record contract
 
-The one project version is `product.yaml: record_version: 2`; a missing or unknown version is refused. V2 requires `product.use_case`, requirements lists, per-part `intent`, interface functional contracts and top-level `assembly.operations` (which is the sole authority; v2 `drawing.operations` is rejected). A fact is known only with source and basis, or explicitly unknown/not applicable with a reason. Known estimates include uncertainty; assumed facts cite a bounded assumption; allowables include conditions and derivation. Supporting source files are hash-bound under `hw/manufacturing/sources/` or part sources. Process and material profiles have independent ids and remain separate from requirements.
+The one project version is `product.yaml: record_version: 2`; a missing or unknown version is refused. V2 requires `product.use_case`, requirements lists, per-part `intent`, interface functional contracts and top-level `assembly.operations` (which is the sole authority; v2 `drawing.operations` is rejected). A fact is known only with source and basis, or explicitly unknown/not applicable with a reason. Known estimates include uncertainty; assumed facts cite a bounded assumption; allowables include conditions and derivation. Process and material profiles have independent ids and remain separate from requirements.
+
+Store hash-bound sources for facts in `hw/manufacturing/sources/` or the relevant part's `hw/parts/<PN>/sources/` directory. Use `hw/manufacturing/sources/` for calibration records and tool evidence. Keep procurement specifications, such as datasheets cited by `procurement.specification.artifact`, in the part's own `hw/parts/<PN>/sources/` directory. Record the artifact path relative to `hw/` and its SHA-256 in `part.yaml`.
+
+Before freezing a specification, match `specification_ref` and `specification_rev` in `bom.csv` to `procurement.specification.reference` and `procurement.specification.revision` in `part.yaml`, respectively. If they differ, regenerate the BOM from the current part records. Replace `ASSEMBLY.step` with the path to the STEP assembly.
+
+```sh
+uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-bom/scripts/bom.py ASSEMBLY.step --hw hw
+```
 
 The use case records status/decision, service class, purpose/users, temperature and environment, loads, motion/duty/life, accuracy/finish/stability, failure consequences/severity/standards/supervision/authority, quantity/budget/lead time/maintenance/repair, actual capability/operator/outsourcing, release purpose/limits/exclusions, and evidence policy. Requirements retain acceptance criteria and may scope subjects, conditions, risk, evidence level and waiver policy. `preferences[]`, `assumptions[]` and `open_questions[]` are distinct; resolved questions need a resolution source or decision.
 
