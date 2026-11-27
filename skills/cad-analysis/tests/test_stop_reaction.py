@@ -392,6 +392,21 @@ class StopGeometryTests(unittest.TestCase):
         self.assertAlmostEqual(ends["max"]["reaction"]["design_reaction_n"], 12.0, places=9)
         self.assertEqual((code, result["result"], result["findings"]), (0, "pass", []))
 
+    def test_a_load_magnitude_that_is_not_a_non_negative_force_is_a_named_unknown(self) -> None:
+        # A bare number has no unit, a negative force would reverse the load, and an interval reaching below zero
+        # has a bound that reverses it: none of them is projected onto the slide axis.
+        cases = (("bare-number", fx.known(30), "not a quantity"),
+                 ("negative", fx.known(fx.quantity(-30.0, "N")), "negative"),
+                 ("interval-below-zero", fx.known(fx.quantity(lower=-5.0, upper=30.0, units="N")), "negative"))
+        for name, magnitude, reason in cases:
+            with self.subTest(case=name):
+                overrides = [{"magnitude": magnitude}, {"magnitude": magnitude}]
+                code, result = self.run_stop(f"slide-{name}", joint=self.SLIDE, variant="disk", load_overrides=overrides)
+                [row] = result["outcomes"]
+                self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
+                self.assertIn(reason, row["uncertainty"])
+                self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
     def test_a_prismatic_stop_with_unknown_loads_is_unknown_never_pass(self) -> None:
         code, result = self.run_stop("slide-unknown", joint=self.SLIDE, variant="disk", loads="unknown")
         [row] = result["outcomes"]
