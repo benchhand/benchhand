@@ -316,10 +316,11 @@ def workspace_lock(work_fd: int) -> Iterator[None]:
 STAGE = re.compile(r"^sync-[0-9a-f]{8}$")
 
 
-def link_tree(source_fd: int, dest_fd: int) -> None:
+def link_tree(source_fd: int, dest_fd: int, modes: list[tuple[tuple[str, ...], int]], above: tuple[str, ...] = ()) -> None:
     """Make `dest_fd` a hard-linked copy of the tree under `source_fd`. No file data is copied; a staged
-    file is only ever replaced by a rename, which leaves the original inode alone. Directories keep their
-    mode plus owner access, so a stage can always be removed. Links stay links."""
+    file is only ever replaced by a rename, which leaves the original inode alone. A staged directory is
+    owner-only while it is built, so the stage can be changed and removed; the real mode of each one goes
+    to `modes`, and restore_modes gives it back before the swap. Links stay links."""
     with os.scandir(source_fd) as entries:
         for entry in entries:
             name = entry.name
@@ -329,8 +330,8 @@ def link_tree(source_fd: int, dest_fd: int) -> None:
                 os.mkdir(name, 0o700, dir_fd=dest_fd)
                 below_source, below_dest = os.open(name, DIR_FLAGS, dir_fd=source_fd), os.open(name, DIR_FLAGS, dir_fd=dest_fd)
                 try:
-                    link_tree(below_source, below_dest)
-                    os.fchmod(below_dest, (os.fstat(below_source).st_mode & 0o7777) | 0o700)
+                    modes.append(((*above, name), stat.S_IMODE(os.fstat(below_source).st_mode)))
+                    link_tree(below_source, below_dest, modes, (*above, name))
                 finally:
                     os.close(below_source)
                     os.close(below_dest)
@@ -338,14 +339,61 @@ def link_tree(source_fd: int, dest_fd: int) -> None:
                 os.link(name, name, src_dir_fd=source_fd, dst_dir_fd=dest_fd, follow_symlinks=False)
 
 
+def restore_modes(root_fd: int, modes: list[tuple[tuple[str, ...], int]]) -> None:
+    """Give every staged directory still present its real mode, the deepest first so a parent stays open."""
+    for names, mode in sorted(modes, key=lambda item: len(item[0]), reverse=True):
+        try:
+            fd = descend(root_fd, names)
+        except (FileNotFoundError, UsageError):
+            continue  # the plan removed it, or replaced it by a file
+        try:
+            os.fchmod(fd, mode)
+        finally:
+            os.close(fd)
+
+
+def make_removable(dir_fd: int) -> None:
+    """Grant the owner full access to every directory below `dir_fd` so rmtree can empty it. Only
+    directories change, and only in the tree about to be deleted, never a file (a file may be shared)."""
+    with os.scandir(dir_fd) as entries:
+        names = [entry.name for entry in entries if entry.is_dir(follow_symlinks=False)]
+    for name in names:
+        try:
+            fd = os.open(name, DIR_FLAGS, dir_fd=dir_fd)
+        except PermissionError:
+            os.chmod(name, 0o700, dir_fd=dir_fd)
+            fd = os.open(name, DIR_FLAGS, dir_fd=dir_fd)
+        try:
+            os.fchmod(fd, stat.S_IMODE(os.fstat(fd).st_mode) | 0o700)
+            make_removable(fd)
+        finally:
+            os.close(fd)
+
+
 def discard_stage(work_fd: int, name: str) -> None:
+    stage_fd = os.open(name, DIR_FLAGS, dir_fd=work_fd)
+    try:
+        make_removable(stage_fd)
+    finally:
+        os.close(stage_fd)
     shutil.rmtree(name, dir_fd=work_fd)
 
 
-def recover_staging(work_fd: int) -> None:
+def discard_or_warn(work_fd: int, name: str, warnings: list[str]) -> None:
+    """Remove a stage that no longer matters. A failure is a warning, not an error: the next command
+    that takes the lock tries again."""
+    try:
+        discard_stage(work_fd, name)
+    except OSError as error:
+        warnings.append(f"could not remove {name} from the workspace ({error}); the next sync or deliver tries again")
+
+
+def recover_staging(work_fd: int) -> list[str]:
     """Under the lock, settle every staging directory a killed sync left. The workspace is then the old
     one or the new one, never a mix: swap_in's three steps leave hw/ missing (put old-hw back), the new hw/
-    in place with its baseline still staged (put the old one back), or all done (nothing to undo)."""
+    in place with its baseline still staged (put the old one back), or all done (nothing to undo). Removing
+    the stage afterwards can fail without harm; that is returned as a warning."""
+    warnings: list[str] = []
     with os.scandir(work_fd) as entries:
         names = sorted(entry.name for entry in entries if STAGE.match(entry.name) and entry.is_dir(follow_symlinks=False))
     for name in names:
@@ -360,7 +408,8 @@ def recover_staging(work_fd: int) -> None:
                 os.rename("old-hw", "hw", src_dir_fd=stage_fd, dst_dir_fd=work_fd)
         finally:
             os.close(stage_fd)
-        discard_stage(work_fd, name)
+        discard_or_warn(work_fd, name, warnings)
+    return warnings
 
 
 def swap_in(work_fd: int, stage_fd: int) -> None:
@@ -564,13 +613,13 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
 
 def sync_workspace(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
     with workspace_lock(work_fd):
-        recover_staging(work_fd)
+        warnings = recover_staging(work_fd)
         baseline = load_baseline(work, work_fd)
         if Path(baseline["hw"]) != hw:
             raise UsageError(f"{work} was initialised from {baseline['hw']}, not {hw}")
         scratch_fd = descend(work_fd, ["hw"])
         try:
-            report = stage_and_swap(hw, unit, work, work_fd, scratch_fd, baseline)
+            report = stage_and_swap(hw, unit, work, work_fd, scratch_fd, baseline, warnings)
         finally:
             os.close(scratch_fd)
     return (1 if report["conflicts"] else 0), report
@@ -617,8 +666,10 @@ def build_stage(hw: Path, scratch_fd: int, stage_fd: int, plan: SyncPlan, baseli
     os.mkdir("hw", 0o700, dir_fd=stage_fd)
     new_fd = os.open("hw", DIR_FLAGS, dir_fd=stage_fd)
     try:
-        link_tree(scratch_fd, new_fd)
-        os.fchmod(new_fd, (os.fstat(scratch_fd).st_mode & 0o7777) | 0o700)
+        modes: list[tuple[tuple[str, ...], int]] = []
+        link_tree(scratch_fd, new_fd, modes)
+        modes.append(((), stat.S_IMODE(os.fstat(scratch_fd).st_mode)))
+        os.fchmod(new_fd, 0o700)
         for path in plan.paths:
             if path not in plan.lead:
                 remove_synced(new_fd, path)
@@ -630,6 +681,7 @@ def build_stage(hw: Path, scratch_fd: int, stage_fd: int, plan: SyncPlan, baseli
                 report["modified" if path in files else "added"].append(path)
                 files[path] = plan.lead[path]
         report["seeded_store_files"] = seed_store(hw, new_fd)
+        restore_modes(new_fd, modes)
     finally:
         os.close(new_fd)
     write_baseline(stage_fd, baseline)
@@ -637,7 +689,7 @@ def build_stage(hw: Path, scratch_fd: int, stage_fd: int, plan: SyncPlan, baseli
 
 
 def stage_and_swap(hw: Path, unit: str, work: Path, work_fd: int, scratch_fd: int,
-                   baseline: dict[str, Any]) -> dict[str, Any]:
+                   baseline: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
     """All or nothing. Preflight with reads only, build the whole new workspace state (hw/ and baseline) in
     a sibling staging directory made with an exclusive mkdir, verify it, then swap it in. Any failure before
     the swap removes the stage and leaves the workspace as it was; a killed run leaves a stage that the next
@@ -662,9 +714,10 @@ def stage_and_swap(hw: Path, unit: str, work: Path, work_fd: int, scratch_fd: in
         except OSError as error:
             recover_staging(work_fd)
             raise Finding("sync-failed", f"the swap stopped and was undone: {error}") from error
-        discard_stage(work_fd, name)
+        discard_or_warn(work_fd, name, warnings)  # the swap has committed: a cleanup failure no longer fails the run
     finally:
         os.close(stage_fd)
+    report["warnings"] = warnings
     report.update({"status": "conflict" if plan.conflicts else "synced", "unit": unit,
                    "scratch_hw": str(work / "hw"), "conflicts": sorted(plan.conflicts)})
     if plan.conflicts:
@@ -840,8 +893,10 @@ def deliver(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
 
 def deliver_workspace(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
     with workspace_lock(work_fd):
-        recover_staging(work_fd)
-        return deliver_locked(hw, unit, work, work_fd)
+        warnings = recover_staging(work_fd)
+        code, report = deliver_locked(hw, unit, work, work_fd)
+        report["warnings"] = warnings
+        return code, report
 
 
 def deliver_locked(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
