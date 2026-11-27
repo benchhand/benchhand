@@ -1213,6 +1213,32 @@ class StackupCliTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertTrue((hw / "analysis" / "v1" / "pn-stack").is_dir())
 
+    def test_a_pn_stack_judges_the_obligation_of_the_surface_it_measures(self) -> None:
+        """TST-0001 has two seal surfaces on seal_groove: seal_inner (region inner) keeps the plain feature.fit id and
+        seal_outer (region outer) gets ~seal_outer. A stack of the outer region judges ~seal_outer. A stack that names
+        no region could be either surface, so it judges neither and says so."""
+        documents = closing_gap_documents()
+        documents["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+            {"id": f"seal_{side}", "feature": "seal_groove", "region": side, "role": "seal", "dimension_state": "assembled"}
+            for side in ("inner", "outer")]
+        cases = {"outer region": ({"region": "outer"}, "feature.fit@TST-0001#seal_groove~seal_outer", []),
+                 "no region": ({}, None, ["stack.obligation_ambiguous"])}
+        for case, (region, wanted, ambiguous) in cases.items():
+            with self.subTest(case), tempfile.TemporaryDirectory() as directory:
+                hw = fx.write_record(Path(directory) / "project" / "hw", documents)
+                stack = self.assembly_stack()
+                stack["subject"] = {"PN": "TST-0001", "feature": "seal_groove", **region}
+                stack_case = write_case(hw, "pn-stack", stack)
+                snapshot_version(hw)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                    stackup.main([str(stack_case), "--hw", str(hw), "--version", "v1"])
+                result = json.loads(out.getvalue())
+                self.assertEqual([row.get("obligation") for row in result["obligations"]], [wanted])
+                self.assertEqual([code for code in codes(result) if code == "stack.obligation_ambiguous"], ambiguous)
+                if wanted is None:
+                    self.assertIsNone(result["check_bundle"])
+
     def test_a_bundle_made_before_the_flag_is_refused_with_the_flag_off(self) -> None:
         """A bundle sealed with no flag key (the recipe before the flag) may hold a calibrated clearance. The flag-off rerun
         seals its own value, so it never reuses that bundle."""
