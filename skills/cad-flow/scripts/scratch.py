@@ -86,6 +86,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Callable, Iterator, Sequence
@@ -322,38 +323,58 @@ def write_baseline(work_fd: int, baseline: dict[str, Any]) -> None:
     write_file(work_fd, "baseline.json", (json.dumps(baseline, indent=2) + "\n").encode("utf-8"))
 
 
-def seed_store(hw: Path, scratch_hw: Path) -> int:
+def seed_store(hw: Path, scratch_fd: int) -> int:
     """Hard-link HW's part store (cad-record layout cache.part_objects, cache.part_records) into the
-    scratch copy and return how many files were linked. The store's writers only rename onto a name and
-    never write a file in place, so no scratch write reaches HW through a link; objects stay read-only.
-    Where no hard link can be made (another filesystem) seeding stops, and the scratch build builds the
-    rest itself; nothing is copied, because the store can be as large as every version together."""
+    scratch copy open as `scratch_fd` and return how many files were linked. The store's writers only
+    rename onto a name and never write a file in place, so no scratch write reaches HW through a link;
+    objects stay read-only. Both trees are walked through descriptors opened without following links,
+    and every destination directory and leaf is checked before the first link is made. Where no hard link
+    can be made (another filesystem) seeding stops, and the scratch build builds the rest itself;
+    nothing is copied, because the store can be as large as every version together."""
     lay, seeded = layout.load(), 0
-    wanted: list[Path] = []
-    for entry_id in ("cache.part_objects", "cache.part_records"):
-        folder = layout.locate(hw, str(PurePosixPath(lay.entry(entry_id).path).parent))
-        for path in sorted(folder.iterdir()) if folder.is_dir() else []:
-            match = lay.classify(layout.relative(hw, path))
-            if match is not None and match.entry.id == entry_id and not path.is_symlink() and path.is_file():
-                wanted.append(path.relative_to(hw))
-    scratch_fd = open_dir(scratch_hw)
-    opened: dict[Path, int] = {}
+    hw_fd = open_dir(hw.resolve())
+    opened: list[int] = []
     try:
-        for relative in wanted:  # every destination is opened (a link refused) before the first file is linked
-            if relative.parent not in opened:
-                opened[relative.parent] = descend(scratch_fd, relative.parent.parts, create=True)
-        for relative in wanted:
-            if (scratch_hw / relative).exists():
+        wanted: list[tuple[int, int, str]] = []  # source directory, destination directory, name
+        for entry_id in ("cache.part_objects", "cache.part_records"):
+            folder = PurePosixPath(lay.entry(entry_id).path).parent.parts[1:]
+            try:
+                source_fd = descend(hw_fd, folder)
+            except FileNotFoundError:
+                continue
+            opened.append(source_fd)
+            names = sorted(entry.name for entry in os.scandir(source_fd)
+                           if entry.is_file(follow_symlinks=False)
+                           and (match := lay.classify(f"hw/{'/'.join(folder)}/{entry.name}")) is not None
+                           and match.entry.id == entry_id)
+            if names:
+                dest_fd = descend(scratch_fd, folder, create=True)
+                opened.append(dest_fd)
+                wanted += [(source_fd, dest_fd, name) for name in names]
+        for _, dest_fd, name in wanted:
+            if exists_at(dest_fd, name) and stat.S_ISLNK(os.stat(name, dir_fd=dest_fd, follow_symlinks=False).st_mode):
+                raise UsageError(f"scratch contains a symlink at the cache file {name}")
+        for source_fd, dest_fd, name in wanted:
+            if exists_at(dest_fd, name):
                 continue
             try:
-                os.link(hw / relative, relative.name, dst_dir_fd=opened[relative.parent], follow_symlinks=False)
+                os.link(name, name, src_dir_fd=source_fd, dst_dir_fd=dest_fd, follow_symlinks=False)
             except OSError:
                 return seeded
             seeded += 1
     finally:
-        for fd in (scratch_fd, *opened.values()):
+        for fd in (hw_fd, *opened):
             os.close(fd)
     return seeded
+
+
+def exists_at(dir_fd: int, name: str) -> bool:
+    """Whether `name` exists in the open directory as anything, a dangling link included."""
+    try:
+        os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[str, Any]]:
@@ -371,7 +392,11 @@ def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[
     if not gitignore.exists():
         gitignore.write_text("*\n", encoding="utf-8")
     shutil.copytree(hw, work / "hw", ignore=skips(hw))
-    seeded = seed_store(hw, work / "hw")
+    scratch_fd = open_dir(work / "hw")
+    try:
+        seeded = seed_store(hw, scratch_fd)
+    finally:
+        os.close(scratch_fd)
     for pn in sorted(set(parts)):
         if not (hw / "parts" / pn).exists():
             (work / "hw" / "parts" / pn).mkdir(parents=True, exist_ok=True)
@@ -508,7 +533,7 @@ def apply_sync(hw: Path, unit: str, scratch_hw: Path, scratch_fd: int, work_fd: 
     removed: list[str] = []
     conflicts: list[str] = []
     plan: list[str] = []
-    seeded = seed_store(hw, scratch_hw)  # refuses a linked cache directory before anything else is written
+    seeded = seed_store(hw, scratch_fd)  # refuses a linked cache directory before anything else is written
     for path in sorted(set(lead) | set(base)):
         if lead.get(path) == base.get(path):
             continue
