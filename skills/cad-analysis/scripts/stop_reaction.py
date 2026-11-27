@@ -345,15 +345,26 @@ def applied_force(record: Any, interface: Any, chain: Any | None = None) -> tupl
         newtons, why = force_bounds_n(ident, magnitude.value)
         if newtons is None:
             return None, read, why
-        direction = by_id[ident].direction
-        size = math.sqrt(dot(direction, direction)) if direction is not None else 0.0
-        if direction is None or not math.isfinite(size) or size <= 0.0:
-            return None, read, f"load {ident} has no valid direction"
-        frame, why = load_frame(chain, ident, by_id[ident].application) if chain is not None else (None, "")
-        if why:
-            return None, read, why
-        read.append({"load": ident, "newtons": newtons, "direction": list(scale(direction, 1.0 / size)), "frame": frame})
+        row: dict[str, Any] = {"load": ident, "newtons": newtons}
+        if chain is not None:  # only a slide projects the load: a pivot's moment takes the force alone
+            placed, why = load_direction(chain, by_id[ident])
+            if placed is None:
+                return None, read, why
+            row.update(placed)
+        read.append(row)
     return max(row["newtons"] for row in read), read, ""
+
+
+def load_direction(chain: Any, load: Any) -> tuple[dict[str, Any] | None, str]:
+    """({"direction": the unit direction, "frame": the occurrence id that states it or None}, "") or (None, why not)."""
+    direction = load.direction
+    size = math.sqrt(dot(direction, direction)) if direction is not None else 0.0
+    if direction is None or not math.isfinite(size) or size <= 0.0:
+        return None, f"load {load.id} has no valid direction"
+    frame, why = load_frame(chain, load.id, load.application)
+    if why:
+        return None, why
+    return {"direction": list(scale(direction, 1.0 / size)), "frame": frame}, ""
 
 
 def force_bounds_n(ident: str, value: Any) -> tuple[float | None, str]:
