@@ -84,9 +84,39 @@ def validator(definition: str):
     return fx.ref_validator(f"https://srobroek.com/cad/schemas/manufacturing.schema.json#/$defs/{definition}")
 
 
+def evidence_validator():
+    return fx.ref_validator("https://srobroek.com/cad/schemas/stop-reaction-evidence.schema.json")
+
+
 def covered(path: Path, declared: tuple[Path, ...]) -> bool:
     path = path.resolve()
     return any(path == entry.resolve() or path.is_relative_to(entry.resolve()) for entry in declared)
+
+
+class EvidenceSchemaTests(unittest.TestCase):
+    """The evidence is a published output that FEA reads (fea_reaction.py), so it has a registered schema. Kernel-free.
+    Every geometry test below also validates the evidence its run emits."""
+
+    def test_the_schema_refuses_an_outcome_it_does_not_define_and_an_unknown_key(self) -> None:
+        refused = ({"interfaces": {"IF-006": {"outcome": "maybe"}}, "limits": []},
+                   {"interfaces": {"IF-006": {"outcome": "pass", "stray": 1}}, "limits": []},
+                   {"interfaces": {}})
+        for detail in refused:
+            with self.subTest(detail=detail):
+                self.assertNotEqual(list(evidence_validator().iter_errors(detail)), [])
+
+    def test_the_schema_takes_a_slide_end_with_its_angle_and_bound(self) -> None:
+        end = {"joint_value": 0, "touching": True, "gap_mm": 0.0, "overlap_volume_mm3": 0.0, "overlap_depth_mm": 0.0,
+               "farthest_point_from_axis_mm": None, "patch": None, "blocks_travel": True, "contact_angle_deg": 2.0,
+               "reaction": {"status": "bounded", "moment_n_mm": 0.0, "design_reaction_n": 30.018286, "rigid_lower_bound_n": 30.0,
+                            "uniform_pressure_n": None, "compliant_stop_n": None, "pin_load_bound_n": None, "message": "m",
+                            "axial_component_n": 30.0}}
+        detail = {"interfaces": {"IF-006": {"outcome": "pass", "pivot": "J-001", "joint_type": "prismatic", "moving": "TST-0302",
+                                            "fixed": "TST-0301", "contact_tolerance": {"mm": 0.15, "source": "constant"},
+                                            "ends": {"min": end}, "recorded_contact_load_n": None, "peak_force_n": 30.0,
+                                            "loads": [{"load": "L", "newtons": 30.0, "direction": [0, 0, -1], "frame": None}]}},
+                  "limits": ["text"]}
+        self.assertEqual([error.message for error in evidence_validator().iter_errors(detail)], [])
 
 
 class DeclaredDataTests(unittest.TestCase):
@@ -150,6 +180,7 @@ class StopGeometryTests(unittest.TestCase):
         for row in result["outcomes"]:
             self.assertEqual(list(outcome.iter_errors(row)), [], row["obligation"])
         self.assertEqual([o["id"] for o in result["expected"]], ["engineering.stop_reaction@IF-006"])
+        self.assertEqual([error.message for error in evidence_validator().iter_errors(result["detail"])], [], "evidence schema")
         return proc.returncode, result
 
     def test_the_latched_stop_is_bounded_by_its_nearest_edge_and_the_open_stop_is_unbounded(self) -> None:
