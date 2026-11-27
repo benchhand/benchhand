@@ -86,6 +86,7 @@ MAX_SCREENSHOT_BYTES = 32 * 1024 * 1024
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 HEARTBEAT_S = 15.0
 NOTIFY_TIMEOUT_S = 1.0
+RECONNECT_MS = 1000  # the retry delay an /events client is told to wait while the server stops
 CLIENT_DISCONNECTS = (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)
 LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
 
@@ -321,10 +322,28 @@ class Handler(BaseHTTPRequestHandler):
         ctype = CONTENT_TYPES.get(file.suffix, "application/octet-stream")
         self._send(HTTPStatus.OK, file.read_bytes(), ctype)
 
+    def _retry_later(self) -> None:
+        """Answer an /events request that arrived as the idle stop committed.
+
+        EventSource treats any non-200 answer as terminal and never reconnects. A 200 event stream that carries a
+        retry delay and then ends makes it reconnect, until the server is gone and the connection fails.
+        """
+        self.close_connection = True
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            self.wfile.write(f"retry: {RECONNECT_MS}\n\n".encode())
+            self.wfile.flush()
+        except CLIENT_DISCONNECTS:
+            pass
+
     def _events(self) -> None:
         watcher = self.watcher
         if not watcher.client_connected():
-            self._error(HTTPStatus.SERVICE_UNAVAILABLE, "the viewer server is stopping (idle timeout)")
+            self._retry_later()
             return
         try:
             self.send_response(HTTPStatus.OK)

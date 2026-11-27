@@ -840,16 +840,23 @@ class ServerTimeout(InProcessServer):
                         sock.sendall(f"GET /events HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode())
                         head = sock.recv(4096)
                         if b" 200 " not in head.split(b"\r\n")[0]:
-                            continue  # refused (503) or never answered: it was told, not cut off
-                        # A client that got its stream holds the server open: the stream must stay up.
-                        sock.settimeout(1.0)
-                        try:
-                            while True:
-                                if not sock.recv(4096):
+                            continue  # never answered: it was told nothing, not cut off
+                        # A client that got its stream holds the server open: the stream must stay up for a
+                        # second. The deadline is checked on every read, heartbeats included, so a stream that
+                        # keeps talking cannot hold the test past it.
+                        sock.settimeout(0.2)
+                        held_until = min(deadline, time.monotonic() + 1.0)
+                        received = head
+                        while time.monotonic() < held_until:
+                            try:
+                                chunk = sock.recv(4096)
+                            except TimeoutError:
+                                continue
+                            received += chunk
+                            if not chunk:
+                                if b"event: hello" in received:
                                     cut_off.append("EOF on an accepted /events stream")
-                                    break
-                        except TimeoutError:
-                            pass  # still open a second later: not cut off
+                                break  # a retry notice ends on purpose: the client reconnects
                     except OSError:
                         pass
                     if self._server_done.is_set():
