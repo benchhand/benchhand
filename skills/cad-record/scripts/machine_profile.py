@@ -135,12 +135,14 @@ def profile_problems(profile: Mapping[str, Any], catalog: guidelines.Catalog) ->
 
 
 def _artifacts(node: Any) -> Iterator[str]:
-    """The `artifact` paths that sources below `node` name."""
+    """The `artifact` paths that sources below `node` name, except a calibration_state's: that provenance is wording and
+    never makes an artifact's error one of the profile's."""
     if isinstance(node, Mapping):
         if isinstance(node.get("artifact"), str):
             yield node["artifact"]
-        for value in node.values():
-            yield from _artifacts(value)
+        for key, value in node.items():
+            if key != "calibration_state":
+                yield from _artifacts(value)
     elif isinstance(node, list):
         for value in node:
             yield from _artifacts(value)

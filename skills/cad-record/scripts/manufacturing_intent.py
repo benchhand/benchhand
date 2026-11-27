@@ -946,8 +946,13 @@ def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
         _schema_bases(DRAFT202012.create_resource(validator.schema), "", bases)
         for top in sorted(validator.iter_errors(document), key=lambda e: [str(p) for p in e.absolute_path]):
             error = _deepest_error(top, registry, bases)
-            pointer = "/".join(str(part) for part in error.absolute_path)
-            problems.append(Problem("intent.schema", f"hw/{rel}", pointer, f"{pointer + ': ' if pointer else ''}{error.message}"))
+            parts = [str(part) for part in error.absolute_path]
+            pointer = "/".join(parts)
+            message = f"{pointer + ': ' if pointer else ''}{error.message}"
+            if rel == "manufacturing/capabilities.yaml" and parts[:1] == ["profiles"] and parts[2:3] == ["calibration_state"]:
+                problems.append(Problem("intent.calibration_state", f"hw/{rel}", pointer, message, "warning"))  # wording only
+            else:
+                problems.append(Problem("intent.schema", f"hw/{rel}", pointer, message))
     return problems
 
 
@@ -2096,8 +2101,13 @@ class _Reader:
                 warn(f"names {artifact}, which is outside hw/")
             elif not target.is_file() or target.is_symlink():
                 warn(f"names hw/{artifact}, which is missing")
-            elif digest is not None and hashlib.sha256(target.read_bytes()).hexdigest() != digest:
-                warn(f"names hw/{artifact}, which does not match its sha256")
+            elif digest is not None:
+                try:
+                    actual = hashlib.sha256(target.read_bytes()).hexdigest()
+                except OSError as error:
+                    return warn(f"names hw/{artifact}, which cannot be read: {error.strerror or error}")
+                if actual != digest:
+                    warn(f"names hw/{artifact}, which does not match its sha256")
 
     def materials(self) -> Mapping[str, MaterialProfile]:
         path = "hw/manufacturing/materials.yaml"
