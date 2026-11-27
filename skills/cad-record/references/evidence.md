@@ -32,7 +32,9 @@ Producer packets remain immutable. `manufacturing/findings.yaml` contains dispos
 
 When distinct checks share an anchor, the first keeps the plain id, so existing references still resolve. Each later one adds `~<critical surface id>` or `~<REQ>`: two critical surfaces on one feature give `feature.fit@PN#feature` and `feature.fit@PN#feature~<second surface>`. When no qualifier separates them, the unknown `intent.obligation_identity@<anchor>` names them, and no result can pass it. To separate them, name the requirement that each policy obligation serves. Keep their subjects and levels.
 
-Evidence of a critical surface names the region it measured. A ledger entry for another region gets `evidence.subject`. An entry with no region gets `evidence.subject_ambiguous`, and neither counts. A stack-up judges the surface whose region its subject names. When two or more surfaces fit that subject, it reports `stack.obligation_ambiguous` and judges none of them.
+Evidence of a critical surface names the region it measured. A ledger entry for another region gets `evidence.subject`. An entry with no region gets `evidence.subject_ambiguous`, and neither counts.
+
+The same code covers surfaces that share a region, or all leave it out. The region cannot tell them apart, so no entry for them counts. A stack-up judges the surface whose region its subject names. When two or more surfaces fit that subject, it reports `stack.obligation_ambiguous` and judges none of them.
 
 Only a record change resolves an `intent.*` or `assembly.joint` obligation. `evidence.py check` reports a ledger entry for one as `evidence.record_derived`. The entry counts for nothing, whether it records a result or a waiver. Record the joint facts that `assembly_operations` checks: retention, edge distance and host temperature.
 
