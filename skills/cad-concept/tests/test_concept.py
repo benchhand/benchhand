@@ -858,6 +858,32 @@ class ServerTimeout(InProcessServer):
             read_fd = -1
         self.assertEqual(cut_off, [])
 
+    def test_an_events_request_that_loses_the_race_with_the_idle_stop_gets_a_stream_the_client_retries(self) -> None:
+        # EventSource treats a non-200 answer as terminal and never reconnects, so a refused /events must be a
+        # 200 event stream that carries a retry delay and ends: the browser then reconnects until the server is gone.
+        real = serve.SceneWatcher.client_connected
+
+        def stop_commits_first(watcher: serve.SceneWatcher) -> bool:
+            watcher.closing = True  # the idle stop commits between this request's accept and its count
+            return real(watcher)
+
+        with patch.object(serve.SceneWatcher, "client_connected", stop_commits_first):
+            self.start_server(None)
+            host, port = self.url.removeprefix("http://").rstrip("/").split(":")
+            with socket.create_connection((host, int(port)), timeout=2) as sock:
+                sock.settimeout(2)
+                sock.sendall(f"GET /events HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode())
+                reply = b""
+                try:
+                    while chunk := sock.recv(4096):
+                        reply += chunk
+                except TimeoutError:
+                    self.fail(f"the refused /events stream never ended: {reply!r}")
+        head, _, body = reply.partition(b"\r\n\r\n")
+        self.assertIn(b" 200 ", head.split(b"\r\n")[0], reply)
+        self.assertIn(b"text/event-stream", head)
+        self.assertEqual(body.strip(), b"retry: 1000")
+
     def test_zero_disables_idle_expiry(self) -> None:
         self.start_server(None)
         time.sleep(0.6)
