@@ -494,6 +494,31 @@ class StopGeometryTests(unittest.TestCase):
         self.assertIn("60", row["uncertainty"])
         self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
 
+    ALONG_X = {"id": "J-001", "type": "prismatic", "parent": "TST-0301", "child": "TST-0302", "axis": [1, 0, 0],
+               "origin": [0, 0, 0], "min": 0, "max": 5, "nominal": 0}
+
+    def test_an_exactly_touching_rail_does_not_hide_a_blocking_face_a_little_farther_off(self) -> None:
+        # The lever rests on a rail (gap 0) at both limits and meets an end face 0.05 mm short of its tip at 5 mm of
+        # travel. The end face is the stop: the rail's zero offset must not choose it away. A 30 N load along +x
+        # presses the upper limit with 30 N.
+        _, result = self.run_stop("endstop-closest", joint=self.ALONG_X, variant="endstop", direction=(1, 0, 0))
+        end = result["detail"]["interfaces"]["IF-006"]["ends"]["max"]
+        self.assertTrue(end["blocks_travel"])
+        self.assertAlmostEqual(end["reaction"]["design_reaction_n"], 30.0, places=9)
+
+    def test_a_rail_only_limit_does_not_suppress_a_known_failure_at_the_other_limit(self) -> None:
+        # The lower limit is a rail only, so it stays unknown; the upper limit reacts 30 N against a 20 N rating, and a
+        # known failure wins over an unknown. With a 30 N rating the rail's unknown stands, with its own finding.
+        code, failing = self.run_stop("endstop-fail", joint=self.ALONG_X, variant="endstop", direction=(1, 0, 0),
+                                      contact_load=20.0)
+        self.assertEqual((code, failing["result"]), (1, "fail"))
+        self.assertIn("engineering.stop_reaction_understated", [f["code"] for f in failing["findings"]])
+        code, rated = self.run_stop("endstop-rated", joint=self.ALONG_X, variant="endstop", direction=(1, 0, 0),
+                                    contact_load=30.0)
+        self.assertEqual((code, rated["result"]), (1, "unknown"))
+        self.assertEqual([f["code"] for f in rated["findings"]], ["engineering.stop_reaction_unknown"])
+        self.assertIn("min limit", rated["findings"][0]["uncertainty"])
+
     def test_a_rail_touching_along_the_travel_is_no_stop_for_an_axial_load(self) -> None:
         # The lever slides along +x from 0 to 5 mm while its underside rests on the block's top face (z -3). The contact
         # normal is +z, square to the travel, so the face can't resist motion along x: a 30 N load along -x finds
