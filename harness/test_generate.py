@@ -302,11 +302,13 @@ class TierSourceTests(GeneratorCopyCase):
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("never cheap", result.stderr)
 
-    def test_researcher_is_blocked_only_while_no_readable_local_source_exists(self) -> None:
+    def test_researcher_profile_carries_the_single_blocked_rule_wording(self) -> None:
+        # A wording check on the generated profile. It does not test how an agent behaves.
         self.generate()
         text = (self.cad / "harness/claude/agents/cad-sourcing-researcher.md").read_text(encoding="utf-8")
-        self.assertIn("`RESULT: BLOCKED` only while", text)
-        self.assertIn("Once the lead has stored a readable local source", text)
+        self.assertIn("`RESULT: BLOCKED` while the evidence for an item is unavailable from any source", text)
+        self.assertIn("a web search, a fetch, or a readable local file under `hw/parts/<PN>/sources/`", text)
+        self.assertEqual(text.count("`RESULT: BLOCKED`"), 1)  # one rule, not two
 
     def test_non_cheap_tier_is_allowed_on_a_reviewer(self) -> None:
         result = self.set_tier("cad-mech-reviewer", "strong")
