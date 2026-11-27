@@ -10,7 +10,9 @@ blocks. The gate itself (cad-record flow_profile_gate.py) has its own tests."""
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import os
 import subprocess
@@ -399,23 +401,68 @@ class Record(unittest.TestCase):
         self.assertEqual(earlier.read_text(encoding="utf-8"), before)
         self.assertEqual([path.name for path in (self.hw / "decisions").glob("DR-*.md")], [earlier.name])
 
-    def test_record_refuses_a_stale_write_and_keeps_an_edit_made_while_it_ran(self) -> None:
-        real = flow_profile._require_free
+    def record_through_main(self, between: Any) -> tuple[int, str]:
+        """`main record` of the five general answers as DR-002, with `between` run once the decision reader has listed
+        the existing decisions: the point where another writer can change product.yaml. Returns (exit code, stderr)."""
+        write_test_decision(self.hw, "DR-001", title="An earlier decision")
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
-        edited = self.product.read_text(encoding="utf-8") + "# edited meanwhile\n"
+        real = flow_profile.decision_records.read_decisions
 
-        def edit_during_lookup(decisions: Path, number: int) -> None:
-            real(decisions, number)
-            self.product.write_text(edited, encoding="utf-8")
+        def read_then_change(directory: Path) -> Any:
+            found = real(directory)
+            between()
+            return found
 
-        general = ["human_approval", "fea", "stack_up", "critique", "storage_results_in_git"]
-        with mock.patch.object(flow_profile, "_require_free", edit_during_lookup):
-            with self.assertRaises(flow_profile.FlowFinding) as caught:
-                flow_profile.record(self.hw, "DR-001", {}, general)
-        self.assertIn("changed", str(caught.exception))
-        self.assertIn("run it again", str(caught.exception))
+        err = io.StringIO()
+        argv = ["record", "--hw", str(self.hw), "--decision", "DR-002", "--accept-default", *OPTIONS[:5]]
+        with mock.patch.object(flow_profile.decision_records, "read_decisions", read_then_change), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            code = flow_profile.main(argv)
+        self.assertEqual(list((self.hw / "decisions").glob("DR-002-*")), [])
+        return code, err.getvalue()
+
+    def test_record_refuses_a_stale_write_and_keeps_an_edit_made_while_it_ran(self) -> None:
+        edited = PRODUCT + "manufacturing:\n  processes: [cnc]\n# edited meanwhile\n"
+        code, stderr = self.record_through_main(lambda: self.product.write_text(edited, encoding="utf-8"))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("changed", stderr)
+        self.assertIn("run it again", stderr)
         self.assertEqual(self.product.read_text(encoding="utf-8"), edited)
-        self.assertFalse((self.hw / "decisions").exists())
+
+    def test_record_refuses_a_stale_write_when_the_edit_leaves_invalid_utf8(self) -> None:
+        code, stderr = self.record_through_main(lambda: self.product.write_bytes(b"id: \xff\xfe\n"))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("changed", stderr)
+        self.assertEqual(self.product.read_bytes(), b"id: \xff\xfe\n")
+
+    def test_record_refuses_a_stale_write_when_the_file_vanishes(self) -> None:
+        code, stderr = self.record_through_main(self.product.unlink)
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("changed", stderr)
+        self.assertFalse(self.product.exists())
+
+    @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "a file mode does not stop root")
+    def test_record_keeps_a_genuine_read_error_distinct_from_a_stale_write(self) -> None:
+        before = self.product.stat().st_mode
+        self.addCleanup(self.product.chmod, before)
+        code, stderr = self.record_through_main(lambda: self.product.chmod(0))
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("cannot read", stderr)
+
+    def test_record_on_a_product_with_a_value_the_loader_rejects_exits_1_with_the_named_finding(self) -> None:
+        for name, text in (("an impossible date", "released: 2026-02-30\n"), ("an impossible timestamp",
+                           "released: 2026-01-01 25:00:00\n"), ("a bad integer", "count: !!int abc\n"),
+                           ("a bad boolean", "flag: !!bool maybe\n")):
+            with self.subTest(name):
+                self.product.write_text(PRODUCT + text, encoding="utf-8")
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    code = flow_profile.main(["record", "--hw", str(self.hw), "--decision", "DR-001",
+                                              "--accept-default", *OPTIONS[:5]])
+                self.assertEqual(code, 1, err.getvalue())
+                self.assertIn("flow: cannot parse", err.getvalue())
+                self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT + text)
+                self.assertFalse((self.hw / "decisions").exists())
 
     def test_a_reused_decision_exits_2_before_a_flow_that_is_not_a_mapping_is_named(self) -> None:
         write_test_decision(self.hw, "DR-001", title="An earlier decision")

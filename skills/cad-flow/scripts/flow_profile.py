@@ -515,11 +515,23 @@ def _flow_edit_target(text: str, path: Path) -> tuple[Any, Any]:
     return key, node
 
 
-def _require_unchanged(path: Path, snapshot: str) -> None:
-    """`path` still holds the `snapshot` that the answers were checked against; else nothing is written."""
+def _load_yaml(text: str, path: Path, what: str) -> Any:
+    """yaml_loader.safe_load of `text`, or a FlowFinding naming `path`: the loader raises YAMLError for a bad
+    document, ValueError for a value it cannot build (2026-02-30, !!int abc) and KeyError for a bad !!bool."""
     try:
-        current = path.read_bytes().decode("utf-8")
-    except (OSError, UnicodeDecodeError) as error:
+        return yaml_loader.safe_load(text)
+    except (yaml.YAMLError, ValueError, KeyError) as error:
+        raise FlowFinding(f"{what} {path}: {error}") from error
+
+
+def _require_unchanged(path: Path, snapshot: bytes) -> None:
+    """`path` still holds the `snapshot` bytes that the answers were checked against; else nothing is written.
+    A file that vanished is a changed one; any other read error is its own."""
+    try:
+        current = path.read_bytes()
+    except FileNotFoundError:
+        current = None
+    except OSError as error:
         raise ProfileError(f"cannot read {path}: {error}") from error
     if current != snapshot:
         raise FlowFinding(f"flow.profile: {path} changed while the answers were checked; nothing was written. "
@@ -537,15 +549,13 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
         raise ProfileError(f"--decision {decision!r} is not DR-###")
     path = hw / "product.yaml"
     try:
-        raw = path.read_bytes().decode("utf-8")
+        snapshot = path.read_bytes()
+        raw = snapshot.decode("utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise ProfileError(f"cannot read {path}: {error}") from error
     newline = "\r\n" if "\r\n" in raw else "\n"
     text = raw.replace("\r\n", "\n")
-    try:  # one read: the applicability below and the edit further on judge this same text
-        product = yaml_loader.safe_load(text)
-    except yaml.YAMLError as error:
-        raise FlowFinding(f"flow: cannot parse {path}: {error}") from error
+    product = _load_yaml(text, path, "flow: cannot parse")  # one read: applicability and the edit judge this text
     parts = read_parts(hw)
     applicability = _require_applicability(product, parts)
     plan = gate.question_plan(product, parts, answered_profile(decision, answers))
@@ -561,14 +571,11 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     expected = copy.deepcopy(dict(product))
     expected["flow"] = {**expected.get("flow", {}), "profile": profile}
     _require_flow_shape(expected["flow"])
-    try:
-        after = with_profile(text, key, node, profile, product["flow"].get("profile"))
-        edited = yaml_loader.safe_load(after)
-    except yaml.YAMLError as error:
-        raise FlowFinding(f"flow.profile: cannot edit {path}: {error}") from error
+    after = with_profile(text, key, node, profile, product["flow"].get("profile"))
+    edited = _load_yaml(after, path, "flow.profile: cannot edit")
     if edited != expected:
         raise FlowFinding(f"flow.profile: the edit would change other data in {path}")
-    _require_unchanged(path, raw)
+    _require_unchanged(path, snapshot)
     try:
         _replace(path, after, newline)
     except OSError as error:
