@@ -528,7 +528,7 @@ class StopGeometryTests(unittest.TestCase):
         code, result = self.run_stop("slide-rail", joint=along, direction=(-1, 0, 0))
         [row] = result["outcomes"]
         self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
-        self.assertIn("normal squarely against travel", row["uncertainty"])
+        self.assertIn("within 60 degrees of directly against travel", row["uncertainty"])
         self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
 
     def test_a_part_frame_direction_is_rotated_into_the_assembly_frame(self) -> None:

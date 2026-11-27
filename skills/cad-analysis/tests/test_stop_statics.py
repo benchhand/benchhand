@@ -88,18 +88,26 @@ class RecordedLoad(unittest.TestCase):
 
 
 class AxialReaction(unittest.TestCase):
-    def test_a_prismatic_stop_reacts_the_axial_load_with_no_moment(self) -> None:
-        result = axial_reaction(24.0)
-        self.assertEqual((result.status, result.outcome, result.design_n, result.moment_n_mm), ("bounded", "pass", 24.0, 0.0))
+    def test_a_square_stop_reacts_the_axial_load_with_no_moment(self) -> None:
+        result = axial_reaction(24.0, 1.0)
+        self.assertEqual((result.status, result.outcome, result.design_n, result.axial_n, result.moment_n_mm),
+                         ("bounded", "pass", 24.0, 24.0, 0.0))
 
-    def test_a_recorded_figure_below_the_axial_load_is_understated(self) -> None:
+    def test_a_face_off_square_needs_the_axial_load_over_cos_theta_of_normal_force(self) -> None:
+        # By hand: 30 N axial over cos 45 deg (0.70710678) is 42.426407 N, and over cos 60 deg (0.5) 60 N.
+        self.assertAlmostEqual(axial_reaction(30.0, 0.7071067811865476).design_n, 42.426407, places=6)
+        self.assertAlmostEqual(axial_reaction(30.0, 0.5).design_n, 60.0, places=9)
+
+    def test_a_recorded_figure_below_the_normal_force_bound_is_understated(self) -> None:
         for recorded, outcome in ((23.9, "fail"), (24.0, "pass"), (30.0, "pass")):
             with self.subTest(recorded=recorded):
-                self.assertEqual(axial_reaction(24.0, recorded_n=recorded).outcome, outcome)
+                self.assertEqual(axial_reaction(24.0, 1.0, recorded_n=recorded).outcome, outcome)
+        self.assertEqual(axial_reaction(24.0, 0.5, recorded_n=30.0).outcome, "fail")  # the bound is 48 N
 
-    def test_a_negative_axial_load_is_refused(self) -> None:
-        with self.assertRaises(ValueError):
-            axial_reaction(-1.0)
+    def test_a_negative_load_or_a_cosine_outside_zero_to_one_is_refused(self) -> None:
+        for axial, cosine in ((-1.0, 1.0), (1.0, 0.0), (1.0, 1.5)):
+            with self.subTest(axial=axial, cosine=cosine), self.assertRaises(ValueError):
+                axial_reaction(axial, cosine)
 
 
 class Inputs(unittest.TestCase):

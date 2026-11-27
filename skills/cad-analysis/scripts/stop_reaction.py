@@ -60,7 +60,7 @@ import importlib.util
 import json
 import math
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -108,7 +108,7 @@ CONTACT_MM = 1e-4  # parts at or under this distance touch; planes this close ar
 STOP_CONTACT_TOLERANCE_MM = 0.15
 STOP_CONTACT_EPSILON_MM = 1e-6  # float noise: a gap on the tolerance gets no verdict from rounding
 NORMAL_TOL = 1e-6  # |n1 . n2 + 1| under this: opposite-facing faces
-BLOCKING_COS = 0.999  # a contact face blocks a slide when its normal is within about 2.6 deg of the axis, squarely against travel
+BLOCKING_COS = 0.5  # a contact face blocks a slide when its normal is within 60 deg of directly against travel
 MIN_AREA_MM2 = 1e-6
 METHOD = ("rigid statics of the modelled stop contact: the peak use-case force times the moving part's farthest point "
           "from the pivot axis, over the smallest arm of the overlap of the touching planar faces (cad-analysis "
@@ -263,10 +263,12 @@ def pivot_between(chain: Any, first: str, second: str) -> tuple[Pivot | None, st
     return Pivot(joint, who, second if who == first else first), ""
 
 
-def contact_faces(fixed: Any, moving: Any, tolerance: float) -> list[tuple[Any, Vec]]:
+def contact_faces(fixed: Any, moving: Any, tolerance: float,
+                  keep: Callable[[Vec], bool] = lambda normal: True) -> list[tuple[Any, Vec]]:
     """(overlap face, outward normal of the fixed part's face) for the closest opposite-facing parallel planar faces
-    of the two parts, at most `tolerance` apart. The moving face moves onto the fixed face's plane first, so a
-    stop with a small gap in the model gives the same overlap as one that touches."""
+    of the two parts, at most `tolerance` apart, whose normal `keep` accepts: the closest is chosen among the kept
+    faces, so a face that is no candidate (a rail) never hides one a little farther off. The moving face moves onto
+    the fixed face's plane first, so a stop with a small gap in the model gives the same overlap as one that touches."""
     moving_planes = [(face, plane_of(face)) for face in extrema.faces(moving)]
     found: list[tuple[float, Any, Vec]] = []
     for fixed_face in extrema.faces(fixed):
@@ -274,7 +276,7 @@ def contact_faces(fixed: Any, moving: Any, tolerance: float) -> list[tuple[Any, 
         if fixed_plane is None:
             continue
         for moving_face, moving_plane in moving_planes:
-            if moving_plane is None or abs(dot(fixed_plane[1], moving_plane[1]) + 1.0) > NORMAL_TOL:
+            if moving_plane is None or abs(dot(fixed_plane[1], moving_plane[1]) + 1.0) > NORMAL_TOL or not keep(fixed_plane[1]):
                 continue
             offset = dot(sub(moving_plane[0], fixed_plane[0]), fixed_plane[1])
             if abs(offset) > tolerance + STOP_CONTACT_EPSILON_MM:
@@ -467,23 +469,34 @@ def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: 
     patch, volume, depth = None, 0.0, 0.0
     if shared > pose.INTERFERENCE_MM3:
         volume, depth = shared, overlap_depth(geometry["moving"], geometry["fixed"])
-    blocks = None
-    if contact:
+    blocking = None
+    if contact and pivot.joint.type == "revolute":
         faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"], tolerance)
-        if pivot.joint.type == "revolute":
-            patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)
-        else:
-            blocks = blocks_travel(faces_in_contact, geometry["axis"], label)
+        patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)
+    elif contact:
+        blocking = blocking_contact(geometry, label, tolerance)
     return {"label": label, "value": value, "touching": contact, "gap": gap, "patch": patch, "reach": geometry["reach"],
-            "blocks": blocks, "axis": geometry["axis"], "transforms": geometry["transforms"], "overlap_volume": volume, "overlap_depth": depth}
+            "blocking": blocking, "axis": geometry["axis"], "transforms": geometry["transforms"], "overlap_volume": volume, "overlap_depth": depth}
 
 
-def blocks_travel(contact: Sequence[tuple[Any, Vec]], axis: Vec, label: str) -> bool:
-    """Whether a contact face squarely opposes the slide's travel beyond the limit `label`. A fixed face's outward
-    normal points at the moving part, so it opposes a motion along `beyond` when it points against it. A face along
-    the travel (a rail) has a normal square to the axis and resists no axial motion."""
-    beyond = scale(axis, -1.0 if label == "min" else 1.0)
-    return any(dot(normal, beyond) <= -BLOCKING_COS for _, normal in contact)
+def travel_cosine(normal: Vec, axis: Vec, label: str) -> float:
+    """cos of the angle between a fixed face's outward normal and the direction straight against travel beyond the
+    limit `label`. The normal points at the moving part, so a face opposes a motion along `beyond` when it points
+    against it: the cosine is 1 for a face square to the travel, 0 for a rail along it."""
+    return -dot(normal, scale(axis, -1.0 if label == "min" else 1.0))
+
+
+def blocking_contact(geometry: Mapping[str, Any], label: str, tolerance: float) -> dict[str, Any] | None:
+    """The contact that blocks travel beyond the limit `label`, or None: the closest faces of the two parts, among those
+    whose normal is within 60 deg of directly against travel (cos >= BLOCKING_COS). `cos` is the smallest cosine of those
+    faces, the one that needs the most normal force for a given axial reaction."""
+    axis = geometry["axis"]
+    faces = contact_faces(geometry["fixed"], geometry["moving"], tolerance,
+                          lambda normal: travel_cosine(normal, axis, label) >= BLOCKING_COS - NORMAL_TOL)
+    if not faces:
+        return None
+    cos = min(1.0, min(travel_cosine(normal, axis, label) for _, normal in faces))
+    return {"cos": cos, "angle_deg": math.degrees(math.acos(cos))}
 
 
 def unusable_contact(stops: Sequence[Mapping[str, Any]], pivot: Pivot, tolerance: float) -> str:
@@ -493,9 +506,9 @@ def unusable_contact(stops: Sequence[Mapping[str, Any]], pivot: Pivot, tolerance
         bad, why = [s["label"] for s in stops if s["patch"] is None], \
             "no parallel opposite-facing planar faces are that close, so no contact patch can be taken"
     else:
-        bad, why = [s["label"] for s in stops if not s["blocks"]], \
-            ("no contact face has a normal squarely against travel beyond the limit, so the contact may be a rail along "
-             "the travel and nothing shows that it blocks the slide")
+        bad, why = [s["label"] for s in stops if not s["blocking"]], \
+            ("no contact face has a normal within 60 degrees of directly against travel beyond the limit, so the contact "
+             "may be a rail along the travel and nothing shows that it blocks the slide")
     if not bad:
         return ""
     return f"at the {' and '.join(bad)} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, but {why}"
@@ -509,9 +522,12 @@ def patch_report(patch: statics.Patch | None) -> dict[str, Any] | None:
 
 
 def reaction_report(result: statics.Reaction) -> dict[str, Any]:
-    return {"status": result.status, "moment_n_mm": result.moment_n_mm, "design_reaction_n": result.design_n,
-            "rigid_lower_bound_n": result.rigid_lower_n, "uniform_pressure_n": result.uniform_n,
-            "compliant_stop_n": result.compliant_n, "pin_load_bound_n": result.pin_load_n, "message": result.message}
+    report = {"status": result.status, "moment_n_mm": result.moment_n_mm, "design_reaction_n": result.design_n,
+              "rigid_lower_bound_n": result.rigid_lower_n, "uniform_pressure_n": result.uniform_n,
+              "compliant_stop_n": result.compliant_n, "pin_load_bound_n": result.pin_load_n, "message": result.message}
+    if result.axial_n is not None:
+        report["axial_component_n"] = result.axial_n
+    return report
 
 
 def unresolved(if_id: str, outcome: str, reason: str, **detail: Any) -> Assessment:
@@ -550,8 +566,11 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         detail["ends"][state["label"]] = {"joint_value": state["value"], "touching": state["touching"],
                                           "gap_mm": state["gap"], "overlap_volume_mm3": state["overlap_volume"],
                                           "overlap_depth_mm": state["overlap_depth"],
-                                          "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"]),
-                                          "blocks_travel": state["blocks"]}
+                                          "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"])}
+        if pivot.joint.type == "prismatic":
+            blocking = state["blocking"]
+            detail["ends"][state["label"]].update(blocks_travel=blocking is not None,
+                                                  contact_angle_deg=blocking["angle_deg"] if blocking else None)
     stops = [state for state in states if state["touching"]]
     if not stops:
         gaps = ", ".join(f"{state['label']} {state['gap']:.4g} mm" for state in states)
@@ -575,8 +594,8 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
     detail.update(loads=loads, peak_force_n=force)
     recorded = recorded_load_n(interface)
     if pivot.joint.type == "prismatic":
-        reactions = {state["label"]: statics.axial_reaction(axial_force(loads, state["axis"], state["label"], state["transforms"]), recorded)
-                     for state in stops}
+        reactions = {state["label"]: statics.axial_reaction(axial_force(loads, state["axis"], state["label"], state["transforms"]),
+                                                            state["blocking"]["cos"], recorded) for state in stops}
     else:
         reactions = {state["label"]: statics.reaction(force, state["reach"], state["patch"], recorded) for state in stops}
     return judge_stops(if_id, stops, reactions, recorded, detail)
