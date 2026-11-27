@@ -1,0 +1,261 @@
+{
+ "findings": [],
+ "rows": [
+  {
+   "axis": null,
+   "characteristic": "edges.groove",
+   "quantity": null,
+   "requirement": "edges",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": null,
+    "lower_mm": null,
+    "upper_mm": null
+   },
+   "value_mm": null,
+   "view": "groove_detail"
+  },
+  {
+   "axis": null,
+   "characteristic": "geometric.journal_coaxiality",
+   "quantity": null,
+   "requirement": "coaxiality",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": null,
+    "lower_mm": null,
+    "upper_mm": null
+   },
+   "value_mm": null,
+   "view": "elevation"
+  },
+  {
+   "axis": null,
+   "characteristic": "groove.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "h10",
+    "kind": "fit",
+    "lower_mm": "-0.048",
+    "upper_mm": "0.000"
+   },
+   "value_mm": 4.8,
+   "view": "groove_detail"
+  },
+  {
+   "axis": "z",
+   "characteristic": "groove.location",
+   "quantity": 1,
+   "requirement": "location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 28.8,
+   "view": "elevation"
+  },
+  {
+   "axis": "z",
+   "characteristic": "groove_width",
+   "quantity": 1,
+   "requirement": "width",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": "explicit",
+    "lower_mm": "0.0",
+    "upper_mm": "0.14"
+   },
+   "value_mm": 0.7,
+   "view": "groove_detail"
+  },
+  {
+   "axis": null,
+   "characteristic": "head.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 8.5,
+   "view": "head_end"
+  },
+  {
+   "axis": null,
+   "characteristic": "head_chamfer_size",
+   "quantity": 1,
+   "requirement": "chamfer",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": "explicit",
+    "lower_mm": "-0.1",
+    "upper_mm": "0.1"
+   },
+   "value_mm": 0.4,
+   "view": "elevation"
+  },
+  {
+   "axis": "z",
+   "characteristic": "head_top.location",
+   "quantity": 1,
+   "requirement": "location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.1",
+    "upper_mm": "0.1"
+   },
+   "value_mm": -3.0,
+   "view": "elevation"
+  },
+  {
+   "axis": null,
+   "characteristic": "journal.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "f7",
+    "kind": "fit",
+    "lower_mm": "-0.022",
+    "upper_mm": "-0.010"
+   },
+   "value_mm": 4.984,
+   "view": "elevation"
+  },
+  {
+   "axis": null,
+   "characteristic": "press_band.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "p6",
+    "kind": "fit",
+    "lower_mm": "0.012",
+    "upper_mm": "0.020"
+   },
+   "value_mm": 5.016,
+   "view": "elevation"
+  },
+  {
+   "axis": "z",
+   "characteristic": "press_step.location",
+   "quantity": 1,
+   "requirement": "location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 20.3,
+   "view": "elevation"
+  },
+  {
+   "axis": null,
+   "characteristic": "socket.across_flats",
+   "quantity": 1,
+   "requirement": "across_flats",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.1",
+    "upper_mm": "0.1"
+   },
+   "value_mm": 3.0,
+   "view": "head_end"
+  },
+  {
+   "axis": null,
+   "characteristic": "socket.depth",
+   "quantity": 1,
+   "requirement": "depth",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.1",
+    "upper_mm": "0.1"
+   },
+   "value_mm": 2.0,
+   "view": "head_end"
+  },
+  {
+   "axis": null,
+   "characteristic": "surface_texture.journal",
+   "quantity": null,
+   "requirement": "surface_texture",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": null,
+    "lower_mm": null,
+    "upper_mm": null
+   },
+   "value_mm": null,
+   "view": "elevation"
+  },
+  {
+   "axis": null,
+   "characteristic": "surface_texture.press_band",
+   "quantity": null,
+   "requirement": "surface_texture",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": null,
+    "lower_mm": null,
+    "upper_mm": null
+   },
+   "value_mm": null,
+   "view": "elevation"
+  },
+  {
+   "axis": null,
+   "characteristic": "tip_chamfer_size",
+   "quantity": 1,
+   "requirement": "chamfer",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": "explicit",
+    "lower_mm": "-0.1",
+    "upper_mm": "0.1"
+   },
+   "value_mm": 0.4,
+   "view": "elevation"
+  },
+  {
+   "axis": "z",
+   "characteristic": "tip_face.location",
+   "quantity": 1,
+   "requirement": "location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 30.0,
+   "view": "elevation"
+  }
+ ],
+ "status": "pass"
+}

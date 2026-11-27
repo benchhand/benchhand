@@ -27,9 +27,11 @@ def summary(result: dict[str, Any]) -> dict[str, Any]:
     coverage = Path(result["output_dir"]) / "coverage.json"
     rows = json.loads(coverage.read_text(encoding="utf-8"))["rows"] if coverage.is_file() else []
     kept = [{"characteristic": row["characteristic"], "requirement": row["requirement"],
-             "value_mm": round(row["value_mm"], PLACES), "quantity": row["quantity"], "axis": row["axis"],
-             "view": row["view"], "status": row["status"],
-             "tolerance": {key: (row["tolerance"] or {}).get(key) for key in ("kind", "designation", "lower_mm", "upper_mm")}}
+             "value_mm": round(row["value_mm"], PLACES) if isinstance(row.get("value_mm"), (int, float)) else None,
+             "quantity": row.get("quantity"), "axis": row.get("axis"), "view": row.get("view"),
+             "status": row["status"],
+             "tolerance": {key: (row.get("tolerance") or {}).get(key)
+                           for key in ("kind", "designation", "lower_mm", "upper_mm")}}
             for row in rows]
     return {"status": result["status"], "rows": sorted(kept, key=lambda row: row["characteristic"]),
             "findings": sorted([item["code"], item.get("feature") or ""] for item in result.get("findings", []))}

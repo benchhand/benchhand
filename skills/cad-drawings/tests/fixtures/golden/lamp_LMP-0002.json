@@ -1,0 +1,396 @@
+{
+ "findings": [],
+ "rows": [
+  {
+   "axis": null,
+   "characteristic": "bore_entry_chamfers.chamfer",
+   "quantity": 6,
+   "requirement": "chamfer",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 0.5,
+   "view": "plan"
+  },
+  {
+   "axis": null,
+   "characteristic": "cable_channel.profile",
+   "quantity": 1,
+   "requirement": "profile",
+   "status": "pass",
+   "tolerance": {
+    "designation": "profile",
+    "kind": "explicit",
+    "lower_mm": "-0.5",
+    "upper_mm": "0.5"
+   },
+   "value_mm": 1.0,
+   "view": "section_bores"
+  },
+  {
+   "axis": null,
+   "characteristic": "cable_channel_radius",
+   "quantity": 1,
+   "requirement": "radius",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 3.0,
+   "view": "section_bores"
+  },
+  {
+   "axis": "x",
+   "characteristic": "clevis.axis_location.x",
+   "quantity": 1,
+   "requirement": "axis_location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.5",
+    "upper_mm": "0.5"
+   },
+   "value_mm": 137.2,
+   "view": "plan"
+  },
+  {
+   "axis": null,
+   "characteristic": "clevis.width",
+   "quantity": 1,
+   "requirement": "width",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 10.4,
+   "view": "plan"
+  },
+  {
+   "axis": "x",
+   "characteristic": "elbow_bore.axis_location.x",
+   "quantity": 1,
+   "requirement": "axis_location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "basic",
+    "kind": "basic",
+    "lower_mm": "0",
+    "upper_mm": "0"
+   },
+   "value_mm": 160.0,
+   "view": "side"
+  },
+  {
+   "axis": "z",
+   "characteristic": "elbow_bore.axis_location.z",
+   "quantity": 1,
+   "requirement": "axis_location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "basic",
+    "kind": "basic",
+    "lower_mm": "0",
+    "upper_mm": "0"
+   },
+   "value_mm": 10.0,
+   "view": "side"
+  },
+  {
+   "axis": null,
+   "characteristic": "elbow_bore.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "H7",
+    "kind": "fit",
+    "lower_mm": "0.000",
+    "upper_mm": "0.012"
+   },
+   "value_mm": 5.006,
+   "view": "side"
+  },
+  {
+   "axis": null,
+   "characteristic": "elbow_end.radius",
+   "quantity": 1,
+   "requirement": "radius",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-1.0",
+    "upper_mm": "1.0"
+   },
+   "value_mm": 11.0,
+   "view": "side"
+  },
+  {
+   "axis": "y",
+   "characteristic": "far_cheek_thickness",
+   "quantity": 1,
+   "requirement": "thickness",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.1",
+    "upper_mm": "0.1"
+   },
+   "value_mm": 5.8,
+   "view": "plan"
+  },
+  {
+   "axis": "y",
+   "characteristic": "fork_width",
+   "quantity": 1,
+   "requirement": "plane_separation",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": null,
+    "lower_mm": null,
+    "upper_mm": null
+   },
+   "value_mm": 22.0,
+   "view": "plan"
+  },
+  {
+   "axis": null,
+   "characteristic": "geometric.cheek_bore_coaxiality",
+   "quantity": null,
+   "requirement": "coaxiality",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": null,
+    "lower_mm": null,
+    "upper_mm": null
+   },
+   "value_mm": null,
+   "view": "side"
+  },
+  {
+   "axis": null,
+   "characteristic": "geometric.contour_profile",
+   "quantity": null,
+   "requirement": "profile_surface",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": null,
+    "lower_mm": null,
+    "upper_mm": null
+   },
+   "value_mm": null,
+   "view": "plan"
+  },
+  {
+   "axis": null,
+   "characteristic": "geometric.elbow_bore_position",
+   "quantity": null,
+   "requirement": "position",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": null,
+    "lower_mm": null,
+    "upper_mm": null
+   },
+   "value_mm": null,
+   "view": "side"
+  },
+  {
+   "axis": null,
+   "characteristic": "geometric.hub_bore_perpendicularity",
+   "quantity": null,
+   "requirement": "perpendicularity",
+   "status": "pass",
+   "tolerance": {
+    "designation": null,
+    "kind": null,
+    "lower_mm": null,
+    "upper_mm": null
+   },
+   "value_mm": null,
+   "view": "plan"
+  },
+  {
+   "axis": "y",
+   "characteristic": "head_cheek_thickness",
+   "quantity": 1,
+   "requirement": "thickness",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.1",
+    "upper_mm": "0.1"
+   },
+   "value_mm": 5.8,
+   "view": "plan"
+  },
+  {
+   "axis": null,
+   "characteristic": "hub.radius",
+   "quantity": 1,
+   "requirement": "radius",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-1.0",
+    "upper_mm": "1.0"
+   },
+   "value_mm": 13.0,
+   "view": "plan"
+  },
+  {
+   "axis": null,
+   "characteristic": "hub_bore.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "H7",
+    "kind": "fit",
+    "lower_mm": "0.000",
+    "upper_mm": "0.012"
+   },
+   "value_mm": 5.006,
+   "view": "plan"
+  },
+  {
+   "axis": "z",
+   "characteristic": "hub_top.location",
+   "quantity": 1,
+   "requirement": "location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 20.0,
+   "view": "side"
+  },
+  {
+   "axis": "x",
+   "characteristic": "lightening_pocket.axis_location.x",
+   "quantity": 1,
+   "requirement": "axis_location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.3",
+    "upper_mm": "0.3"
+   },
+   "value_mm": 70.0,
+   "view": "plan"
+  },
+  {
+   "axis": "z",
+   "characteristic": "lightening_pocket.floor_location",
+   "quantity": 1,
+   "requirement": "floor_location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 14.0,
+   "view": "section_bores"
+  },
+  {
+   "axis": null,
+   "characteristic": "lightening_pocket.length",
+   "quantity": 1,
+   "requirement": "length",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.3",
+    "upper_mm": "0.3"
+   },
+   "value_mm": 92.0,
+   "view": "plan"
+  },
+  {
+   "axis": null,
+   "characteristic": "lightening_pocket.width",
+   "quantity": 1,
+   "requirement": "width",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 8.0,
+   "view": "plan"
+  },
+  {
+   "axis": null,
+   "characteristic": "outer_contour.profile",
+   "quantity": 1,
+   "requirement": "profile",
+   "status": "pass",
+   "tolerance": {
+    "designation": "profile",
+    "kind": "explicit",
+    "lower_mm": "-0.5",
+    "upper_mm": "0.5"
+   },
+   "value_mm": 1.0,
+   "view": "plan"
+  },
+  {
+   "axis": null,
+   "characteristic": "outline_blends.radius",
+   "quantity": 10,
+   "requirement": "radius",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-1.0",
+    "upper_mm": "1.0"
+   },
+   "value_mm": 40.0,
+   "view": "side"
+  },
+  {
+   "axis": null,
+   "characteristic": "silhouette_rounds.radius",
+   "quantity": 24,
+   "requirement": "radius",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 1.5,
+   "view": "plan"
+  }
+ ],
+ "status": "pass"
+}

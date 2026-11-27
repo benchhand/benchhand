@@ -1,0 +1,141 @@
+{
+ "findings": [],
+ "rows": [
+  {
+   "axis": null,
+   "characteristic": "coupling_bore.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 8.0,
+   "view": "section_bore"
+  },
+  {
+   "axis": "x",
+   "characteristic": "coupling_floor.location",
+   "quantity": 1,
+   "requirement": "location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 20.0,
+   "view": "section_bore"
+  },
+  {
+   "axis": "y",
+   "characteristic": "crank_pin.axis_location.y",
+   "quantity": 1,
+   "requirement": "axis_location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 15.0,
+   "view": "end"
+  },
+  {
+   "axis": null,
+   "characteristic": "crank_pin.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 10.0,
+   "view": "elevation"
+  },
+  {
+   "axis": null,
+   "characteristic": "disc.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.3",
+    "upper_mm": "0.3"
+   },
+   "value_mm": 40.0,
+   "view": "elevation"
+  },
+  {
+   "axis": "x",
+   "characteristic": "face_x_p10.location",
+   "quantity": 1,
+   "requirement": "location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.3",
+    "upper_mm": "0.3"
+   },
+   "value_mm": 70.0,
+   "view": "elevation"
+  },
+  {
+   "axis": "x",
+   "characteristic": "face_x_p24.location",
+   "quantity": 1,
+   "requirement": "location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.3",
+    "upper_mm": "0.3"
+   },
+   "value_mm": 84.0,
+   "view": "elevation"
+  },
+  {
+   "axis": "x",
+   "characteristic": "face_x_p46.location",
+   "quantity": 1,
+   "requirement": "location",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.3",
+    "upper_mm": "0.3"
+   },
+   "value_mm": 106.0,
+   "view": "elevation"
+  },
+  {
+   "axis": null,
+   "characteristic": "main_journal.diameter",
+   "quantity": 1,
+   "requirement": "diameter",
+   "status": "pass",
+   "tolerance": {
+    "designation": "ISO 2768-m",
+    "kind": "general",
+    "lower_mm": "-0.2",
+    "upper_mm": "0.2"
+   },
+   "value_mm": 14.0,
+   "view": "elevation"
+  }
+ ],
+ "status": "pass"
+}
