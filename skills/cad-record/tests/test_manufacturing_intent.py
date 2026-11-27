@@ -339,7 +339,7 @@ class Normalization(unittest.TestCase):
             with self.subTest(label):
                 record = self.state_record(source)
                 found = [p for p in record.problems if p.code == "intent.calibration_state"]
-                self.assertEqual([p.severity for p in found][:1], ["warning"] if label != "a scalar source" else [])
+                self.assertEqual([p.severity for p in found], ["warning"])
                 self.assertEqual([p for p in record.problems if p.severity == "error" and "calibration_state" in p.pointer], [])
 
     def test_a_custom_calibration_state_without_a_measured_calibration_is_a_warning_that_blocks_nothing(self) -> None:

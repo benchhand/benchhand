@@ -2053,25 +2053,51 @@ class _Reader:
                                  params, materials, tuple(calibrations), freeze(item), status)
 
     def calibration_state(self, item: Mapping[str, Any], measured: bool, ident: Any, path: str, pointer: str) -> str | None:
-        """The typed status of a profile's calibration_state: None when none is recorded, `unknown` (with a warning) when
-        it is not a mapping with a known status, since a snapshot is normalised without schema validation. A source is
-        read like any other. `custom` with no measured calibration warns. It never blocks anything."""
-        raw = item.get("calibration_state")
-        if raw is None:
+        """The typed status of a profile's calibration_state: None when the key is absent, `unknown` (with a warning) when
+        it is null or not a mapping with a known status, since a snapshot is normalised without schema validation. Its
+        source is checked as an advisory (`state_source`). `custom` with no measured calibration warns. It never blocks."""
+        if "calibration_state" not in item:
             return None
         where = f"{pointer}/calibration_state"
-        state = _mapping(raw)
+        state = _mapping(item["calibration_state"])
         status = state.get("status")
         if not isinstance(status, str) or status not in CALIBRATION_STATES:
             self.problem("intent.calibration_state", path, where,
                          f"{ident}: calibration_state is not a status of {', '.join(CALIBRATION_STATES)}; read as unknown", "warning")
             status = "unknown"
-        self.source(state.get("source"), path, f"{where}/source")
+        self.state_source(state.get("source"), ident, path, f"{where}/source")
         if status == "custom" and not measured:
             self.problem("intent.calibration_state", path, where,
                          f"{ident}: calibration_state custom has no measured calibration; record one in calibrations, "
                          "or state standard or unknown", "warning")
         return status
+
+    def state_source(self, data: Any, ident: Any, path: str, pointer: str) -> None:
+        """The provenance of a calibration_state, checked as advisories only. It is wording, so it is never registered:
+        no reference, no artifact in the source inventory, nothing that blocks a gate or moves a digest."""
+        if data is None:
+            return
+
+        def warn(message: str) -> None:
+            self.problem("intent.calibration_state", path, pointer, f"{ident}: calibration_state source {message}", "warning")
+
+        if not isinstance(data, Mapping):
+            return warn("is not a mapping")
+        wrong = sorted(name for name in Source.__dataclass_fields__ if data.get(name) is not None and not isinstance(data[name], str))
+        if wrong:
+            return warn(f"has non-text {', '.join(wrong)}; its provenance is not checked")
+        decision, artifact, digest = data.get("decision"), data.get("artifact"), data.get("sha256")
+        if decision is not None and self.hw is not None and (why := self._decision_problem(decision)) is not None:
+            warn(f"names decision {decision}, which {why}")
+        if artifact is not None and self.hw is not None:
+            relative = Path(artifact)
+            target = self.hw / relative
+            if relative.is_absolute() or ".." in relative.parts:
+                warn(f"names {artifact}, which is outside hw/")
+            elif not target.is_file() or target.is_symlink():
+                warn(f"names hw/{artifact}, which is missing")
+            elif digest is not None and hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+                warn(f"names hw/{artifact}, which does not match its sha256")
 
     def materials(self) -> Mapping[str, MaterialProfile]:
         path = "hw/manufacturing/materials.yaml"
