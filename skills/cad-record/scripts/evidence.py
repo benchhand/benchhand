@@ -1393,6 +1393,10 @@ _OBLIGATION_GATE_CODES = frozenset({"gate.fail", "gate.stale", "gate.unresolved"
                                     "release.trial_not_permitted"})
 # The packet problem of a packet whose expected checks are not the ones the record now implies.
 EXPECTED_CHANGED = "evidence.expected_changed"
+# The packet problem of a packet whose expected checks are not a list of checks with distinct text ids.
+EXPECTED_INVALID = "evidence.expected_invalid"
+_REGENERATE = ("regenerate the evidence packet (`evidence.py check --hw hw --version vN --out .cad-work/evidence.json`) "
+               "and stamp again")
 # The families only the record decides: an intent.* obligation (the use case, an unknown input, an obligation id
 # collision) or an assembly.joint resolves when the record changes, never from a ledger entry. A joint passes only when
 # assembly_operations finds every joint fact (retention, edge distance, host temperature) sourced and suitable, so a
@@ -1400,9 +1404,40 @@ EXPECTED_CHANGED = "evidence.expected_changed"
 _DECIDED_FROM_RECORD = impact.RECORD_FAMILIES
 
 
+def expected_problem(recorded: Any, recorded_sha256: Any, expected: Sequence[Any]) -> str | None:
+    """The packet problem of a packet's `recorded` expected checks against the record's `expected` ones, or None when
+    they agree: evidence.expected_invalid when they are not a list of checks with distinct text ids (checked first, so
+    a malformed list neither crashes the comparison nor collapses a repeated id), else evidence.expected_changed."""
+    invalid = _expected_invalid(recorded)
+    if invalid:
+        return f"{EXPECTED_INVALID}: its expected checks {invalid}; {_REGENERATE}"
+    changed = expected_change(recorded, expected)
+    if recorded_sha256 != expected_digest(expected) or changed:
+        return (f"{EXPECTED_CHANGED}: its expected checks are not the ones the record implies"
+                + (f" ({changed})" if changed else "") + ". A record change such as a region added to a critical surface "
+                f"changes an expected check, and a stamp made before it never carries over: {_REGENERATE}")
+    return None
+
+
+def _expected_invalid(recorded: Any) -> str:
+    """Why a packet's expected checks are malformed: not a list, an entry that is not a check, an id that is not text, or
+    an id given twice. Empty when they are well formed."""
+    if not isinstance(recorded, list):
+        return f"are a {type(recorded).__name__}, not a list"
+    ids = [item.get("id") if isinstance(item, Mapping) else None for item in recorded]
+    bad = [index for index, ident in enumerate(ids) if not isinstance(ident, str) or not ident]
+    if bad:
+        return f"hold entries without a text id (positions {', '.join(map(str, bad[:5]))})"
+    repeated = sorted({ident for ident in ids if ids.count(ident) > 1})
+    if repeated:
+        return f"repeat the id(s) {', '.join(repeated[:5])}"
+    return ""
+
+
 def expected_change(recorded: Any, expected: Sequence[Any]) -> str:
-    """What differs between a packet's `recorded` expected checks and the record's `expected` ones: the ids added,
-    removed, and kept with another subject, level, stage, basis, requirement or criterion. Empty when they agree."""
+    """What differs between a packet's well-formed `recorded` expected checks (see expected_problem) and the record's
+    `expected` ones: the ids added, removed, and kept with another subject, level, stage, basis, requirement or
+    criterion. Empty when they agree."""
     old = {o.get("id"): o for o in recorded or () if isinstance(o, Mapping)}
     new = {o.id: o.as_dict() for o in expected}
     parts = []
@@ -1424,13 +1459,9 @@ def packet_problems(data: Any, *, record: Any, record_sha256: str, stage: str) -
     if data.get("record_sha256") != record_sha256:
         problems.append("it was computed from another record: hw/ changed during or after the check; check again")
     expected = mi.required_checks(record)
-    changed = expected_change(data.get("expected"), expected)
-    if data.get("expected_sha256") != expected_digest(expected) or changed:
-        problems.append(f"{EXPECTED_CHANGED}: its expected checks are not the ones the record implies"
-                        + (f" ({changed})" if changed else "") + ". A record change such as a region added to a critical "
-                        "surface changes an expected check, and a stamp made before it never carries over: regenerate the "
-                        "evidence packet (`evidence.py check --hw hw --version vN --out .cad-work/evidence.json`) and stamp "
-                        "again")
+    problem = expected_problem(data.get("expected"), data.get("expected_sha256"), expected)
+    if problem:
+        problems.append(problem)
     statuses = _mapping(data.get("statuses"))
     missing = [o.id for o in expected if not isinstance(statuses.get(o.id), Mapping)]
     if missing:
