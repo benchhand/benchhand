@@ -15,6 +15,7 @@ import contextlib
 import hashlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import threading
@@ -160,6 +161,52 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["symlink_refused"]))
         self.assertEqual(list(outside.iterdir()), [])
 
+    def test_an_existing_sidecar_is_never_replaced_and_no_target_is_left_behind(self) -> None:
+        sources = self.hw / "parts" / "PIN-0001" / "sources"
+        sources.mkdir(parents=True)
+        sidecar = sources / "thumb_screw_table.html.source.json"
+        sidecar.write_text('{"origin": "earlier"}\n', encoding="utf-8")
+        code, result = run(*self.args(HTML))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["name_conflict"]))
+        self.assertEqual(sidecar.read_text(encoding="utf-8"), '{"origin": "earlier"}\n')
+        self.assertFalse((sources / "thumb_screw_table.html").exists())
+
+    def test_a_conflicting_fetch_leaves_both_originals_untouched(self) -> None:
+        self.assertEqual(run(*self.args(HTML))[0], 0)
+        sources = self.hw / "parts" / "PIN-0001" / "sources"
+        before = {p.name: p.read_bytes() for p in sources.iterdir()}
+        other = Path(self._tmp.name) / "thumb_screw_table.html"
+        other.write_text("<table><tr><td>other</td></tr></table>", encoding="utf-8")
+        code, result = run(*self.args(other))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["name_conflict"]))
+        self.assertEqual({p.name: p.read_bytes() for p in sources.iterdir()}, before)
+
+    def test_concurrent_runs_with_different_content_leave_one_consistent_winner(self) -> None:
+        pages = []
+        for index in range(6):
+            page = Path(self._tmp.name) / f"page{index}.html"
+            page.write_text(f"<table><tr><td>version {index}</td></tr></table>", encoding="utf-8")
+            pages.append(page)
+        script = HERE.parent / "scripts" / "source_extract.py"
+        procs = [subprocess.Popen([sys.executable, "-B", str(script), "PIN-0001", str(page), "--hw", str(self.hw),
+                                   "--name", "shared.html", "--accessed", "2026-11-27"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) for page in pages]
+        codes = [proc.wait() for proc in procs]
+        for proc in procs:
+            proc.stdout.close()  # type: ignore[union-attr]
+            proc.stderr.close()  # type: ignore[union-attr]
+        sources = self.hw / "parts" / "PIN-0001" / "sources"
+        self.assertEqual(sorted(codes), [0, 1, 1, 1, 1, 1])
+        sidecar = json.loads((sources / "shared.html.source.json").read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["sha256"], hashlib.sha256((sources / "shared.html").read_bytes()).hexdigest())
+        self.assertEqual(sorted(p.name for p in sources.iterdir()), ["shared.html", "shared.html.source.json"])
+
+    def test_a_part_folder_that_is_a_file_is_a_storage_finding(self) -> None:
+        self.hw.mkdir()
+        (self.hw / "parts").write_text("not a directory", encoding="utf-8")
+        code, result = run(*self.args(HTML))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["storage_error"]))
+
     def test_bad_arguments_exit_2(self) -> None:
         for argv in (["lower-1", str(HTML)], ["PIN-0001"], ["PIN-0001", str(HTML), "--bogus"]):
             with self.subTest(argv=argv):
@@ -168,6 +215,13 @@ class ExtractTests(unittest.TestCase):
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/short":
+            self.send_response(200)
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            self.wfile.write(b"<table>")
+            self.wfile.flush()
+            return
         status = {"/forbidden": 403, "/missing": 404, "/limited": 429}.get(self.path, 200)
         body = HTML.read_bytes() if status == 200 else b"no"
         self.send_response(status)
@@ -209,6 +263,11 @@ class FetchTests(unittest.TestCase):
     def test_unreachable_host_is_a_network_finding(self) -> None:
         code, result = run("PIN-0001", "http://127.0.0.1:1/x.html", "--hw", str(self.hw))
         self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["network_error"]))
+
+    def test_a_truncated_response_is_a_transfer_finding_and_stores_nothing(self) -> None:
+        code, result = run("PIN-0001", self.base + "/short", "--hw", str(self.hw))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["transfer_error"]))
+        self.assertFalse(self.hw.exists())
 
     def test_a_fetched_page_is_stored_under_its_url_name_with_the_url_as_origin(self) -> None:
         url = self.base + "/standards/din/653"
