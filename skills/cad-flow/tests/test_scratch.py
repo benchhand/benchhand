@@ -979,6 +979,54 @@ class Sync(ScratchCase):
         self.deliver_and_expect_no_proposal("unit-a")  # settles the committed stage and moves on
         self.assertEqual(list(scratch_hw.parent.glob("sync-*")), [])
 
+    def fake_tools(self, seen: dict, scratch_hw: Path):
+        """A run_tool that records, when cad-model `run` starts, what state the workspace is in."""
+        work = scratch_hw.parent
+
+        def run_tool(argv: list[str], _log: Path) -> tuple[int, dict]:
+            if argv[1] == "run":
+                seen["stages"] = [p.name for p in work.glob("sync-*")]
+                seen["interfaces"] = (scratch_hw / "interfaces.yaml").read_bytes()
+                with (work / "workspace.lock").open("w", encoding="utf-8") as probe:
+                    try:
+                        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        seen["locked"] = False
+                    except BlockingIOError:
+                        seen["locked"] = True
+                version = Path(argv[2]) / "versions" / argv[argv.index("--label") + 1]
+                version.mkdir(parents=True)
+                (version / "manifest.json").write_text("{}\n", encoding="utf-8")
+                return 0, {"findings": []}
+            if argv[1] == "check":
+                return 0, {"blocking_failures": [], "warnings": []}
+            return 0, {"findings": []}
+
+        return run_tool
+
+    def test_build_settles_an_unsettled_swap_first_and_holds_the_lock_while_it_runs(self) -> None:
+        original = (self.hw / "interfaces.yaml").read_bytes()
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        module = load_scratch()
+        self.crash(module, "unit-a", "after the new tree is in place")
+        seen: dict = {}
+        with mock.patch.object(module, "run_tool", side_effect=self.fake_tools(seen, scratch_hw)):
+            code, report = module.build(self.hw.resolve(), "unit-a", "auto", "F0")
+        self.assertEqual((code, report["status"]), (0, "pass"), report)
+        self.assertEqual(seen, {"stages": [], "interfaces": original, "locked": True})
+        self.deliver_and_expect_no_proposal("unit-a")
+
+    def test_init_on_an_existing_workspace_settles_an_unsettled_swap_before_it_returns(self) -> None:
+        original = (self.hw / "interfaces.yaml").read_bytes()
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        self.crash(load_scratch(), "unit-a", "after the new tree is in place")
+        self.assertEqual(self.init("unit-a", "PRT-0001")["status"], "exists")
+        self.assertEqual(list(scratch_hw.parent.glob("sync-*")), [])
+        self.assertEqual((scratch_hw / "interfaces.yaml").read_bytes(), original)
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
