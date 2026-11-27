@@ -959,6 +959,90 @@ class ReviewedRegressionsThroughTheCli(unittest.TestCase):
         self.assertEqual(report["coverage"]["unselected"], ["TST-0302"])
         self.assertIn("use_case.loads.service_load.magnitude", [m["field"] for m in report["use_case"]["missing"]])
 
+    def test_an_authored_pass_leaves_the_missing_design_allowable_unknown(self) -> None:
+        """benchhand-yjq.5. Production service needs a justified allowable for the yield criterion. An authored pass of
+        that criterion has no allowable basis, so the computed unknown stays on the candidate."""
+        documents = scenarios.mandatory_vs_score()
+        selection_candidate(documents, "unproven")["evaluations"] = [
+            scenarios.evaluation("REQ-001", "pass", "yield_strength", ">=", 100, "MPa", method="TST coupon test")]
+        _, report = self.cli(documents)
+        unproven = candidate(report, "unproven")
+        self.assertEqual((unproven["status"], unproven["unknown"]), ("conditional", ["REQ-001"]))
+        computed = [e for e in evaluations(unproven, "REQ-001") if not e["authored"]]
+        self.assertEqual([e["outcome"] for e in computed], ["unknown"])
+        self.assertIn("needs a justified design allowable", " ".join(computed[0]["reasons"]))
+
+    def test_a_result_of_another_state_or_condition_is_a_named_mismatch(self) -> None:
+        """benchhand-yjq.6. REQ-002 asks for the assembled wear depth after the run-in. A pass measured in another state or
+        under other conditions is a different criterion: a named mismatch, and the candidate stays conditional."""
+        required = {"state": "assembled", "conditions": "TST after 1000 h run-in at 40 deg_C"}
+        stated = {"another state": {**required, "state": "as_manufactured"}, "no state": {"conditions": required["conditions"]},
+                  "other conditions": {**required, "conditions": "TST new, at 23 deg_C"}}
+        for case, extra in stated.items():
+            with self.subTest(case):
+                documents = scenarios.wear_shaft_options()
+                documents["requirements.yaml"]["requirements"][1]["acceptance"][0].update(required)
+                (written,) = selection_candidate(documents, "purchased_shaft")["evaluations"]
+                written["criterion"].update(extra)
+                _, report = self.cli(documents)
+                purchased = candidate(report, "purchased_shaft")
+                self.assertEqual((purchased["status"], purchased["unknown"]), ("conditional", ["REQ-002"]))
+                self.assertIn("evaluation_mismatch_purchased_shaft_req_002",
+                              [f["id"] for f in findings(report, "selection.evaluation_mismatch")])
+
+    def test_a_cutting_approval_needs_the_operation_thickness_and_coating_of_the_step(self) -> None:
+        """benchhand-yjq.7. tst_laser approves 3 mm uncoated sheet. An approval for engraving only, one with no operation
+        scope, an unstated thickness or coating, or other stock never approves the cutting step: the evaluation is unknown
+        and the recommendation falls to the machined frame."""
+        def approval(documents: dict[str, Any]) -> dict[str, Any]:
+            return profile(documents, "capabilities", "tst_laser")["materials"][0]
+
+        def cut(documents: dict[str, Any]) -> dict[str, Any]:
+            return selection_candidate(documents, "sheet_frame")["parts"][0]["route"][0]
+
+        cases = {
+            "engraving only": lambda d: approval(d).update(operations=["engrave"]),
+            "operation scope not stated": lambda d: approval(d).pop("operations"),
+            "approved thickness not stated": lambda d: approval(d).pop("thickness"),
+            "stock coating not stated": lambda d: cut(d)["stock"].pop("coating"),
+            "approved for another coating": lambda d: cut(d)["stock"].update(coating=fx.known("TST protective film")),
+            "blank coatings on both": lambda d: (approval(d).update(coating=fx.known("  ")),
+                                                 cut(d)["stock"].update(coating=fx.known(" \t"))),
+        }
+        for case, change in cases.items():
+            with self.subTest(case):
+                documents = scenarios.plate_frame_options()
+                change(documents)
+                _, report = self.cli(documents)
+                sheet = candidate(report, "sheet_frame")
+                self.assertEqual((sheet["status"], sheet["unknown"]), ("conditional", ["material_approval"]))
+                self.assertEqual([e["outcome"] for e in evaluations(sheet, "material_approval")], ["unknown", "pass"])
+                self.assertEqual(only_decision(report)["recommendation"]["primary"], "machined_frame")
+
+    def test_a_part_only_an_eliminated_alternative_names_is_unselected_and_exits_1(self) -> None:
+        """benchhand-yjq.8. The printed alternative also proposes the cover TST-0202 but is eliminated; the chosen
+        machined bracket names only TST-0201, so the cover is named unselected and the report is not final."""
+        documents = scenarios.hot_loaded_bracket()
+        documents["parts/TST-0202/part.yaml"] = scenarios.made_part("TST-0202", "Cover", "fdm", "tst_polymer_a_printed", "tst_printer")
+        selection_candidate(documents, "printed_bracket")["parts"].append(
+            scenarios.cpart("TST-0202", "tst_polymer_a_printed", scenarios.step("fdm", "tst_printer", "local")))
+        code, report = self.cli(documents)
+        self.assertEqual((code, report["status"]), (1, "conditional"))
+        self.assertEqual(report["coverage"], {"made": ["TST-0201", "TST-0202"], "unselected": ["TST-0202"]})
+        (unselected,) = findings(report, "selection.part_unselected")
+        self.assertEqual(unselected["subject"], {"PN": "TST-0202"})
+
+    def test_an_unknown_fact_of_a_listed_load_refuses_a_final_choice_and_exits_1(self) -> None:
+        """benchhand-yjq.9. A populated loads list is not a known load case: each load's magnitude, duration, frequency and
+        cycles count, and each unknown one is named."""
+        for name in ("magnitude", "duration", "frequency", "cycles"):
+            with self.subTest(name):
+                documents = scenarios.qualified_polymer_cover()
+                documents["product.yaml"]["use_case"]["loads"][0][name] = fx.unknown("never measured")
+                code, report = self.cli(documents)
+                self.assertEqual((code, report["status"], only_decision(report)["final_allowed"]), (1, "conditional", False))
+                self.assertIn(f"use_case.loads.service_load.{name}", [m["field"] for m in report["use_case"]["missing"]])
+
 
 class StrictMaterialCriteria(unittest.TestCase):
     """The printed polymer's max_service_temperature is 60 deg_C. A strict `<` or `>` criterion at that limit fails
