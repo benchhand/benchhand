@@ -850,13 +850,14 @@ class _Assessor:
     def coating_scope(self, cpart: CandidatePart, step: Step, index: int, approval: str,
                       entry: Mapping[str, Any]) -> list[tuple[str, str]]:
         """(why, remedy) when the approval's coating is unidentified, the stock's coating is not stated, or they differ.
-        An uncoated stock and its approval both say "none"."""
+        An uncoated stock and its approval both say "none"; a blank name (empty once spacing is removed) identifies no
+        coating, so two blank names never match."""
         approved = mi.fact(entry["coating"]) if isinstance(entry.get("coating"), Mapping) else None
-        if approved is None or not approved.known or not isinstance(approved.value, str):
+        if approved is None or not approved.known or not isinstance(approved.value, str) or not _text_key(approved.value):
             return [(f"{approval} does not identify the coating or film it covers",
                      f'record the coating it is approved for, or "none" for uncoated stock, in {approval}')]
         stock = self.stock_fact(cpart, step, index, "coating")
-        if stock is None or not stock.known or not isinstance(stock.value, str):
+        if stock is None or not stock.known or not isinstance(stock.value, str) or not _text_key(stock.value):
             return [(f"the {step.kind} step states no stock coating, so {approval} for {approved.value} cannot be checked",
                      'record the stock.coating of the step, or "none" for uncoated stock')]
         if _text_key(stock.value) != _text_key(approved.value):
