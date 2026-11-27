@@ -1,11 +1,11 @@
 Service class: fit_assembly
-The first rule that matches an obligation decides it. Exceptions: a due check that is unresolved blocks from LAYOUT on, but before LAYOUT only a known failure blocks and any other unresolved check warns. A check not assessed is informational at every gate: it blocks nothing and is no pass. A planned physical check may stay planned until the release. The release skips an out-of-scope rule.
+The first rule that matches an obligation decides it. Exceptions: a due check that is unresolved blocks from LAYOUT on, but before LAYOUT only a known failure blocks and any other unresolved check warns. A check not assessed is informational at every gate: it blocks nothing and is no pass. A planned physical check may stay planned until the release. A gate skips an out-of-scope rule and names it in a gate.out_of_scope info row; its result stays as shown.
   obligation.requirements [required]: Approved requirements and the evidence policy, at every level: a project may demand more (blocks once due, with the exceptions above; blocks at release until resolved)
   obligation.make [required]: Make checks (intent, CAD, route, process, purchase, optical route, export) at the CAD, geometry and process levels (blocks once due, with the exceptions above; blocks at release until resolved)
   obligation.make_evidence [required]: Make checks at the simulation and physical levels (blocks once due, with the exceptions above; blocks at release until resolved)
   obligation.fit [required]: Fit checks: interfaces, features, assembly and motion play (blocks once due, with the exceptions above; blocks at release until resolved)
-  obligation.function [out_of_scope]: Function checks: engineering, function, contact, motion and optical (not owed at release; before it, blocks once due, with the exceptions above)
-  obligation.other [out_of_scope]: Every other check family, and any check at a level outside the schema (not owed at release; before it, blocks once due, with the exceptions above)
+  obligation.function [out_of_scope]: Function checks: engineering, function, contact, motion and optical (not owed at any gate: it blocks nothing, and a gate before the release names it in a gate.out_of_scope info row)
+  obligation.other [out_of_scope]: Every other check family, and any check at a level outside the schema (not owed at any gate: it blocks nothing, and a gate before the release names it in a gate.out_of_scope info row)
   exception: optical.route at cad_valid, geometrically_manufacturable, process_planned is decided by obligation.make [required], not obligation.function [out_of_scope]
   exception: optical.route at simulation_supported, physically_validated is decided by obligation.make_evidence [required], not obligation.function [out_of_scope]
   exception: motion.play at every schema level is decided by obligation.fit [required], not obligation.function [out_of_scope]

@@ -259,21 +259,25 @@ class ProjectScope:
 
 UNKNOWN_CLASS = "unknown"
 
-# What the gates do today (evidence.obligation_gate and Assessment.release): from LAYOUT on a due unresolved check
-# blocks, before it the check only warns; a planned physical check may stay planned until the release; the release
-# skips an out-of-scope obligation and blocks on any other unresolved one; a check not assessed blocks nothing. An
-# unknown service class owes every rule and also blocks the release by itself (release.service_class).
+# What the gates do (evidence.obligation_gate and Assessment.release): from LAYOUT on a due unresolved check
+# blocks, before it the check only warns; a planned physical check may stay planned until the release; a check not
+# assessed blocks nothing. A gate skips an out-of-scope obligation at every stage, a known failure included: before the
+# release a gate.out_of_scope info row names it, and its result is never rewritten. The release blocks on any other
+# unresolved one. An unknown service class owes every rule and also blocks the release by itself
+# (release.service_class).
 # test_project_scope.py runs the real gates against these words, so a gate change that leaves them stale fails there.
 _REASONS: Mapping[str, str] = types.MappingProxyType({
     "required": "blocks once due, with the exceptions above; blocks at release until resolved",
     "check_before_use": "a physical check the release may close as checked before use",
     "advisory": "runs and shows a finding, never blocks and never passes",
-    OUT_OF_SCOPE: "not owed at release; before it, blocks once due, with the exceptions above",
+    OUT_OF_SCOPE: "not owed at any gate: it blocks nothing, and a gate before the release names it in a "
+                  "gate.out_of_scope info row",
 })
 _GATE_NOTE = ("The first rule that matches an obligation decides it. Exceptions: a due check that is unresolved blocks "
               "from LAYOUT on, but before LAYOUT only a known failure blocks and any other unresolved check warns. "
               "A check not assessed is informational at every gate: it blocks nothing and is no pass. A planned "
-              "physical check may stay planned until the release. The release skips an out-of-scope rule.")
+              "physical check may stay planned until the release. A gate skips an out-of-scope rule and names it in a "
+              "gate.out_of_scope info row; its result stays as shown.")
 _UNKNOWN_NOTE = "Release: an unknown service class blocks the release by itself, whatever else is resolved."
 
 
