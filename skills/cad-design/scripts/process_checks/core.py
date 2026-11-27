@@ -560,11 +560,15 @@ class Context:
         return self.record.materials.get(ident) if ident else None
 
     def stock_material_id(self, op: Any | None = None) -> str | None:
-        """The stock profile the setup of `op` (default: this operation) names, else the component's material profile."""
+        """The stock profile the setup of `op` (default: this operation) names, else, when it states no stock material, the
+        component's material profile. Stock recorded as an unknown (or other open) fact is None: the part's material is no
+        stand-in for it."""
         op = op or self.op
         stock = ((op.setup or {}).get("stock") or {}) if op is not None else {}
-        named = stock.get("material_profile")
-        return named if isinstance(named, str) else self.material_id
+        if "material_profile" not in stock:
+            return self.material_id
+        named = stock["material_profile"]
+        return named if isinstance(named, str) else None
 
     @property
     def profile(self) -> Any | None:
@@ -659,6 +663,8 @@ class Context:
         the guideline. Calibration is never required: a guideline value governs until one exists (benchhand-c7q.30)."""
         if op is None:
             cal = self.calibrated(characteristic, profile=profile, orientation=orientation, feature=feature, size=size)
+        elif self.stock_material_id(op) is None:  # no calibration or guideline of an unidentified stock applies
+            return Calibrated("unknown", characteristic, None, (f"{self.label}: the stock material of {op.id} is unknown",))
         elif (profile := profile or self.profile_of(op)) is None:
             cal = Calibrated("unknown", characteristic, None, (f"{self.label}: {op.id} records no capability profile",))
         else:

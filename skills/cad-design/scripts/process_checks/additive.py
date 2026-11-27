@@ -51,14 +51,15 @@ def _k(ctx: Context) -> str:
 
 
 def _no_basis(ctx: Context, findings: list[Draft], draft: Draft, what: str, otherwise: str,
-              why: str = "no calibration or guideline", process: str | None = None) -> tuple[str, str]:
+              why: str = "no calibration or guideline", process: str | None = None, op: Any | None = None) -> tuple[str, str]:
     """`draft`, the finding of a check that has no value to judge against, as a sub-check. On a printer (the `process`
-    whose as-made result is judged, this operation's by default) a calibration is optional (benchhand-c7q.30): the check
+    whose as-made result is judged, this operation's by default; `op` the operation whose stock is judged, this one by
+    default) a calibration is optional (benchhand-c7q.30): the check
     is not assessed, a minor finding that blocks no gate and is never a pass. On any other process, or with the stock
     material unidentified (no calibration or guideline could be looked up), it stays UNKNOWN with `otherwise` as its
     coverage."""
     findings.append(draft)
-    if (process or _k(ctx)) not in PRINTERS or ctx.stock_material_id() is None:
+    if (process or _k(ctx)) not in PRINTERS or ctx.stock_material_id(op) is None:
         return UNKNOWN, otherwise
     draft.outcome, draft.severity, draft.reason = NOT_ASSESSED, "minor", NO_BASIS
     return NOT_ASSESSED, f"{what} not assessed: {why}; print and inspect, or calibrate to assess"
