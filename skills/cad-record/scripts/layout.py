@@ -33,7 +33,7 @@ import shutil
 import sys
 import time
 import uuid
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -694,9 +694,11 @@ def _inventory(hw: Path, rel: str, entry: Entry, params: Mapping[str, str]) -> t
     return set(files), None
 
 
-def audit(hw: Path, references: Mapping[str, str] | None = None) -> Audit:
+def audit(hw: Path, references: Mapping[str, str] | None = None, *,
+          version_anchors: AbstractSet[str] = frozenset()) -> Audit:
     """Every file and directory under `hw` against the layout. `references` maps a project-relative
-    file that a part record names (procurement/specification/artifact) to that part's PN."""
+    file that a part record names (procurement/specification/artifact) to that part's PN.
+    `version_anchors` lists manifests tracked on their own; inventories still apply to materialised versions."""
     lay, hw = load(), Path(hw)
     references = references or {}
     report = _Report(lay, hw)
@@ -724,8 +726,9 @@ def audit(hw: Path, references: Mapping[str, str] | None = None) -> Audit:
         for path in sorted(inside - expected):
             report.add("layout.unlisted", path, values=values)
             unlisted.add(path)
-        for path in sorted(expected - inside):
-            report.add("layout.missing", path, values=values)
+        if entry.manifest != "version" or inside or f"{rel}/{MANIFEST}" not in version_anchors:
+            for path in sorted(expected - inside):
+                report.add("layout.missing", path, values=values)
         if entry.manifest == "bundle":
             bundles.append(f"{rel}/{MANIFEST}")
 

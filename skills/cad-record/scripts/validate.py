@@ -934,7 +934,8 @@ def check_acceptance_anchor(hw: Path, record: Any, findings: list[dict[str, Any]
                                        "or open an engineering change."))
 
 
-def check_layout(hw: Path, product: Any, part_records: dict[str, Any], findings: list[dict[str, str]]) -> None:
+def check_layout(hw: Path, product: Any, part_records: dict[str, Any], findings: list[dict[str, str]], *,
+                 version_anchors: frozenset[str] = frozenset()) -> None:
     """Every file and directory under hw/, tracked, untracked or ignored, against cad-record layout.json."""
     references = {}
     for pn, (part, _) in part_records.items():
@@ -942,7 +943,7 @@ def check_layout(hw: Path, product: Any, part_records: dict[str, Any], findings:
         if isinstance(artifact, str):
             references[posixpath.normpath(f"{layout.HW}/{artifact}")] = pn
     strict = layout_strict(product, hw)
-    report = layout.audit(hw, references)
+    report = layout.audit(hw, references, version_anchors=version_anchors)
     for problem in report.problems:
         severity = problem.severity if problem.severity != "stage" else "error" if strict else "warning"
         findings.append(finding(str(layout.locate(hw, problem.path)), problem.message, severity=severity,

@@ -304,7 +304,17 @@ def staged_product(root: Path, stage: str | None = None) -> dict[str, Any]:
     return product if isinstance(product, dict) else {}
 
 
-def require_clean_layout(root: Path, product: dict[str, Any]) -> None:
+def _committed_version_anchors(root: Path) -> frozenset[str]:
+    members: dict[str, list[str]] = {}
+    for path in tree_paths(root, committed=True):
+        parts = path.split("/")
+        if len(parts) >= 4 and parts[:2] == ["hw", "versions"]:
+            members.setdefault(parts[2], []).append(path)
+    return frozenset(paths[0] for paths in members.values() if len(paths) == 1
+                     and paths[0].endswith(f"/{layout.MANIFEST}") and paths[0].count("/") == 3)
+
+
+def require_clean_layout(root: Path, product: dict[str, Any], *, committed: bool = False) -> None:
     part_records = {}
     for part_path in sorted((root / "hw" / "parts").glob("*/part.yaml")):
         try:
@@ -314,7 +324,8 @@ def require_clean_layout(root: Path, product: dict[str, Any]) -> None:
         if isinstance(part, dict) and isinstance(part.get("PN"), str):
             part_records[part["PN"]] = (part, str(part_path))
     findings: list[dict[str, str]] = []
-    validate.check_layout(root / "hw", product, part_records, findings)
+    anchors = _committed_version_anchors(root) if committed else frozenset()
+    validate.check_layout(root / "hw", product, part_records, findings, version_anchors=anchors)
     blocking = validate.blocking(findings)
     if blocking:
         first = blocking[0]
@@ -512,7 +523,7 @@ def main() -> int:
                 raise RuntimeError("staged hw/product.yaml has a missing or unknown flow.stage")
             if not isinstance(threshold, str) or threshold not in validate.stages():
                 raise RuntimeError("staged hw/product.yaml has a missing or unknown flow.recheck_from")
-            require_clean_layout(root, product)
+            require_clean_layout(root, product, committed=committed)
             if not committed:
                 require_threshold_kept(root, threshold)
             require_profile(root, committed, product)
