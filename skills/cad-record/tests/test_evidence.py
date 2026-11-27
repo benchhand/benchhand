@@ -1205,10 +1205,14 @@ PASSING = "print(json.dumps({'status': 'pass'}))\n"
 class BuiltRecord(unittest.TestCase):
     """The TST record built as v1, with no independent movable joint."""
 
+    def documents(self) -> dict[str, Any]:
+        """The record documents the version is built from."""
+        return fx.tst_record()
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="cad-evidence-run-test-")
         self.addCleanup(temporary.cleanup)
-        self.hw = fx.write_record(Path(temporary.name) / "hw", fx.tst_record())
+        self.hw = fx.write_record(Path(temporary.name) / "hw", self.documents())
         add_flow_profile(self.hw)  # `evidence.py run` starts with validate.py, which needs a settled profile
         for pn in ("TST-0001", "TST-0002", "TST-0004"):
             (self.hw / "parts" / pn / "model.py").write_text(f"# {pn}\n", encoding="utf-8")
@@ -1545,6 +1549,45 @@ class EvidenceDigestCli(BuiltRecord):
                 self.assertNotIn("inventory", report)
                 self.assertEqual([f["path"] for f in report["findings"]], [self.FIELD], report)
                 self.assertIn(text, report["findings"][0]["message"])
+
+
+class ObligationIdsThroughTheCli(BuiltRecord):
+    """benchhand-yjq.4 through `evidence.py check`: the expected checks of the printed packet."""
+
+    def check(self) -> tuple[int, list[str]]:
+        done = subprocess.run([sys.executable, "-B", str(HERE.parent / "scripts" / "evidence.py"), "check", "--hw", str(self.hw),
+                               "--version", "v1", "--stage", "parts"], capture_output=True, text=True, check=False)
+        self.assertIn(done.returncode, (0, 1), done.stderr)
+        return done.returncode, [item["id"] for item in json.loads(done.stdout)["expected"]]
+
+
+class TwoSurfacesOnOneFeatureThroughTheCli(ObligationIdsThroughTheCli):
+    def documents(self) -> dict[str, Any]:
+        docs = fx.tst_record()
+        docs["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+            {"id": ident, "feature": "seal_groove", "role": "seal", "dimension_state": "after_finish"}
+            for ident in ("seal_inner", "seal_outer")]
+        return docs
+
+    def test_two_surfaces_on_one_feature_are_two_expected_checks(self) -> None:
+        code, ids = self.check()
+        wanted = {f"feature.{family}@TST-0001#seal_groove{suffix}" for family in ("fit", "inspection") for suffix in ("", "~seal_outer")}
+        self.assertLessEqual(wanted, set(ids))
+        self.assertEqual([ident for ident in ids if ident.startswith("intent.obligation_identity")], [])
+        self.assertEqual(code, 1, "the unproven expected checks keep the gate closed")
+
+
+class TwoOccurrencesOfOnePolicyThroughTheCli(ObligationIdsThroughTheCli):
+    def documents(self) -> dict[str, Any]:
+        docs = fx.with_subject_occurrences(fx.tst_record(), {"PN": "TST-0003"})
+        docs["product.yaml"]["use_case"]["evidence_policy"] = {"decision": "DR-001", "obligations": [
+            {"subject": {"PN": "TST-0003", "occurrence": ref}, "level": "physically_validated"} for ref in ("@left", "@right")]}
+        return docs
+
+    def test_checks_no_id_can_separate_are_named_and_hold_the_gate(self) -> None:
+        code, ids = self.check()
+        self.assertEqual((code, [ident for ident in ids if ident.startswith("intent.obligation_identity")]),
+                         (1, ["intent.obligation_identity@TST-0003"]))
 
 
 class EvidenceRunCli(BuiltRecord):
