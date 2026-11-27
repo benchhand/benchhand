@@ -65,6 +65,11 @@ class Eligibility(unittest.TestCase):
             "a size that embeds the length": ({**SCREW, "size": "M4x20"}, [("size", "embeds a length")]),
             "a zero length": ({**SCREW, "length": 0}, [("length", "positive number")]),
             "an infinite length": ({**SCREW, "length": float("inf")}, [("length", "positive number")]),
+            "an integer length beyond float range": ({**SCREW, "length": 10**400}, [("length", "positive number")]),
+            "a huge integer length beside an invalid standard": ({**SCREW, "standard": " ", "length": 10**400},
+                                                                  [("standard", "missing or blank"), ("length", "positive number")]),
+            "an unhashable family": ({**INSERT, "family": ["heat_set_insert"]}, [("family", "not a known commodity family")]),
+            "a mapping family": ({**INSERT, "family": {"a": 1}}, [("family", "not a known commodity family")]),
             "a not-a-number length": ({**SCREW, "length": float("nan")}, [("length", "positive number")]),
             "a numeric property class": ({**SCREW, "property_class": 8.8}, [("property_class", "must be text")]),
             "two bad fields, in record order": ({**SCREW, "property_class": 8.8, "standard": " "},
@@ -79,6 +84,19 @@ class Eligibility(unittest.TestCase):
                 for (_, reason), (_, word) in zip(issues, expected):
                     self.assertIn(word, reason)
                 self.assertIsNotNone(ci.designation_problem(designation))
+
+    def test_a_supplied_scalar_designation_is_an_issue_but_an_omitted_one_is_not(self) -> None:
+        def purchase(**extra: Any) -> dict[str, Any]:
+            return {"intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"identity": {"status": "unknown", "reason": "x"}, **extra}}]}}
+
+        for name, value in {"text": "ISO 4762 M4x20", "number": 5, "list": [1], "empty text": ""}.items():
+            with self.subTest(name):
+                issues = ci.part_designation_issues(purchase(designation=value))
+                self.assertEqual([field for field, _ in issues], [""])
+                self.assertIn("mapping", issues[0][1])
+        for name, record in {"omitted": purchase(), "null": purchase(designation=None), "no route": {}}.items():
+            with self.subTest(name):
+                self.assertEqual(ci.part_designation_issues(record), [])
 
     def test_an_eligible_designation_has_no_issue(self) -> None:
         for designation in (SCREW, NUT, INSERT):
