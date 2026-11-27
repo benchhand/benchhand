@@ -429,6 +429,18 @@ class StopGeometryTests(unittest.TestCase):
                                                  "placement": {"rotation": {"axis": [1, 0, 0], "angle_deg": 180}}}]
         docs["parts/TST-0302/part.yaml"]["model_frame"] = "part_local"
 
+    def test_a_rail_touching_along_the_travel_is_no_stop_for_an_axial_load(self) -> None:
+        # The lever slides along +x from 0 to 5 mm while its underside rests on the block's top face (z -3). The contact
+        # normal is +z, square to the travel, so the face can't resist motion along x: a 30 N load along -x finds
+        # nothing to react it. Proximity alone is not evidence of a stop.
+        along = {"id": "J-001", "type": "prismatic", "parent": "TST-0301", "child": "TST-0302", "axis": [1, 0, 0],
+                 "origin": [0, 0, 0], "min": 0, "max": 5, "nominal": 0}
+        code, result = self.run_stop("slide-rail", joint=along, direction=(-1, 0, 0))
+        [row] = result["outcomes"]
+        self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
+        self.assertIn("contact normal", row["uncertainty"])
+        self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
     def test_a_part_frame_direction_is_rotated_into_the_assembly_frame(self) -> None:
         # By hand: a 30 N load along the lever's own +Z, with the lever turned 180 deg about X, acts along the
         # assembly's -Z, which presses the lower stop with 30 N. Read as an assembly direction it points up and
