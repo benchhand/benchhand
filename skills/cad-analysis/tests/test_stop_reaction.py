@@ -429,6 +429,21 @@ class StopGeometryTests(unittest.TestCase):
                                                  "placement": {"rotation": {"axis": [1, 0, 0], "angle_deg": 180}}}]
         docs["parts/TST-0302/part.yaml"]["model_frame"] = "part_local"
 
+    def test_a_prismatic_failure_cites_the_axial_rule_not_the_revolute_moment(self) -> None:
+        # The slide has no pin, cheeks or moment: its finding names the axial load component and a remedy that sizes
+        # the stop and its fasteners.
+        _, result = self.run_stop("slide-axial-text", joint=self.SLIDE, variant="disk", contact_load=20.0)
+        [finding] = result["findings"]
+        texts = " ".join([finding["criterion"]["source"]["reference"], finding["consequence"], finding["remedy"],
+                          finding["uncertainty"], finding["method"]["name"]])
+        for revolute_only in ("pin", "cheeks", "moment", "smallest contact arm", "pivot"):
+            self.assertNotIn(revolute_only, texts)
+        self.assertIn("axial", finding["criterion"]["source"]["reference"])
+        self.assertIn("axial", finding["remedy"])
+        self.assertIn("slide axis", finding["method"]["name"])
+        [row] = result["outcomes"]
+        self.assertNotIn("pivot axis", row["method"] + row["coverage"])
+
     def test_a_rail_touching_along_the_travel_is_no_stop_for_an_axial_load(self) -> None:
         # The lever slides along +x from 0 to 5 mm while its underside rests on the block's top face (z -3). The contact
         # normal is +z, square to the travel, so the face can't resist motion along x: a 30 N load along -x finds
