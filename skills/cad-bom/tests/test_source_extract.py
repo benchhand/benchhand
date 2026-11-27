@@ -207,6 +207,29 @@ class ExtractTests(unittest.TestCase):
         code, result = run(*self.args(HTML))
         self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["storage_error"]))
 
+    def test_cells_and_rows_without_end_tags_still_expand_their_spans(self) -> None:
+        page = Path(self._tmp.name) / "no_end_tags.html"
+        page.write_text(
+            "<table>\n"
+            "<tr><td colspan=3>Thread d<td>M3<td>(M3,5)<td>M4\n"
+            "<tr><td colspan=3>P<td>0,5<td>0,6<td>0,7\n"
+            "<tr><td colspan=2 rowspan=3>dk<td>Nominal<td>12<td>14<td>16\n"
+            "<tr><td>max.<td>12,35<td>14,35<td>16,35\n"
+            "<tr><td>min.<td>11,65<td>13,65<td>15,65\n"
+            "</table>\n", encoding="utf-8")
+        code, result = run(*self.args(page, "--find", "dk"))
+        self.assertEqual(code, 0)
+        nominal, maximum, minimum = (by_header(m) for m in result["matches"])
+        self.assertEqual(nominal, {"M3": "12", "(M3,5)": "14", "M4": "16"})
+        self.assertEqual(maximum["M4"], "16,35")
+        self.assertEqual(minimum["M4"], "15,65")
+
+    def test_a_cell_closed_by_the_next_row_in_a_thead_without_end_tags_still_makes_a_header(self) -> None:
+        page = Path(self._tmp.name) / "thead.html"
+        page.write_text("<table><thead><tr><th>Size<th>dk<tbody><tr><td>M4<td>16</table>", encoding="utf-8")
+        _, result = run(*self.args(page, "--find", "M4"))
+        self.assertEqual([(c["header"], c["value"]) for c in result["matches"][0]["cells"]], [("Size", "M4"), ("dk", "16")])
+
     def test_bad_arguments_exit_2(self) -> None:
         for argv in (["lower-1", str(HTML)], ["PIN-0001"], ["PIN-0001", str(HTML), "--bogus"]):
             with self.subTest(argv=argv):
