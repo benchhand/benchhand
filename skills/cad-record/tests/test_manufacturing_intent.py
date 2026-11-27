@@ -342,6 +342,30 @@ class Normalization(unittest.TestCase):
                 self.assertEqual([p.severity for p in found], ["warning"])
                 self.assertEqual([p for p in record.problems if p.severity == "error" and "calibration_state" in p.pointer], [])
 
+    def test_a_malformed_calibration_state_draws_no_error_at_the_record_gate(self) -> None:
+        for label, state in (("an explicit null", None), ("a list source field", {"status": "standard", "source": {
+                "kind": "user", "reference": "x", "origin": ["owner"]}}), ("a scalar state", "standard")):
+            with self.subTest(label):
+                documents = fx.tst_record()
+                documents["manufacturing/capabilities.yaml"]["profiles"][1]["calibration_state"] = state
+                record, problems = mi.check_record(fx.write_record(temp_hw(self), documents))
+                self.assertEqual([p.message for p in problems if p.severity == "error"], [])
+                self.assertTrue([p for p in problems if p.code == "intent.calibration_state"])
+
+    def test_an_unreadable_artifact_cited_only_by_a_calibration_state_is_a_warning_not_an_abort(self) -> None:
+        extra = b"%PDF-1.4 only the state cites this\n"
+        documents = fx.tst_record()
+        documents["_sources"]["manufacturing/sources/extra.pdf"] = extra
+        source = fx.source("datasheet", artifact="manufacturing/sources/extra.pdf", sha256=fx.sha256(extra))
+        documents["manufacturing/capabilities.yaml"]["profiles"][1]["calibration_state"] = {"status": "standard", "source": source}
+        hw = fx.write_record(temp_hw(self), documents)
+        target = hw / "manufacturing" / "sources" / "extra.pdf"
+        target.chmod(0)
+        self.addCleanup(target.chmod, 0o644)
+        record = mi.normalize_record(documents, hw=hw)
+        found = [p for p in record.problems if p.code == "intent.calibration_state"]
+        self.assertEqual([(p.severity, p.pointer) for p in found], [("warning", "profiles/1/calibration_state/source")])
+
     def test_a_custom_calibration_state_without_a_measured_calibration_is_a_warning_that_blocks_nothing(self) -> None:
         documents = fx.tst_record()
         documents["manufacturing/capabilities.yaml"]["profiles"][1].update(calibration_state=fx.calibration_state("custom"), calibrations=[])
