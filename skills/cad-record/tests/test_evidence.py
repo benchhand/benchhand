@@ -300,6 +300,21 @@ class UnknownNeverPasses(unittest.TestCase):
                 (refused,) = [f for f in result.findings if f.code == "evidence.record_derived"]
                 self.assertEqual(refused.obligation, ident)
 
+    def test_an_approved_waiver_cannot_resolve_an_obligation_id_collision(self) -> None:
+        """An approved, scoped waiver of intent.obligation_identity does not separate the checks it names, so the
+        obligation stays unknown and still blocks the design freeze."""
+        ident = "intent.obligation_identity@TST-0003"
+        docs = fx.with_subject_occurrences(documents(), {"PN": "TST-0003"})
+        docs["product.yaml"]["use_case"]["evidence_policy"] = {"decision": "DR-001", "obligations": [
+            {"subject": {"PN": "TST-0003", "occurrence": ref}, "level": "physically_validated"} for ref in ("@left", "@right")]}
+        base = normalized(docs)
+        waived = acceptance.entry(base, "EV-001", {"PN": "TST-0003"}, "process_planned", "waived", obligation=ident,
+                                  waiver=acceptance.waiver({"PN": "TST-0003"}, "DR-002", obligation=ident))
+        result = assess(normalized(docs, [waived]))
+        self.assertEqual(result.statuses[ident].result, "unknown")
+        self.assertIn("evidence.record_derived", {f.code for f in result.findings if f.obligation == ident})
+        self.assertIn(ident, {f.obligation for f in result.gate("design_freeze") if f.severity == "error"})
+
     def test_a_verification_csv_pass_is_not_evidence(self) -> None:
         docs = documents()
         record = normalized(docs)
