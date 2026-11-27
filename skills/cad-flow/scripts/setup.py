@@ -183,20 +183,9 @@ def plan(report, cwd: Path, home: Path, environ: Mapping[str, str], harness: str
 
 
 def _load_flow_profile():
-    """flow_profile.py beside this script, whose `gate` is cad-record's reader of flow.profile; it needs PyYAML."""
-    name = "cad_flow_profile"
-    if name not in sys.modules:
-        path = SCRIPT_DIR / "flow_profile.py"
-        spec = importlib.util.spec_from_file_location(name, path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Cannot load flow_profile: {path}")
-        sys.modules[name] = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(sys.modules[name])
-        except BaseException:
-            del sys.modules[name]
-            raise
-    return sys.modules[name]
+    """flow_profile.py beside this script, whose `gate` is cad-record's reader of flow.profile; it needs PyYAML.
+    fea_profile.py owns the loader, so preflight and setup read the profile through one."""
+    return preflight.load_fea_profile().load_flow_profile()
 
 
 def _profile_storage(product: object, path: Path) -> bool | None:
@@ -400,7 +389,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         return int(bool(_execute(items, cwd, home, environ, args.harness)[0]))
 
-    cad_checks = preflight._timed_freecad_checks(environ, home)
+    cad_checks = preflight._timed_freecad_checks(environ, home, preflight.project_fea(cwd))
     cad_report = preflight.Report(tuple(cad_checks))
     if cad_report.exit_code:
         print(preflight.render_text(cad_report))

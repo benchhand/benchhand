@@ -439,7 +439,7 @@ def _sampled(chain: Any, root: Any, quantity: Any, source: str, maxima_only: boo
     """Events of `quantity(values)` found by sampling `root` every FINE_STEP: slope sign changes
     (extrema and dwell boundaries), flat-run midpoints, or with `maxima_only` the local maxima."""
     count = min(FINE_SAMPLES, max(2, math.ceil((root.max - root.min) / FINE_STEP) + 1))
-    xs = [root.min + (root.max - root.min) * k / (count - 1) for k in range(count)]
+    xs = pose.coupling.interpolate(root.min, root.max, count)
     ys = [quantity(chain.complete({root.id: x})) for x in xs]
     signs = [0 if math.isclose(y1, y0, abs_tol=1e-12) else (1 if y1 > y0 else -1) for y0, y1 in zip(ys, ys[1:])]
     events: list[Event] = []
@@ -540,7 +540,7 @@ class SmokePlan:
 def _base(joint: Any) -> list[tuple[float, str]]:
     if joint.type == "revolute":
         steps = int(math.floor((joint.max - joint.min) / SMOKE_STEP_DEG + 1e-9))
-        values = [(joint.min + SMOKE_STEP_DEG * k, "base") for k in range(steps + 1)]
+        values = [(min(joint.min + SMOKE_STEP_DEG * k, joint.max), "base") for k in range(steps + 1)]
     else:
         values = [((joint.min + joint.max) / 2.0, "midpoint")]
     return [(joint.min, "endpoint"), *values, (joint.max, "endpoint")]

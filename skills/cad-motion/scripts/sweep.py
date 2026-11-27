@@ -278,9 +278,7 @@ def mesh_bounds(shapes: dict[str, Any]) -> tuple[Any, Any, str]:
 
 
 def linspace(low: float, high: float, count: int) -> list[float]:
-    if count == 1 or low == high:
-        return [low]
-    return [low + (high - low) * k / (count - 1) for k in range(count)]
+    return list(pose.coupling.interpolate(low, high, count))
 
 
 @dataclass(frozen=True)

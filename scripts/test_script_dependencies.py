@@ -38,11 +38,15 @@ PROVIDERS = {
 # - runner.py (in the kernel's environment) calls record.load_layout only (runner.py:111), and the cadmodel
 #   package loads pose.py for its geometry rules (occ.py:18), while pose.py loads yaml_loader.py only to read an
 #   assembly. The first element of a pair is a path prefix;
+# - preflight.py imports fea_profile.py (which loads flow_profile.py and PyYAML) inside project_fea only, to
+#   read a project's FEA setting. The cad-model runners, cad-analysis and cad-drawings reach preflight.py for
+#   the FreeCAD lookup alone. preflight.py declares pyyaml itself, and a test pins that it does;
 # - review_render.py calls record.load_yaml_loader only (review_render.py:126) and runs build_reference.py as a
 #   tool (review_render.py:118).
 OPTIONAL_LOADS = frozenset(
     {
         ("cad-record/scripts/emit.py", "sarif"),
+        ("cad-flow/scripts/preflight.py", "fea_profile"),
         ("cad-flow/scripts/scratch.py", "form_check"),
         ("cad-flow/scripts/scratch.py", "cad_model"),
         ("cad-motion/scripts/motion.py", "render"),
@@ -321,6 +325,17 @@ class ScriptDependencies(unittest.TestCase):
         }
         problems = missing_dependencies(files)
         self.assertEqual(problems, [], "Add the distribution to the script's PEP 723 dependencies:\n" + "\n".join(problems))
+
+    def test_preflight_shows_the_pyyaml_reach_of_its_project_read_to_the_scan(self) -> None:
+        # preflight.py reads a project through fea_profile.py (PyYAML). The reach must be visible to the scan, so
+        # preflight declares what it needs and the one exemption (OPTIONAL_LOADS) names the consumers' side.
+        files = {
+            str(path.relative_to(SKILLS)): path.read_text(encoding="utf-8") for path in sorted(SKILLS.glob("*/scripts/**/*.py"))
+        }
+        preflight = "cad-flow/scripts/preflight.py"
+        reached = local_modules(preflight, files[preflight], Index(files))
+        self.assertIn("cad-flow/scripts/fea_profile.py", reached)
+        self.assertIn("pyyaml", declared_dependencies(files[preflight]) or set())
 
 
 if __name__ == "__main__":

@@ -16,9 +16,9 @@ skills/cad-drawings/scripts/freecad_views.py
 skills/cad-drawings/scripts/feature_geometry.py
 skills/cad-drawings/scripts/feature_recognition.py
 
-# feature_recognition imports drawing_intent, which loads cad-fits by path through shared_module.
+# feature_recognition imports drawing_intent, which loads cad-fits by path through cad-record's shared_module.
 skills/cad-drawings/scripts/drawing_intent.py
-skills/cad-drawings/scripts/shared_module.py
+skills/cad-record/scripts/shared_module.py
 skills/cad-fits/scripts/fits.py
 # Nothing in cad-drawings loads the next four any more (drawing_intent dropped its cad-record loader).
 # They stay for two guards: scripts/test_script_floors.py allows manufacturing_intent.py and quantities.py

@@ -15,6 +15,7 @@ TRIGGER
 ## Workflow
 
 1. At GROUND, from the project root run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-flow/scripts/setup.py`. Setup checks FreeCAD 1.1.4 first. A missing command or wrong version makes setup exit nonzero before any other action. Follow `cad-drawings` to install FreeCAD, then rerun setup.
+   The CalculiX `ccx` and Gmsh solvers are checked only when `flow.profile.fea.enabled` in `hw/product.yaml` is `true`; before that, preflight reports them as `info` and setup does not stop on a missing solver. A `product.yaml` that cannot be read, or whose `flow.profile.fea.enabled` is not a boolean, fails as `fea-profile` with the file and the cause. The warm-up record holds no project state: `preflight.py --status` adds the FEA checks of the current project to it.
    Add `--yes` to execute the remaining user-level setup actions. Pass `--harness claude|codex|opencode|kiro` to install harness files. Setup reruns preflight and prints its summary.
    Start the background warm-up with `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-flow/scripts/preflight.py --warm --background` from the project root.
    Continue GROUND work while it runs.
@@ -23,6 +24,7 @@ TRIGGER
    - 0: continue.
    - 3: run the status command again.
    - 1: fix the required check, then warm in the foreground until exit 0.
+     A failure named `fea-profile` or `fea-solvers` belongs to this project, not to the warm-up: fix `hw/product.yaml` or install the solver, then run the status command again. A foreground `--warm` does not check FEA.
    - 2: warm in the foreground.
 2. Establish the project's `hw/` design record and approved scope using `references/flow.md`.
    `cad-record` owns validation and path resolution. `../cad-record/references/layout.md` is the canonical layout table; `../cad-record/references/layout-api.md` is the command API.

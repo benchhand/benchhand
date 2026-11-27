@@ -88,6 +88,15 @@ def canonical_degrees(angle: float) -> float:
     return 180.0 if reduced == -180.0 else reduced
 
 
+def interpolate(low: float, high: float, count: int) -> list[float]:
+    """`count` samples from `low` to `high`: the interior by interpolation, the two end points exactly
+    the declared limits (low + (high - low) * (n - 1) / (n - 1) can land one rounding step past `high`,
+    and a limit check without slack then rejects the sample)."""
+    if count == 1 or low == high:
+        return [low]
+    return [low, *(low + (high - low) * k / (count - 1) for k in range(1, count - 1)), high]
+
+
 @dataclass(frozen=True)
 class Profile:
     """A periodic, piecewise-linear table: output at (input mod period)."""
@@ -254,7 +263,7 @@ class Couplings:
         for root, dependents in roots.items():
             low, high = limits[root]
             count = min(RANGE_SAMPLES, max(2, math.ceil((high - low) / RANGE_STEP) + 1))
-            samples = sorted({*(low + (high - low) * k / (count - 1) for k in range(count)), nominal[root]})
+            samples = sorted({*interpolate(low, high, count), nominal[root]})
             reported: set[str] = set()
             for value in samples:
                 values = self.derive({**nominal, root: value})

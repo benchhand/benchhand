@@ -601,12 +601,12 @@ class SubBuildTests(unittest.TestCase):
     def test_a_tool_free_hold_reaches_nothing_and_an_uncited_tool_on_it_is_advisory(self) -> None:
         hold = {"id": "cure", "kind": "hold", "part": "TST-0001", "duration": fx.known(fx.quantity(24, "h")),
                 "fixture": "bench cure jig", "orientation": [0, 0, 1]}
-        socket = {"tool": "hex socket", "envelope": fx.known("TST socket", "supplier_typical", sources=[fx.source(
+        socket = {"tool": "hex socket", "approach": [0, 0, -1], "envelope": fx.known("TST socket", "supplier_typical", sources=[fx.source(
             "supplier", "TST socket CAD", artifact="manufacturing/sources/socket.step", sha256="a" * 64)])}
         for label, item, measured, advisory in (
-                ("tool-free", hold, 0, ()), ("named tool", {**hold, "tools": ["spring clamp"]}, 0, ("spring clamp",)),
-                ("uncited declared tool", {**hold, "tool_access": [{"tool": "spring clamp"}]}, 0, ("spring clamp",)),
-                ("cited envelope", {**hold, "tools": ["spring clamp"], "tool_access": [socket]}, 1, ("spring clamp",))):
+                ("tool-free", hold, [], ()), ("named tool", {**hold, "tools": ["spring clamp"]}, [], ("spring clamp",)),
+                ("uncited declared tool", {**hold, "tool_access": [{"tool": "spring clamp"}]}, [], ("spring clamp",)),
+                ("cited envelope", {**hold, "tools": ["spring clamp"], "tool_access": [socket]}, [1], ("spring clamp",))):
             with self.subTest(label), tempfile.TemporaryDirectory() as directory:
                 documents = fx.tst_record()
                 documents["assembly.yaml"]["operations"].append(item)
@@ -615,7 +615,7 @@ class SubBuildTests(unittest.TestCase):
                 self.assertIn("assembly.access@op:cure", access, "the obligation stays; not applicable is explicit")
                 plan = {r.operation.id: r for r in ops.access_plan(ops.normalize(documents["assembly.yaml"]))}
                 self.assertEqual(plan["cure"].not_applicable is None, bool(item.get("tools") or item.get("tool_access")))
-                self.assertEqual((len(plan["cure"].tools), plan["cure"].advisory), (measured, advisory))
+                self.assertEqual(([r.index for r in plan["cure"].reaches], plan["cure"].advisory), (measured, advisory))
                 self.assertFalse(any("name only" in reason for reason in plan["cure"].unknown), plan["cure"].unknown)
                 self.assertIsNone(plan["fit_bearing"].not_applicable)
 

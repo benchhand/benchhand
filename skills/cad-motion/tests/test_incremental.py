@@ -254,6 +254,38 @@ class SmokeTests(unittest.TestCase):
             if 0.0 < expected < 720.0:
                 self.assertTrue(any(abs(v - expected) <= incremental.FINE_STEP for v in peaks), (expected, peaks))
 
+    def test_no_smoke_pose_lies_beyond_the_joint_limits(self) -> None:
+        """-30 + 60 is 30, a hair past a maximum of 29.99999999: the base grid stops at the maximum."""
+        data = {"joints": [{"id": "J-001", "type": "revolute", "parent": "TST-0001", "child": "TST-0002",
+                            "axis": [0, 0, 1], "origin": [0, 0, 0], "min": -30, "max": 29.99999999, "nominal": 0}]}
+        chain = chain_of(data)
+        plan = incremental.smoke_samples(chain)
+        self.assertEqual([s.value for s in plan.samples], [-30.0, 29.99999999])
+        for sample in plan.samples:
+            self.assertEqual(chain.limit_findings(chain.complete(sample.settings)), [], sample)
+
+    def test_a_sampled_dwell_ends_at_the_declared_limit(self) -> None:
+        """Root limits -0.1 to 0.2: the old last sample was 0.20000000000000004, which moved the midpoint of
+        a dwell that runs to the end of the range from 0.125 to 0.12500000000000003."""
+        ident = {"input_unit": "deg", "output_unit": "deg", "period_deg": 360, "interpolation": "linear",
+                 "samples": [[0, 0], [90, 90], [360, 0]]}
+        rise_then_flat = {"input_unit": "deg", "output_unit": "mm", "period_deg": 360, "interpolation": "linear",
+                          "samples": [[0, 0], [10, 5], [90, 5], [360, 0]]}
+        data = {"profiles": {"ident": ident, "rise": rise_then_flat},
+                "joints": [
+                    {"id": "J-001", "type": "revolute", "parent": "TST-0001", "child": "TST-0002", "axis": [0, 0, 1],
+                     "origin": [0, 0, 0], "min": -0.1, "max": 0.2, "nominal": 0},
+                    {"id": "J-002", "type": "revolute", "parent": "TST-0001", "child": "TST-0003", "axis": [0, 0, 1],
+                     "origin": [50, 0, 0], "min": -1000, "max": 1000,
+                     "coupling": {"type": "periodic_table", "driver": "J-001", "profile": "ident", "phase_deg": 10.0}},
+                    {"id": "J-003", "type": "prismatic", "parent": "TST-0001", "child": "TST-0004", "axis": [0, 0, 1],
+                     "origin": [0, 0, 0], "min": 0, "max": 5,
+                     "coupling": {"type": "periodic_table", "driver": "J-002", "profile": "rise", "phase_deg": 0.0}}]}
+        found, unsupported = incremental.events(chain_of(data))
+        self.assertEqual(len(unsupported), 1)  # J-003 rise is reached through J-002's table, so it is sampled
+        midpoints = [e.value for e in found if e.source == "J-003 rise" and e.kind == "dwell_midpoint"]
+        self.assertEqual(midpoints, [0.125])  # between the sample at 0.05 and the declared 0.2
+
     def test_a_prismatic_joint_gets_its_endpoints_and_midpoint(self) -> None:
         data = {"joints": [{"id": "J-001", "type": "prismatic", "parent": "TST-0001", "child": "TST-0002",
                             "axis": [1, 0, 0], "origin": [0, 0, 0], "min": -10, "max": 30, "nominal": 0}]}

@@ -42,10 +42,21 @@ receiving part's frame, installed orientation kept), from `start` through `via` 
 pose, whose last leg must arrive along `direction`. Without one the part travels the default straight
 line along `direction`, and access reports that default.
 
-Tools. A plain `tools` entry is a display name: its reach and envelope stay unknown. A
-`tool_access` entry may name a capability profile, an approach (receiver-local, like `direction`),
-a reach and an envelope; an envelope fact whose source carries an artifact (a STEP solid of the tool
-and holder in the operated part's model frame at the engaged pose) is what a geometric check uses.
+Tools. Every `tools` and `tool_access` entry keeps its text for the instructions and is classified
+(tool_envelopes.py): hand work reaches with a shipped standard hand envelope; visual, timed and bench
+entries reach nothing; a common tool named by type and size (a "3 mm hex key", a "PH2 screwdriver")
+reaches with a parametric envelope from its cited standard; any other `tools` name is an instruction
+note, never an access obligation. A `tool_access` entry says the tool must reach: one that
+neither a shipped envelope nor a cited solid covers keeps access unknown. A `tool_access` entry may name a capability profile, an approach (receiver-local,
+like `direction`), a contact point, a reach and an envelope; an envelope fact whose source carries an artifact (a STEP
+solid of the tool and holder in the operated part's model frame at the engaged pose) overrides the
+shipped envelope, and is how a special tool is checked. An entry without an approach approaches along
+the operation's direction. A hold moves no part: its tools are planned the same way, and one that matches no
+shipped envelope and cites no solid is advisory, never measured, unless its `tool_access` entry gives an approach or
+contact point: that one keeps access unknown. A `tools` entry that names the same tool as a `tool_access` entry (the same shipped
+designation, so "3 mm hex key" and "Allen key (3 mm)" are one; else the same text) is that entry: it is checked
+once, as the `tool_access` entry says, and keeps its own text for the instructions. An operation that moves no part and that nothing reaches has no access to
+check: its access is not applicable.
 
 Joints. `check_joints` judges the joint evidence of fastening, insert, press-fit, heat-set,
 retaining-ring and joining operations, one `assembly.joint@op:<id>` outcome each: retention needs a
@@ -59,7 +70,6 @@ distance short of its criterion is a failure; retention evidence is what support
 
 from __future__ import annotations
 
-import importlib.util
 import math
 import re
 import sys
@@ -68,6 +78,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeGuard
+
+SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.append(str(SCRIPTS))
+from shared_module import load_shared  # noqa: E402  the sibling loader, reached once this folder is on sys.path
+
+tool_envelopes = load_shared("cad_record_tool_envelopes", SCRIPTS / "tool_envelopes.py")
 
 Vec = tuple[float, float, float]
 
@@ -117,7 +134,7 @@ class OperationsError(ValueError):
 @dataclass(frozen=True)
 class Tool:
     """A tool that must reach the operation: a display name (`declared` False: plain `tools`) or a
-    `tool_access` entry with its optional capability, approach, reach and envelope facts."""
+    `tool_access` entry with its optional capability, approach, contact point, reach and envelope facts."""
 
     name: str
     declared: bool
@@ -125,6 +142,7 @@ class Tool:
     approach: Vec | None = None
     reach: Mapping[str, Any] | None = None
     envelope: Mapping[str, Any] | None = None
+    contact: Vec | None = None  # where the tip engages, mm in the operated part's model frame
 
     @property
     def reach_known(self) -> bool:
@@ -354,10 +372,11 @@ def _operation(raw: Any, index: int, where: str) -> AssemblyOperation:
         at = f"{where}/tool_access/{number}"
         if not isinstance(entry, Mapping):
             raise OperationsError(f"{at} must be a mapping")
-        approach = entry.get("approach")
+        approach, contact = entry.get("approach"), entry.get("contact")
         tools.append(Tool(_text(entry.get("tool"), f"{at}/tool"), declared=True, capability=entry.get("capability"),
                           approach=None if approach is None else _vector(approach, f"{at}/approach"),
-                          reach=_fact(entry, "reach"), envelope=_fact(entry, "envelope")))
+                          reach=_fact(entry, "reach"), envelope=_fact(entry, "envelope"),
+                          contact=None if contact is None else _point(contact, f"{at}/contact")))
     joint = raw.get("verify_joint")
     sub_build, cure = _bench(raw, kind, where)
     if "edge_distance" in raw and kind not in JOINING:
@@ -834,19 +853,7 @@ def _hours(fact: Any, *, lower: bool) -> float | None:
 def _quantities() -> Any:
     """cad-record quantities.py, the shared quantity parser, loaded once by path under its shared name. It needs only
     the standard library, so this module keeps no dependency of manufacturing_intent's."""
-    name = "cad_record_quantities"
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "quantities.py")
-        if spec is None or spec.loader is None:
-            raise ImportError(f"quantities.py not found beside {Path(__file__).name}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        try:
-            spec.loader.exec_module(module)
-        except BaseException:
-            del sys.modules[name]
-            raise
-    return sys.modules[name]
+    return load_shared("cad_record_quantities", SCRIPTS / "quantities.py")
 
 
 def _never_installed(state: AssemblyState, inventory: Any) -> list[dict[str, Any]]:
@@ -889,7 +896,10 @@ class AccessRequest:
     occurrence's model frame, the tools, and the occurrences present at that state as obstacles (the
     moving part and its receiver excluded for the part path; the operated part excluded for the tools).
     `path` is the declared insertion path (receiver frame, see `_path`), None for the default straight
-    line along `direction`. `unknown` lists what keeps reach unknown. The obstacles are the parts of the
+    line along `direction`. `reaches` are the entries that reach the operated part with an envelope,
+    `notes` the entries that stay instruction notes, `unknown` what keeps access unknown, `advisory` the names of a
+    hold's tools that no check measures, and `not_applicable` why the operation has no access to check (it moves no
+    part and nothing reaches it), None when it has. The obstacles are the parts of the
     operation's own build: a sub-build step sees only its sub-build. An install moves the sub-build as one
     unit: `moving` is its base and `unit` all its members, none of which is an obstacle to the others."""
 
@@ -905,17 +915,77 @@ class AccessRequest:
     unknown: tuple[str, ...]
     path: tuple[Vec, ...] | None = None
     unit: frozenset[str] = frozenset()
-    not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold); None when access applies
-    advisory: tuple[str, ...] = ()  # names of tools access cannot measure and never blocks on (see hold_reach)
+    not_applicable: str | None = None  # why the operation reaches nothing; None when access applies
+    advisory: tuple[str, ...] = ()  # a hold's tools that no shipped envelope or cited solid covers: never measured
+    reaches: tuple[Reach, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
-def hold_reach(op: AssemblyOperation) -> tuple[tuple[Tool, ...], tuple[str, ...]]:
-    """(the tools of a hold whose reach access measures, the names of the others, which access only advises on). A
-    hold moves no part, so only a tool reaches anything: one with a cited STEP envelope solid is measured, and any
-    other is a note for the person that never blocks. The seam for #336: a tool its shipped envelopes recognise moves
-    from the advised names to the measured tools."""
-    measured = tuple(tool for tool in op.tools if tool.envelope_artifact is not None)
-    return measured, tuple(tool.name for tool in op.tools if tool.envelope_artifact is None)
+@dataclass(frozen=True)
+class Reach:
+    """One entry that reaches the operated part: `index` in the operation's tools, its `role` (hand or tool),
+    the envelope's `source` (standard: the shipped `envelope`; step: the cited solid `artifact`, path below
+    hw/ and sha256), and its `approach` (receiver frame), the operation's direction when `approach_default`.
+    `contact` is where a shipped envelope's tip engages (operated part's model frame); None on a part that
+    travels puts the tip on the center of the part's box face the tool arrives through."""
+
+    index: int
+    tool: Tool
+    role: str
+    source: str
+    approach: Vec
+    approach_default: bool = False
+    envelope: Any = None  # tool_envelopes.Envelope when source is standard
+    artifact: tuple[str, str] | None = None
+    contact: Vec | None = None
+
+    @property
+    def label(self) -> str:
+        return self.tool.name if self.envelope is None else f"{self.tool.name} ({self.envelope.designation})"
+
+
+def _reach(op: AssemblyOperation, index: int, tool: Tool, travels: bool, unknown: list[str],
+           notes: list[str], advisory: list[str]) -> Reach | None:
+    """The reach of one tool entry; an entry that reaches nothing adds its note, if any, and gives None. A
+    tool_access entry says the tool must reach, so one that neither a shipped envelope nor a cited solid covers
+    keeps access unknown; on a hold, that holds for an entry given an approach or contact point, while one named
+    without either stays advisory. A shipped
+    envelope on a part that travels engages the part it drives; on a part that stays put it acts on one feature of
+    it, so it needs the declared contact point: the part's box center is no stand-in for that feature."""
+    entry = tool_envelopes.classify(tool.name)
+    artifact = tool.envelope_artifact if tool.declared else None
+    if artifact is None and entry.role not in tool_envelopes.REACHING:
+        placed = tool.approach is not None or tool.contact is not None
+        if entry.role == tool_envelopes.NOTE and tool.declared and (op.kind != "hold" or placed):
+            unknown.append(f"tool {tool.name!r} must reach {op.part} (tool_access), but no shipped envelope or cited "
+                           "STEP solid establishes its clearance: cite a STEP solid of the tool as its tool_access "
+                           "envelope")
+        elif entry.role == tool_envelopes.NOTE and op.kind == "hold":
+            advisory.append(tool.name)  # a hold's only access is its tools': one no check covers is advised on
+        elif entry.role == tool_envelopes.NOTE:
+            notes.append(f"{entry.note}: kept as an instruction note, its reach is not checked; cite a STEP solid of "
+                         "the tool in tool_access to check it")
+        return None
+    approach = tool.approach or op.direction
+    if approach is None:
+        unknown.append(f"tool {tool.name!r} has no approach direction")
+        return None
+    role = entry.role if entry.role in tool_envelopes.REACHING else tool_envelopes.TOOL
+    if artifact is not None:
+        return Reach(index, tool, role, "step", approach, tool.approach is None, artifact=artifact)
+    if tool.contact is None and not travels:
+        unknown.append(f"tool {tool.name!r} works on {op.part}, which does not move: declare where its tip engages "
+                       f"(tool_access contact, mm in {op.part}'s model frame) to place its shipped envelope")
+        return None
+    return Reach(index, tool, role, "standard", approach, tool.approach is None, envelope=entry.envelope,
+                 contact=tool.contact)
+
+
+def _no_access(op: AssemblyOperation) -> str:
+    """Why an operation that moves no part and that nothing reaches has no access to check."""
+    if op.kind == "hold" and not op.tools:
+        return f"{op.id}: a hold moves no part and names no tool, so it reaches nothing"
+    return f"{op.id} moves no part and no tool or hand reaches it: there is no access to check"
 
 
 def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozenset[str], str | None]:
@@ -944,40 +1014,36 @@ def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozens
 def access_plan(operations: Operations, inventory: Any = None,
                 existing: frozenset[str] = frozenset()) -> tuple[AccessRequest, ...]:
     """One AccessRequest per operation, from the declared sequence (see `sequence`; `existing` as in check_order).
-    A hold's tools follow `hold_reach`; a tool-free hold reaches nothing, so its request carries the not-applicable
-    reason."""
+    A hold moves no part, so it reaches what its tools reach, planned like any other step's: a recognised tool or
+    hand with its shipped envelope (or a cited solid), placed by its approach and contact point. A hold tool that
+    neither covers is advisory. An operation that moves no part, reaches nothing and has nothing to advise on carries
+    the not-applicable reason."""
     state = sequence(operations, inventory, existing)
     requests = []
     for step in state.steps:
         op = step.operation
-        tools, advisory = hold_reach(op) if op.kind == "hold" else (op.tools, ())
-        if op.kind == "hold" and not op.tools:
-            requests.append(AccessRequest(op, step.part, None, step.part, None, False, frozenset(), frozenset(), (), (),
-                                          not_applicable=f"{op.id}: a hold moves no part and names no tool, so it "
-                                                         "reaches nothing"))
-            continue
         unknown: list[str] = []
+        notes: list[str] = []
+        advisory: list[str] = []
         travels = op.kind in JOINING or op.kind in ("close", "disassemble", "install")
         if travels and op.direction is None:
             unknown.append(f"{op.id} has no direction: its part path is unknown")
         if op.id in state.unresolved:
             unknown.append(state.unresolved[op.id])
-        for tool in tools:
-            if not tool.declared:
-                unknown.append(f"tool {tool.name!r} is a name only: its reach and envelope are unknown")
-                continue
-            if tool.envelope_artifact is None:
-                unknown.append(f"tool {tool.name!r} has no sourced envelope solid: its reach is unknown")
-            if tool.approach is None:
-                unknown.append(f"tool {tool.name!r} has no approach direction")
+        declared = [tool.name for tool in op.tools if tool.declared]
+        reaches = [reach for index, tool in enumerate(op.tools)
+                   if tool.declared or not any(tool_envelopes.same_tool(tool.name, name) for name in declared)
+                   if (reach := _reach(op, index, tool, travels, unknown, notes, advisory)) is not None]
         unit, operated = _unit(state, step, unknown)
         moved = unit if op.kind == "install" else frozenset({step.part})  # an install's part is a unit id, no occurrence
         after = set(step.present) | (set(moved) if op.installs else set())
         path_obstacles = frozenset(after - moved - ({step.into} if step.into else set()))
         tool_obstacles = frozenset(after - moved)
+        reached = travels or reaches or unknown or advisory
         requests.append(AccessRequest(op, operated, operated if travels else None, step.into or operated or step.part,
-                                      op.direction, op.removes, path_obstacles, tool_obstacles, tools, tuple(unknown),
-                                      op.path, unit, advisory=advisory))
+                                      op.direction, op.removes, path_obstacles, tool_obstacles, op.tools, tuple(unknown),
+                                      op.path, unit, not_applicable=None if reached else _no_access(op),
+                                      advisory=tuple(advisory), reaches=tuple(reaches), notes=tuple(notes)))
     return tuple(requests)
 
 

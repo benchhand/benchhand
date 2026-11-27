@@ -217,6 +217,32 @@ class MainTests(unittest.TestCase):
         run_checks.assert_not_called()
         plan.assert_not_called()
 
+    def ground(self, enabled: bool) -> int:
+        """setup.main against a project, with the solver missing and FEA enabled or not."""
+        (self.root / "hw").mkdir()
+        flag = "true" if enabled else "false"
+        (self.root / "hw" / "product.yaml").write_text(
+            f"flow:\n  profile:\n    fea:\n      enabled: {flag}\n", encoding="utf-8")
+        base = {"freecad-command": "pass", "freecad-version": "pass", "techdraw-templates": "pass"}
+
+        def timed(environ, home=None, fea=None):
+            solver = ("fail", "ccx not found") if fea.enabled else ("info", "FEA is not enabled")
+            return [setup.preflight.Check(i, i, s, True, "d", "") for i, s in base.items()] + [
+                setup.preflight.Check("fea-solvers", "FEA solvers", *solver[:1], True, solver[1], "")]
+
+        with patch.dict("os.environ", {"HOME": str(self.home)}, clear=True), \
+                patch.object(setup.Path, "cwd", return_value=self.root), \
+                patch.object(setup.preflight, "_timed_freecad_checks", side_effect=timed), \
+                patch.object(setup.preflight, "run_checks", return_value=report()), \
+                patch.object(setup, "plan", return_value=[]), redirect_stdout(io.StringIO()):
+            return setup.main([])
+
+    def test_ground_without_fea_does_not_need_a_solver(self) -> None:
+        self.assertEqual(self.ground(False), 0)
+
+    def test_ground_with_fea_needs_a_solver(self) -> None:
+        self.assertNotEqual(self.ground(True), 0)
+
 
 TEMPLATE_IGNORE = SCRIPT.parents[2] / "cad-record" / "assets" / "project-template" / "hw" / ".gitignore"
 

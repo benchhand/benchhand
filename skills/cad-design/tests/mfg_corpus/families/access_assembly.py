@@ -32,11 +32,12 @@ def bearing_path_closed_by_cover(mutant: bool) -> Outcome:
     return _verdict(reordered(items, *order))
 
 
-def tool_named_only(mutant: bool) -> Outcome:
-    items = reordered(socket_operations("blocked_socket.yaml"), *VALID)
-    if mutant:
-        del items[2]["tool_access"]
-        items[2]["tools"] = ["3 mm hex key"]  # a name carries no reach or envelope
+def common_tool_too_wide(mutant: bool) -> Outcome:
+    """The screw is driven through the bracket hole (r 3.5) with a hex key named in `tools`: its shipped ISO 2936 envelope
+    decides. An 8 mm key (e max 9.09) collides with the bracket, a 3 mm key (e max 3.39) passes it. Nobody models the key."""
+    items = socket_operations("blocked_socket.yaml")
+    del items[3]["tool_access"]
+    items[3]["tools"] = ["8 mm hex key" if mutant else "3 mm hex key"]
     return _verdict(items)
 
 
@@ -45,5 +46,6 @@ FAMILY = Family(
     pairs=(
         Pair("socket_blocked", "bracket mounted before the screw is driven: the socket collides", socket_blocked_by_bracket),
         Pair("bearing_path_closed", "cover fitted over the seat before the bearing goes in", bearing_path_closed_by_cover),
-        Pair("tool_named_only", "tool known by name only: reach is not computable", tool_named_only),
+        Pair("common_tool_too_wide", "a named hex key too wide for the bracket hole: its standard envelope collides",
+             common_tool_too_wide),
     ))

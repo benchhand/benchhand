@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Load a sibling skill's script once under a shared name, safe for the drawing worker threads."""
+"""Load a script once under a shared name, safe for worker threads: the one loader that cad-record and the
+skills above it (cad-drawings) use for a sibling module they reach by path. Standard library only."""
 
 from __future__ import annotations
 

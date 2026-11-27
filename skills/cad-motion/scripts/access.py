@@ -28,21 +28,35 @@ operation (the parts present then):
     travel over which the interfering surface still overlaps its partner: for a press fit the bore depth, an
     entry chamfer may be ignored, and for a heat-set the embedded length of the insert. Interference elsewhere on the path is a collision. An engagement with no declared length keeps the path unknown.
     A running or locating fit never exempts interference.
-  - each tool: a `tool_access` entry whose envelope fact cites an artifact, a STEP solid of the tool
-    and holder in the operated part's model frame at the engaged pose, moves along its `approach`
-    (receiving occurrence's frame) to that pose, past every present part except the operated one.
+  - each tool and hand that reaches the operated part (assembly_operations `reaches`): its envelope, in the
+    operated part's model frame at the engaged pose, moves along its `approach` (receiving occurrence's frame;
+    the operation's direction when none is given) to that pose, past every present part except the operated
+    one. A `tool_access` envelope fact that cites an artifact (a STEP solid of the tool and holder) is that
+    envelope; otherwise hand work and a common tool named by type and size get their shipped standard
+    envelope (cad-record tool_envelopes.py), built here with its tip at the entry's declared contact point (the
+    operated part's model frame), the tool axis along the approach. Without one, a tool that drives the part it
+    installs or removes has its tip on the centre of the face of that part's box it arrives through (the face whose
+    normal points most against the approach); an approach that meets two faces equally, or a tool on a part that
+    does not move, needs the contact point, or the operation stays unknown, because the box centre is not where an
+    off-centre feature is.
 A path is measured with cad-motion's pair evaluator at sampled positions, leg by leg. A translation moves
 every point by the same distance, so a distance d_i at s_i and d_j at s_j prove the segment clear when
 d_i + d_j > |s_j - s_i|; segments not proven are halved down to --min-step-mm. Exact-box gaps prove
 most samples without the kernel; ambiguous ones are kernel-measured. A shared volume above pose's
-interference threshold is a collision. A segment still unproven, a tool known by name only, an
-envelope without a solid, a missing direction or geometry keeps the operation unknown, never a
-pass. Not covered: curved motion between declared points, part or tool rotation and posture, hands,
-forces, deflection, and any joint pose but the nominal. No path planner: the path is the declared one.
+interference threshold is a collision. A segment still unproven, a cited envelope that cannot be read, a
+missing direction or geometry keeps the operation unknown, never a pass. A visual, timed or bench entry
+reaches nothing; a `tools` name that matches no shipped envelope is an instruction note in the outcome's
+uncertainty, never an unknown, while such a tool_access entry keeps the operation unknown (on a hold, one given
+an approach or contact point);
+an operation that moves no part and that nothing reaches is not applicable.
+Not covered: curved motion between declared points, part or tool rotation, tool swing and posture, the
+hand's grip, forces, deflection, and any joint pose but the nominal. No path planner: the path is the
+declared one.
 
 With --version the packet is published to hw/checks/<V>/assembly-access/ (bundle.checks): result.json
 (schemas/manufacturing-check-result.schema.json) and evidence/access.json (every path and sample). A rerun reuses
-the bundle only when the inputs, the options and the sources of this policy (access.py, engagement.py) are the same.
+the bundle only when the inputs, the options and the sources of this policy (access.py, engagement.py, cad-record
+assembly_operations.py and tool_envelopes.py) are the same.
 Exit 0 = every obligation passes, 1 = a failure or an unknown, 2 = usage or input error.
 """
 
@@ -88,21 +102,26 @@ SUBJECT = "assembly-access"
 FAMILIES = ("assembly.order", "assembly.access", "intent.assembly_operations")
 SEPARATION_MARGIN_MM = 1.0
 ACCESS_METHOD = ("part paths (the declared insertion legs, else the default straight line along the direction) and tool "
-                 "approaches at the nominal pose, against the parts present in the declared sequence, sampled with a "
-                 "translation (1-Lipschitz) bound between samples (cad-motion access.py)")
+                 "and hand approaches (a cited STEP envelope, else the shipped standard envelope) at the nominal pose, "
+                 "against the parts present in the declared sequence, sampled with a translation (1-Lipschitz) bound "
+                 "between samples (cad-motion access.py)")
 ACCESS_COVERAGE = ("the part's declared insertion path, else the default straight line along its direction from the "
-                   "separating plane, and each tool envelope's approach, in the declared assembly state at the nominal joint "
+                   "separating plane, and each tool or hand envelope's approach, in the declared assembly state at the nominal joint "
                    "pose; contact with the receiving part and the operated part, and with a press-fit or heat-set partner over "
-                   "its declared engagement length, is by design and not checked; a declared path's start is taken as reachable; curved paths, tool "
-                   "posture, hands, forces and other poses are not covered")
+                   "its declared engagement length, is by design and not checked; a declared path's start is taken as reachable; "
+                   "a standard envelope is the standard's maximum outline swept about the tool axis; curved paths, tool "
+                   "swing and posture, the hand's grip, forces and other poses are not covered")
 ROUTES = {"straight_default": "the default straight path along the direction", "declared_path": "the declared insertion path",
-          "approach": "the declared tool approach"}
+          "approach": "the declared tool approach", "standard_envelope": "the standard envelope's approach"}
 RULE_SOURCE = {"kind": "policy", "reference": "cad-motion access path clearance rule", "origin": "benchhand",
                "document": "skills/cad-motion/scripts/access.py"}
 
 
 class AccessError(ValueError):
     """Inputs that cannot be used: a usage error (exit 2)."""
+
+
+ToolShape = tuple[str, Any, Any]  # (definition key, shape, the standard envelope's report or None for a cited STEP solid)
 
 
 # --------------------------------------------------------------------------- vectors
@@ -156,15 +175,19 @@ class Travel:
     failures: list[str] = field(default_factory=list)
     tool: str | None = None  # the name of the tool whose envelope travels; None for a part path
     engaged_mm: dict[str, float] = field(default_factory=dict)  # obstacle -> path length of its engagement from the installed pose
+    envelope: Mapping[str, Any] | None = None  # the standard envelope a tool or hand path carries
 
     def report(self) -> dict[str, Any]:
-        return {"label": self.label, "route": self.route, "moving": self.moving,
-                "direction": [round(v, 9) + 0.0 for v in self.direction],
-                "travel_mm": round(self.travel_mm, 6), "obstacles": [o for o, _, _ in self.obstacles],
-                "status": self.status, "samples": self.samples, "collisions": self.collisions,
-                "unproven": self.unproven, "failures": self.failures,
-                "engagement": {o: {"declared_mm": cap, "engaged_to_mm": self.engaged_mm.get(o)}
-                               for o, cap in self.engagement.items()}}
+        row = {"label": self.label, "route": self.route, "moving": self.moving,
+               "direction": [round(v, 9) + 0.0 for v in self.direction],
+               "travel_mm": round(self.travel_mm, 6), "obstacles": [o for o, _, _ in self.obstacles],
+               "status": self.status, "samples": self.samples, "collisions": self.collisions,
+               "unproven": self.unproven, "failures": self.failures,
+               "engagement": {o: {"declared_mm": cap, "engaged_to_mm": self.engaged_mm.get(o)}
+                              for o, cap in self.engagement.items()}}
+        if self.envelope is not None:
+            row["envelope"] = dict(self.envelope)
+        return row
 
 
 def separation_travel(measurer: Any, path: Travel) -> float:
@@ -306,7 +329,8 @@ class OperationAccess:
     paths: list[Travel] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
     not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold)
-    advisory: list[str] = field(default_factory=list)  # notes on tools no check measures (assembly_operations.hold_reach)
+    advisory: list[str] = field(default_factory=list)  # a hold's tools no check measures (AccessRequest.advisory)
+    notes: list[str] = field(default_factory=list)  # tool entries kept as instruction notes
 
     @property
     def outcome(self) -> str:
@@ -335,21 +359,27 @@ def engagement_caps(*declarations: Iterable[dict[str, Any]]) -> dict[tuple[str, 
     return caps
 
 
+def operation_access(request: Any) -> OperationAccess:
+    """The access entry of one AccessRequest before any path is planned: its not-applicable reason, or its unknowns,
+    a hold's advisory tools and the instruction notes."""
+    op = request.operation
+    if request.not_applicable is not None:
+        return OperationAccess(op, not_applicable=request.not_applicable, notes=list(request.notes))
+    advisory = [f"tool {name!r} has no cited envelope solid: check by hand that it reaches {op.part}"
+                for name in request.advisory]
+    return OperationAccess(op, unknown=list(request.unknown), advisory=advisory, notes=list(request.notes))
+
+
 def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], definitions: Mapping[str, Any],
-               caps: Mapping[tuple[str, str], float | None], tools: Mapping[tuple[str, int], tuple[str, Any]]) -> list[OperationAccess]:
+               caps: Mapping[tuple[str, str], float | None], tools: Mapping[tuple[str, int], ToolShape]) -> list[OperationAccess]:
     """The paths of each operation's AccessRequest; `tools` maps (operation id, tool index) to the
     envelope definition key and its shape, for the tools whose solid was read."""
     plans = []
     for request in requests:
         op = request.operation
-        if request.not_applicable is not None:
-            plans.append(OperationAccess(op, not_applicable=request.not_applicable))
-            continue
-        advisory = [f"tool {name!r} has no cited envelope solid: check by hand that it reaches {op.part}"
-                    for name in request.advisory]
-        entry = OperationAccess(op, unknown=list(request.unknown), advisory=advisory)
-        if not request.tools and advisory:
-            plans.append(entry)
+        entry = operation_access(request)
+        if entry.not_applicable is not None or (request.moving is None and not request.reaches):
+            plans.append(entry)  # nothing travels and no envelope reaches: there is no path to plan
             continue
         frame = request.frame
         if frame not in world:
@@ -388,15 +418,16 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
                                          obstacles(request.path_obstacles, moving),
                                          engagement=partners(request.path_obstacles, moving)))
         operated = request.part
-        for number, tool in enumerate(request.tools):
-            if not tool.declared or tool.approach is None or (op.id, number) not in tools:
-                continue  # its reason is in request.unknown, or the envelope solid could not be read
+        for reach in request.reaches:
+            if (op.id, reach.index) not in tools:
+                continue  # the cited envelope solid could not be read: its reason is in the tool problems
             if operated is None or operated not in world:
-                entry.unknown.append(f"{op.id}: the operated part {op.part} has no placement for tool {tool.name!r}")
+                entry.unknown.append(f"{op.id}: the operated part {op.part} has no placement for tool {reach.tool.name!r}")
                 continue
-            key, _shape = tools[(op.id, number)]
-            entry.paths.append(Travel(f"{op.id}/tool/{number}", key, world[operated], _rotate(rotation, tool.approach),
-                                     obstacles(request.tool_obstacles, None), route="approach", tool=tool.name))
+            key, _shape, envelope = tools[(op.id, reach.index)]
+            entry.paths.append(Travel(f"{op.id}/tool/{reach.index}", key, world[operated], _rotate(rotation, reach.approach),
+                                     obstacles(request.tool_obstacles, None), envelope=envelope, tool=reach.tool.name,
+                                     route="approach" if reach.source == "step" else "standard_envelope"))
         plans.append(entry)
     return plans
 
@@ -419,16 +450,16 @@ def declared_legs(ident: str, moving: str, installed: Any, frame: Any, points: S
     return legs
 
 
-def read_tools(requests: Iterable[Any], record_hw: Path, hw: Path) -> tuple[dict[tuple[str, int], tuple[str, Any]],
+def read_tools(requests: Iterable[Any], record_hw: Path, hw: Path) -> tuple[dict[tuple[str, int], ToolShape],
                                                                           dict[tuple[str, int], str], dict[str, str]]:
     """(envelope key and shape per (operation id, tool index), the reason a cited solid could not be used,
     the sha256 of each envelope artifact read). The artifact resolves in the record snapshot, else hw/."""
-    shapes: dict[tuple[str, int], tuple[str, Any]] = {}
+    shapes: dict[tuple[str, int], ToolShape] = {}
     problems: dict[tuple[str, int], str] = {}
     digests: dict[str, str] = {}
     for request in requests:
-        for number, tool in enumerate(request.tools):
-            cited = tool.envelope_artifact if tool.declared else None
+        for reach in request.reaches:
+            number, tool, cited = reach.index, reach.tool, reach.artifact
             if cited is None:
                 continue
             artifact, sha = cited
@@ -441,9 +472,76 @@ def read_tools(requests: Iterable[Any], record_hw: Path, hw: Path) -> tuple[dict
                 problems[(request.operation.id, number)] = f"tool {tool.name!r}: {artifact} does not match its sha256"
                 continue
             key = f"tool:{request.operation.id}:{number}"
-            shapes[(request.operation.id, number)] = (key, pose.read_shape(target))
+            shapes[(request.operation.id, number)] = (key, pose.read_shape(target), None)
             digests[artifact] = sha
     return shapes, problems, digests
+
+
+def _unrotate(rigid: Any, vector: Sequence[float]) -> tuple[float, float, float]:
+    rot = rigid.rot
+    x, y, z = (sum(rot[i][k] * vector[i] for i in range(3)) for k in range(3))
+    return (x, y, z)
+
+
+FACE_TIE = 1e-9  # two faces meet an approach equally when its components along their normals differ by less
+
+
+def envelope_tip(low: Sequence[float], high: Sequence[float], approach: Sequence[float]) -> tuple[float, float, float] | None:
+    """The default tip of a tool on a part it drives along its path: the center of the face of the part's box
+    (`low`, `high`, model frame) that the tool arrives through, the face whose outward normal points most against
+    the unit `approach`. None when two faces meet it equally (an approach at 45 degrees to both): which one the tool
+    works on is not known, so the entry needs its contact point."""
+    back = [-a for a in approach]
+    first, second = sorted(range(3), key=lambda i: abs(back[i]), reverse=True)[:2]
+    if abs(back[first]) - abs(back[second]) < FACE_TIE:
+        return None
+    tip = [(a + b) / 2 for a, b in zip(low, high)]
+    tip[first] = high[first] if back[first] > 0 else low[first]
+    return (tip[0] + 0.0, tip[1] + 0.0, tip[2] + 0.0)
+
+
+def envelope_shape(envelope: Any, tip: Sequence[float], approach: Sequence[float]) -> Any:
+    """A standard envelope's coaxial cylinders in the operated part's model frame, from `tip`, the tool axis running
+    back along -`approach` (unit, model frame)."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+    back = (-approach[0], -approach[1], -approach[2])
+    shape = None
+    for segment in envelope.segments:
+        origin = gp_Pnt(*(tip[i] + back[i] * segment.start_mm for i in range(3)))
+        cylinder = BRepPrimAPI_MakeCylinder(gp_Ax2(origin, gp_Dir(*back)), segment.radius_mm, segment.length_mm).Shape()
+        shape = cylinder if shape is None else BRepAlgoAPI_Fuse(shape, cylinder).Shape()
+    return shape
+
+
+def standard_envelopes(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], definitions: Mapping[str, Any]
+                       ) -> tuple[dict[tuple[str, int], ToolShape], dict[tuple[str, int], str]]:
+    """(key, shape and report per (operation id, tool index) of each shipped standard envelope, the reason one could
+    not be placed). The approach is rotated from the receiving occurrence's frame into the operated part's model frame."""
+    shapes: dict[tuple[str, int], ToolShape] = {}
+    problems: dict[tuple[str, int], str] = {}
+    for request in requests:
+        op_id, operated = request.operation.id, request.part
+        for reach in request.reaches:
+            if reach.envelope is None:
+                continue
+            if request.frame not in world or operated not in world or chain.pn(operated) not in definitions:
+                problems[(op_id, reach.index)] = f"tool {reach.tool.name!r}: the operated part {operated} has no geometry or placement"
+                continue
+            approach = _unrotate(world[operated], _rotate(world[request.frame], reach.approach))
+            low, high = pose.box_corners(definitions[chain.pn(operated)].shape)
+            tip = reach.contact if reach.contact is not None else envelope_tip(low, high, approach)
+            if tip is None:
+                problems[(op_id, reach.index)] = (
+                    f"tool {reach.tool.name!r}: its approach meets two faces of {operated}'s box equally, so the face it "
+                    f"works on is not known: declare where its tip engages (tool_access contact, mm in {operated}'s "
+                    "model frame)")
+                continue
+            shape = envelope_shape(reach.envelope, tip, approach)
+            shapes[(op_id, reach.index)] = (f"tool:{op_id}:{reach.index}", shape, reach.envelope.report())
+    return shapes, problems
 
 
 # --------------------------------------------------------------------------- findings and the packet
@@ -497,7 +595,8 @@ def access_findings(entry: OperationAccess) -> list[dict[str, Any]]:
             "outcome": "unknown", "measured": {"status": "unknown", "reason": "; ".join(reasons)},
             "criterion": criterion, "uncertainty": "; ".join(reasons),
             "consequence": f"whether the part and tools of {op.id} reach their positions is not established",
-            "remedy": "record the direction, and each tool's approach and sourced envelope solid, then rerun",
+            "remedy": "record the direction, and each tool's approach, then rerun; for a special tool, cite a STEP "
+                      "solid of it as its tool_access envelope",
         })
     return findings
 
@@ -510,9 +609,10 @@ def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]
     if mine:
         row["findings"] = mine
     if entry.outcome == "unknown":
-        row["uncertainty"] = next(f["uncertainty"] for f in findings if f["code"] == "assembly.access_unknown")
-    elif entry.advisory:
-        row["uncertainty"] = "; ".join(entry.advisory)
+        reason = next(f["uncertainty"] for f in findings if f["code"] == "assembly.access_unknown")
+        row["uncertainty"] = "; ".join([reason, *entry.advisory, *entry.notes])
+    elif entry.advisory or entry.notes:
+        row["uncertainty"] = "; ".join([*entry.advisory, *entry.notes])
     if entry.outcome == "not_assessed":
         row["reason"] = "no_capability_profile"
     return row
@@ -536,11 +636,11 @@ def declared_engagements(record_hw: Path, assembly: Any) -> dict[tuple[str, str]
 
 
 def measure_plans(plans: Sequence[OperationAccess], definitions: Mapping[str, Any],
-                  tools: Mapping[tuple[str, int], tuple[str, Any]], step_mm: float, min_step_mm: float) -> None:
+                  tools: Mapping[tuple[str, int], ToolShape], step_mm: float, min_step_mm: float) -> None:
     """Measure every path of `plans` with one pair evaluator over the parts and the tool envelopes."""
     shapes = {pn: part.shape for pn, part in definitions.items()}
     parts = dict(definitions)
-    for key, shape in tools.values():
+    for key, shape, _envelope in tools.values():
         shapes[key] = shape
         parts[key] = pose.Part(key, key, shape)
     measurer = pair_measure.PairMeasurer(shapes, geometry_ids=pose.geometry_ids(parts),
@@ -569,7 +669,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
     existing = frozenset(pn for pn, part in record.parts.items() if part.existing)
     order = operations_module.check_order(operations, chain.inventory, existing)
     outcomes, findings = list(order.outcomes), list(order.findings)
-    detail: dict[str, Any] = {"operations": operations_module.summary(operations), "paths": {}, "nominal": {}}
+    detail: dict[str, Any] = {"operations": operations_module.summary(operations), "paths": {}, "notes": {}, "nominal": {}}
     dependencies = {"assembly_yaml": hashlib.sha256(assembly_path.read_bytes()).hexdigest()}
     interfaces_path = record_hw / "interfaces.yaml"
     if interfaces_path.is_file():
@@ -585,6 +685,9 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         values = chain.complete({})
         world = chain.transforms(values)
         detail["nominal"] = {jid: value for jid, value in values.items()}
+        standard, standard_problems = standard_envelopes(requests, chain, world, definitions)
+        tools.update(standard)
+        tool_problems.update(standard_problems)
         plans = plan_paths(requests, chain, world, definitions, caps, tools)
         for entry in plans:
             entry.unknown.extend(reason for (op_id, _), reason in sorted(tool_problems.items())
@@ -595,16 +698,19 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
             findings.extend(mine)
             outcomes.append(access_outcome(entry, mine))
             detail["paths"][entry.operation.id] = [p.report() for p in entry.paths]
+            detail["notes"][entry.operation.id] = list(entry.notes)
     detail["limits"] = [ACCESS_COVERAGE, "the order check covers the declared sequence only"]
     expected = [o for o in intent_module.required_checks(record) if o.family in FAMILIES]
     return check_packet.build(record, expected, PRODUCER, outcomes, findings, dependencies), detail
 
 
 def policy_digest() -> str:
-    """The sha256 of the access policy sources. The pair evaluator's rule digest covers neither, so a changed policy
-    must reach the recipe, or the next run would reuse a packet from before the change."""
+    """The sha256 of the access policy sources: this file, the engagement rule, and cad-record's reach planning and
+    shipped envelope tables. The pair evaluator's rule digest covers none of them, so a changed policy must reach the
+    recipe, or the next run would reuse a packet from before the change."""
     digest = hashlib.sha256()
-    for source in (Path(__file__), Path(engagement_module.__file__)):
+    for source in (Path(__file__), Path(engagement_module.__file__), Path(operations_module.__file__),
+                   Path(operations_module.tool_envelopes.__file__)):
         digest.update(source.name.encode() + b"\0" + hashlib.sha256(source.read_bytes()).digest())
     return digest.hexdigest()
 
