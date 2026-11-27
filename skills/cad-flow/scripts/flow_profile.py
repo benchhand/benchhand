@@ -514,14 +514,6 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     accepted = list(accepted)
     if DECISION.fullmatch(decision) is None:
         raise ProfileError(f"--decision {decision!r} is not DR-###")
-    product, parts = read_product(hw), read_parts(hw)
-    applicability = _require_applicability(product, parts)
-    plan = gate.question_plan(product, parts, answered_profile(decision, answers))
-    _require_settled(answers, accepted, plan.fields, applicability.unresolved)
-    _require_not_given(answers, accepted, plan.skipped)
-    decisions = hw / "decisions"
-    number = int(decision.removeprefix("DR-"))
-    _require_free(decisions, number)
     path = hw / "product.yaml"
     try:
         raw = path.read_bytes().decode("utf-8")
@@ -529,12 +521,20 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
         raise ProfileError(f"cannot read {path}: {error}") from error
     newline = "\r\n" if "\r\n" in raw else "\n"
     text = raw.replace("\r\n", "\n")
-    try:
+    try:  # one read: the applicability below and the edit further on judge this same text
         key, node = _flow_node(text)
         _require_flow_keys(node)
         product = yaml_loader.safe_load(text)
     except (yaml.YAMLError, ValueError) as error:
         raise FlowFinding(f"flow: cannot parse {path}: {error}") from error
+    parts = read_parts(hw)
+    applicability = _require_applicability(product, parts)
+    plan = gate.question_plan(product, parts, answered_profile(decision, answers))
+    _require_settled(answers, accepted, plan.fields, applicability.unresolved)
+    _require_not_given(answers, accepted, plan.skipped)
+    decisions = hw / "decisions"
+    number = int(decision.removeprefix("DR-"))
+    _require_free(decisions, number)
     profile = answered_profile(decision, answers, accepted, plan.skipped)
     if invalid := gate.shape_problems(profile):
         raise ProfileError(gate.refusal(invalid))

@@ -13,6 +13,8 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -194,6 +196,30 @@ class Record(unittest.TestCase):
         result = run("questions", "--hw", str(self.hw))
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("product.yaml", result.stderr)
+
+    def test_record_on_a_product_that_does_not_parse_exits_1_with_the_named_finding_and_records_nothing(self) -> None:
+        self.product.write_text("flow: [unclosed\n", encoding="utf-8")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:5])
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("flow: cannot parse", result.stderr)
+        self.assertIn("product.yaml", result.stderr)
+        self.assertFalse((self.hw / "decisions").exists())
+
+    def test_the_record_commands_of_the_troubleshooting_guide_settle_the_project_they_are_written_for(self) -> None:
+        guide = (SKILLS.parent / "docs" / "troubleshooting.md").read_text(encoding="utf-8")
+        calls = [shlex.split(block.replace("\\\n", " ")) for block in re.findall(r"```sh\n(.*?)```", guide, re.S)
+                 if 'flow_profile.py" record' in block]
+        recorded = [call[call.index("record"):] for call in calls]
+        self.assertEqual(len(recorded), 2, recorded)
+        for plan, call in (("cnc", recorded[0]), ("fdm", recorded[1])):
+            with self.subTest(plan):
+                hw = self.hw.parent / plan / "hw"
+                hw.mkdir(parents=True)
+                (hw / "product.yaml").write_text(PRODUCT + f"manufacturing:\n  processes: [{plan}]\n", encoding="utf-8")
+                result = run(*[str(hw) if word == "hw" else word for word in call])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                settled = run("check", "--hw", str(hw), "--stage", "specify")
+                self.assertEqual((settled.returncode, json.loads(settled.stdout)["problems"]), (0, []), settled.stdout)
 
     def test_a_project_with_no_plan_and_no_part_is_asked_the_fdm_questions_too(self) -> None:
         general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
