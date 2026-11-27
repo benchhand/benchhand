@@ -23,6 +23,7 @@ import unittest
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import load_module  # noqa: E402
@@ -193,15 +194,34 @@ class ExtractTests(unittest.TestCase):
         procs = [subprocess.Popen([sys.executable, "-B", str(script), "PIN-0001", str(page), "--hw", str(self.hw),
                                    "--name", "shared.html", "--accessed", "2026-11-27"],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE) for page in pages]
-        codes = [proc.wait() for proc in procs]
-        for proc in procs:
-            proc.stdout.close()  # type: ignore[union-attr]
-            proc.stderr.close()  # type: ignore[union-attr]
+        outputs = [proc.communicate() for proc in procs]
+        codes = [proc.returncode for proc in procs]
+        findings = [[f["code"] for f in json.loads(out)["findings"]] for out, _ in outputs]
         sources = self.hw / "parts" / "PIN-0001" / "sources"
         self.assertEqual(sorted(codes), [0, 1, 1, 1, 1, 1])
+        self.assertEqual(sorted(findings), [[], ["name_conflict"], ["name_conflict"], ["name_conflict"],
+                                            ["name_conflict"], ["name_conflict"]])
         sidecar = json.loads((sources / "shared.html.source.json").read_text(encoding="utf-8"))
         self.assertEqual(sidecar["sha256"], hashlib.sha256((sources / "shared.html").read_bytes()).hexdigest())
         self.assertEqual(sorted(p.name for p in sources.iterdir()), ["shared.html", "shared.html.source.json"])
+
+    def test_a_failed_store_never_unlinks_an_entry_another_writer_put_in_place(self) -> None:
+        sources = self.hw / "parts" / "PIN-0001" / "sources"
+        target = sources / "thumb_screw_table.html"
+        real = extract._link_new
+
+        def other_writer_takes_the_names(directory_fd: int, name: str, payload: bytes) -> object:
+            if name.endswith(".source.json"):
+                target.unlink()
+                target.write_text("another writer's page", encoding="utf-8")
+                (sources / name).write_text('{"sha256": "someone else"}', encoding="utf-8")
+            return real(directory_fd, name, payload)
+
+        with mock.patch.object(extract, "_link_new", other_writer_takes_the_names):
+            code, result = run(*self.args(HTML))
+        self.assertEqual(code, 1)
+        self.assertEqual(len(result["findings"]), 1)
+        self.assertEqual(target.read_text(encoding="utf-8"), "another writer's page")
 
     def test_a_part_folder_that_is_a_file_is_a_storage_finding(self) -> None:
         self.hw.mkdir()
