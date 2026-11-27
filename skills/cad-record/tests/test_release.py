@@ -1512,6 +1512,14 @@ class Acceptance(ReleaseCase):
                          and str(item["message"]).startswith("id: ")], findings)
         self.assertIn("record.evidence_anchor", [item.get("code") for item in findings])
 
+    def test_an_invalid_freeze_is_dropped_with_its_own_schema_finding(self) -> None:
+        hw = self.project()
+        edit_yaml(hw / "product.yaml", lambda product: product["flow"]["frozen"].update(manifest_sha256="not-a-digest"))
+        findings = validate.validate_project(hw)
+        self.assertTrue([item for item in findings if str(item["path"]).endswith("product.yaml")
+                         and str(item["message"]).startswith("flow/frozen")], findings)
+        self.assertNotIn("record.evidence_anchor", [item.get("code") for item in findings])
+
     def test_evidence_accepted_after_the_freeze_needs_a_new_anchor(self) -> None:
         hw = self.project()
         ledger = hw / "manufacturing" / "evidence.yaml"
