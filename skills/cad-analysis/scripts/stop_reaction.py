@@ -30,14 +30,17 @@ fixed part's face, signed so that a reaction that resists the load is positive. 
 Applied moment. The peak force of the interface's use-case loads times the moving part's farthest point from
 the axis. The record does not say where the force acts, so this arm is a conservative upper bound.
 
-Prismatic stop. A slide has no axis to turn about, so no arm, patch or moment is taken. At each limit that is a
-stop (the parts touch within the tolerance, without overlap, and a contact face squarely opposes travel beyond the
-limit: a face along the travel is a rail, not a stop, and leaves the stop unknown), the reaction is the component of the use-case
-loads along the slide axis that presses the stop: at `min` the load component against the axis, at `max` along
-it, the largest over the loads, in N. Loads that are not known leave the stop unknown. A load direction is stated in
-the model frame of the part its `application` names, else in the assembly frame; it is normalised and rotated into
-the posed assembly frame at the limit, and a frame that cannot be resolved leaves the stop unknown. A recorded
-functional.contact.load below that reaction is `understated` (fail, major).
+Prismatic stop. A slide has no axis to turn about, so no arm, patch or moment is taken. A limit is a stop when the
+parts touch within the tolerance, without overlap, and a contact face has its normal within 60 degrees of directly
+against travel beyond the limit (the closest such face is taken, so a rail touching exactly never hides one a little
+farther off). A face along the travel is a rail: that limit is unknown, and its reason stands beside the verdicts of
+the other limits, where a known failure still wins. The axial reaction is the component of the use-case loads along
+the slide axis that presses the stop: at `min` the load component against the axis, at `max` along it, the largest
+over the loads, in N. A frictionless face theta off the axis needs the axial reaction over cos theta of normal force,
+and that bound is the design reaction; the end records theta and friction is not credited. Loads that are not known
+leave the stop unknown. A load direction is stated in the model frame of the part its `application` names, else in the
+assembly frame; it is normalised and rotated into the posed assembly frame at the limit, and a frame that cannot be
+resolved leaves the stop unknown. A recorded functional.contact.load below the bound is `understated` (fail, major).
 
 Design reaction. stop_statics.py: M over the smallest arm. A smallest arm of zero or less is `unbounded`
 (unknown, critical), and only an FEA contact case approved in a design record can close it. A recorded
@@ -61,6 +64,7 @@ import json
 import math
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
+import dataclasses
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -499,9 +503,9 @@ def blocking_contact(geometry: Mapping[str, Any], label: str, tolerance: float) 
     return {"cos": cos, "angle_deg": math.degrees(math.acos(cos))}
 
 
-def unusable_contact(stops: Sequence[Mapping[str, Any]], pivot: Pivot, tolerance: float) -> str:
-    """Why the touching limits give no contact to take statics on, or "" when they do: a revolute stop needs a contact
-    patch, a prismatic one a face that blocks travel."""
+def unusable_contact(stops: Sequence[Mapping[str, Any]], pivot: Pivot, tolerance: float) -> dict[str, str]:
+    """Why each touching limit gives no contact to take statics on, by limit; empty when all do. A revolute stop needs a
+    contact patch, a prismatic one a face that blocks travel."""
     if pivot.joint.type == "revolute":
         bad, why = [s["label"] for s in stops if s["patch"] is None], \
             "no parallel opposite-facing planar faces are that close, so no contact patch can be taken"
@@ -509,9 +513,7 @@ def unusable_contact(stops: Sequence[Mapping[str, Any]], pivot: Pivot, tolerance
         bad, why = [s["label"] for s in stops if not s["blocking"]], \
             ("no contact face has a normal within 60 degrees of directly against travel beyond the limit, so the contact "
              "may be a rail along the travel and nothing shows that it blocks the slide")
-    if not bad:
-        return ""
-    return f"at the {' and '.join(bad)} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, but {why}"
+    return {label: f"{label} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, but {why}" for label in bad}
 
 
 def patch_report(patch: statics.Patch | None) -> dict[str, Any] | None:
@@ -584,9 +586,11 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         reason = f"{if_id}: the parts overlap by {depth:.3g} mm {where}: a design defect, not a stop"
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
     unusable = unusable_contact(stops, pivot, tolerance)
-    if unusable:
-        reason = f"{if_id}: {unusable}"
+    if unusable and (pivot.joint.type == "revolute" or len(unusable) == len(stops)):
+        reason = f"{if_id}: at the {' and '.join(unusable)} " + next(iter(unusable.values())).split(" ", 1)[1]
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
+    stops = [state for state in stops if state["label"] not in unusable]  # a slide's other limits keep their own verdicts
+    detail["unresolved_limits"] = {label: f"{if_id}: at the {why}" for label, why in unusable.items()}
     force, loads, why = applied_force(record, interface, chain if pivot.joint.type == "prismatic" else None)
     if force is None:
         reason = f"{if_id} is a stop at the {' and '.join(state['label'] for state in stops)} limit of {pivot.joint.id}, but {why}"
@@ -607,10 +611,12 @@ def judge_stops(if_id: str, stops: Sequence[Mapping[str, Any]], reactions: Mappi
     detail["recorded_contact_load_n"] = recorded
     for state in stops:
         detail["ends"][state["label"]]["reaction"] = reaction_report(reactions[state["label"]])
-    seen = {r.outcome for r in reactions.values()}
+    held = detail.get("unresolved_limits", {})  # limits with no reaction to judge: unknown, but a known failure still wins
+    seen = {r.outcome for r in reactions.values()} | ({"unknown"} if held else set())
     outcome = "fail" if "fail" in seen else "unknown" if "unknown" in seen else "pass"
     detail["outcome"] = outcome
-    return Assessment(if_id, outcome, [r.message for r in reactions.values() if r.outcome != "pass"], dict(reactions), detail)
+    reasons = [r.message for r in reactions.values() if r.outcome != "pass"] + list(held.values())
+    return Assessment(if_id, outcome, reasons, dict(reactions), detail)
 
 
 # --------------------------------------------------------------------------- findings and packet
@@ -677,9 +683,11 @@ def findings_of(entry: Assessment, obligation: str) -> list[dict[str, Any]]:
     subject = {"interface": entry.interface}
     base = {"obligation": obligation, "subject": subject, "method": {"name": method_of(entry), "tool": PRODUCER},
             "recheck": {"families": [FAMILY], "scope": [subject], "earliest_stage": "layout"}}
+    held = entry.detail.get("unresolved_limits", {})
     if not entry.reactions:
         return [unknown_finding(entry, base)]
-    return [reaction_finding(entry, label, result, base) for label, result in entry.reactions.items() if result.outcome != "pass"]
+    found = [reaction_finding(entry, label, result, base) for label, result in entry.reactions.items() if result.outcome != "pass"]
+    return found + ([unknown_finding(dataclasses.replace(entry, reasons=list(held.values())), base)] if held else [])
 
 
 def outcome_row(entry: Assessment, obligation: str, mine: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
