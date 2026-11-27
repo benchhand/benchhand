@@ -720,6 +720,24 @@ class StandaloneRunChecksFEATests(unittest.TestCase):
                 self.assertIn("product.yaml", named[0].detail)
                 self.assertEqual(report.exit_code, 1)
 
+    def test_a_null_document_and_an_unreadable_folder_are_not_absent_configuration(self) -> None:
+        for text in ("null\n", "~\n", ""):
+            with self.subTest(text=text):
+                named = [c for c in self.run_in_project(text).checks if c.id == "fea-profile"]
+                self.assertEqual([c.status for c in named], ["fail"])
+                self.assertIn("product.yaml", named[0].detail)
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-denied-") as directory:
+            hw = Path(directory) / "hw"
+            hw.mkdir()
+            (hw / "product.yaml").write_text("name: widget\n", encoding="utf-8")
+            hw.chmod(0)
+            try:
+                setting = preflight.project_fea(Path(directory))
+            finally:
+                hw.chmod(0o755)
+        self.assertFalse(setting.enabled)
+        self.assertIn("product.yaml", setting.invalid or "")
+
     def test_absent_keys_are_not_malformed(self) -> None:
         for text in (None, "name: widget\n", "flow:\n  stage: ground\n", "flow:\n  profile:\n    other: 1\n"):
             with self.subTest(text=text):
@@ -887,6 +905,43 @@ class WarmStatusPerProjectTests(unittest.TestCase):
         self.assertEqual(code, 1, text)
         self.assertIn("flow.profile.fea", text)
         self.assertIn("No warm-up is recorded", text)
+
+    def test_a_running_warm_up_does_not_hide_an_invalid_profile(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-running-") as directory:
+            environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+            preflight._write_record(preflight.warm_record_path(environ),
+                                    {"state": "running", "pid": os.getpid(), "started_at": "t0"})
+            project = Path(directory) / "project"
+            (project / "hw").mkdir(parents=True)
+            (project / "hw" / "product.yaml").write_text("flow: [a]\n", encoding="utf-8")
+            code, text = preflight.warm_status(environ, wait_s=0, cwd=project)
+            self.assertEqual(code, 1, text)
+            self.assertIn("flow", text)
+            (project / "hw" / "product.yaml").write_text("name: widget\n", encoding="utf-8")
+            self.assertEqual(preflight.warm_status(environ, wait_s=0, cwd=project)[0], preflight.EXIT_RUNNING)
+
+    def test_info_is_no_evidence_for_a_mandatory_warm_up_check(self) -> None:
+        checks = tuple(preflight.Check(i, i, "info" if i == "uv" else "pass", i != "uv", "d", "")
+                       for i in self.COMPLETE)
+        code, text = self.status(None, checks=checks)
+        self.assertEqual(code, preflight.EXIT_NO_WARM, text)
+        self.assertIn("uv", text)
+
+    def test_a_malformed_record_is_not_a_warm_up(self) -> None:
+        good = [asdict_check for asdict_check in preflight.Report(tuple(
+            preflight.Check(i, i, "pass", True, "ok", "") for i in self.COMPLETE)).as_json()["checks"]]
+        for rows in ([*good[:-1], "uv"], [*good[:-1], {"id": "uv"}], [*good[:-1], {**good[-1], "status": "bogus"}],
+                     "not a list"):
+            with self.subTest(rows=str(rows)[:40]), tempfile.TemporaryDirectory(prefix="cad-preflight-bad-") as directory:
+                environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+                preflight._write_record(preflight.warm_record_path(environ), {
+                    "state": "finished", "pid": 1, "started_at": "t0", "finished_at": "t1",
+                    "report": {"checks": rows}})
+                project = Path(directory) / "project"
+                project.mkdir()
+                code, text = preflight.warm_status(environ, cwd=project)
+                self.assertEqual(code, preflight.EXIT_NO_WARM, text)
+                self.assertIn("unreadable", text)
 
     def test_no_warm_up_and_a_valid_profile_still_exits_2(self) -> None:
         self.assertEqual(self.status(None, record=False)[0], preflight.EXIT_NO_WARM)
