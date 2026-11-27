@@ -947,6 +947,18 @@ class ReviewedRegressionsThroughTheCli(unittest.TestCase):
         for named in ("stock thickness 3 mm (now unknown)", "stock coating none (now unknown)", "approval gate"):
             self.assertIn(named, changes[0])
 
+    def test_an_unselected_made_part_is_named_whatever_else_holds_the_report_back(self) -> None:
+        """The confirmed primary leaves the clip TST-0302 unselected. An unknown load magnitude already blocks the
+        report (the confirmed final choice contradicts it), and the clip is still named."""
+        documents = ComparisonOutput.machined_cover_confirmed()
+        documents["product.yaml"]["use_case"]["loads"][0]["magnitude"] = fx.unknown("never measured")
+        code, report = self.cli(documents)
+        self.assertEqual((code, report["status"]), (1, "blocked"))
+        (unselected,) = findings(report, "selection.part_unselected")
+        self.assertEqual(unselected["subject"], {"PN": "TST-0302"})
+        self.assertEqual(report["coverage"]["unselected"], ["TST-0302"])
+        self.assertIn("use_case.loads.service_load.magnitude", [m["field"] for m in report["use_case"]["missing"]])
+
 
 class StrictMaterialCriteria(unittest.TestCase):
     """The printed polymer's max_service_temperature is 60 deg_C. A strict `<` or `>` criterion at that limit fails
