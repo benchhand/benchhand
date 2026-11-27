@@ -1359,8 +1359,11 @@ class Measurer:
         if operation == "axis_distance" and len(features) == 2:
             pair = [cylinder_instances([self.faces[i] for i in f.faces]) for f in features]
             if not all(pair):
+                planar = [f.id for f in features if f.kind == "plane_face"]
                 raise IntentError("measurement_failed", f"axis_distance needs a cylinder axis on each of "
-                                  f"{[f.id for f in features]}")
+                                  f"{[f.id for f in features]}" + (
+                                      f"; {planar} is a plane, so request operation distance between the axis and "
+                                      f"the plane" if planar else ""))
             a, b = pair[0][0], pair[1][0]
             if not fg.parallel(a.axis_dir, b.axis_dir):
                 raise IntentError("measurement_failed", "the axes are not parallel")
@@ -1514,11 +1517,26 @@ class Measurer:
                 continue
             self.result.geometric.append(dict(tolerance))
 
-    def _closure(self, frame: DatumFrame) -> None:
-        """Every axial end of a cylinder or taper lies on a located plane or meets a chamfer, round or surface."""
-        located = self.result.located
+    def _open_ends(self, feature: ResolvedFeature, face: Face) -> Iterable[float]:
+        """The axial ends of a cylinder or cone that meet no chamfer, round, surface or face of the same feature."""
         owner = self.binding.owner
         exempt_kinds = {"chamfer", "round", "surface", "taper", "socket", "slot", "engraving"}
+        direction = fg.unit(face.axis_dir)
+        for t in face.axial or ():
+            end_edges = [e for e in face.edges if e.points and all(
+                abs(fg.dot(fg.sub(p, face.axis_point), direction) - t) < 1e-3 for p in e.points)]
+            neighbours = {e.neighbour for e in end_edges if e.neighbour is not None}
+            kinds = {self.binding.features[owner[n]].kind for n in neighbours if n in owner}
+            same = {owner.get(n) for n in neighbours} == {feature.id}
+            if not (kinds & exempt_kinds or (same and neighbours) or not end_edges):
+                yield t
+
+    def _closure(self, frame: DatumFrame) -> None:
+        """Every axial end of a cylinder or taper lies on a located plane or meets a chamfer, round or surface.
+
+        An end on an axis that is no frame axis cannot be located: it is named, unless its feature already has a finding."""
+        located = self.result.located
+        named = {item.get("feature") for item in self.result.findings}
         for feature in self.binding.features.values():
             if feature.kind not in ("bore", "shaft", "groove", "taper") or feature.id not in self.intents:
                 continue
@@ -1527,20 +1545,17 @@ class Measurer:
                 if face.support_type not in ("cylinder", "cone") or face.axial is None:
                     continue
                 axis = frame.axis_of(face.axis_dir)
-                if axis is None:
-                    continue
-                k = "xyz".index(axis[0])
-                direction = fg.unit(face.axis_dir)
-                for t in face.axial:
-                    end_edges = [e for e in face.edges if e.points and all(
-                        abs(fg.dot(fg.sub(p, face.axis_point), direction) - t) < 1e-3 for p in e.points)]
-                    neighbours = {e.neighbour for e in end_edges if e.neighbour is not None}
-                    kinds = {self.binding.features[owner[n]].kind for n in neighbours if n in owner}
-                    same = {owner.get(n) for n in neighbours} == {feature.id}
-                    coordinate = frame.coords(fg.add(face.axis_point, fg.scale(direction, t)))[k]
-                    if any(abs(coordinate - value) < EPS for value in located[axis[0]]):
+                for t in self._open_ends(feature, face):
+                    if axis is None:
+                        if feature.id not in named:
+                            named.add(feature.id)
+                            self.add(finding("dimension_coverage_incomplete",
+                                             f"{feature.id}: an end of face {index} lies on an axis that is not a frame "
+                                             f"axis, so no dimension locates it; request its location or make it a "
+                                             f"controlled-model surface", feature=feature.id))
                         continue
-                    if kinds & exempt_kinds or (same and neighbours) or not end_edges:
+                    coordinate = frame.coords(fg.add(face.axis_point, fg.scale(fg.unit(face.axis_dir), t)))["xyz".index(axis[0])]
+                    if any(abs(coordinate - value) < EPS for value in located[axis[0]]):
                         continue
                     self.add(finding("dimension_coverage_incomplete",
                                      f"{feature.id}: the end of face {index} at {axis[0]} = {coordinate:.3f} is located by "

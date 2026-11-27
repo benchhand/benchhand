@@ -169,8 +169,11 @@ def plan_views(drawing: Mapping[str, Any], frame: DatumFrame, features: Mapping[
                 direction = _sense(_frame_sense(vector, frame), spec.get("toward"), frame, features, faces)
             elif "perpendicular_to" in spec:
                 vector, _ = _ref_direction(spec["perpendicular_to"], frame, features, faces)
-                direction = next(a for a in (frame.x, frame.y, frame.z) if fg.perpendicular(a, vector))
-                direction = _sense(direction, spec.get("toward"), frame, features, faces)
+                across = next((a for a in (frame.x, frame.y, frame.z) if fg.perpendicular(a, vector)), None)
+                if across is None:
+                    raise IntentError("invalid_drawing_intent", f"view {spec['id']}: {spec['perpendicular_to']} is "
+                                      f"oblique to every frame axis; use kind auxiliary with along_axis or normal_to")
+                direction = _sense(across, spec.get("toward"), frame, features, faces)
             else:
                 raise IntentError("invalid_drawing_intent", f"view {spec['id']} has no direction")
             if principal is None:
