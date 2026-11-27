@@ -151,11 +151,20 @@ class CheckTests(Case):
                 self.put(profile(calibration_state={"status": status, "source": user("the owner runs the built-in calibration only")}))
                 self.assertEqual(self.messages(), [])
 
-    def test_custom_calibration_state_without_a_measured_calibration_is_a_finding(self) -> None:
+    def test_custom_calibration_state_without_a_measured_calibration_is_an_advisory_not_an_error(self) -> None:
         self.put(profile(calibration_state={"status": "custom", "source": user("the owner tuned the printer")}))
-        found = self.messages()
+        self.assertEqual(self.messages(), [])
+        found = machine_profile.advisories(self.hw)
         self.assertTrue(any(m.startswith("hw/manufacturing/capabilities.yaml: profiles/0/calibration_state:")
                             and "custom" in m and "bench" in m for m in found), found)
+
+    def test_check_prints_the_custom_state_advisory_and_exits_0(self) -> None:
+        self.put(profile(calibration_state={"status": "custom", "source": user("the owner tuned the printer")}))
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = machine_profile.main(["check", str(self.hw)])
+        self.assertEqual(code, 0)
+        self.assertIn("advisory: hw/manufacturing/capabilities.yaml: profiles/0/calibration_state:", out.getvalue())
 
     def test_pin_to_missing_set_is_refused(self) -> None:
         self.put(profile(guidelines=["no.such.set@1"]))
@@ -264,6 +273,15 @@ class WriteTests(Case):
     def test_write_adds_a_profile_to_a_missing_file(self) -> None:
         self.assertEqual(self.run_write(self.answers(profile())), 0)
         self.assertEqual([p["id"] for p in self.stored()], ["bench"])
+
+    def test_write_saves_a_profile_with_a_custom_state_and_no_measurements(self) -> None:
+        answers = self.answers(profile(calibration_state={"status": "custom", "source": user("the owner tuned the printer")}))
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = int(machine_profile.main(["write", str(self.hw), str(answers)]))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.stored()[0]["calibration_state"]["status"], "custom")
+        self.assertIn("advisory: ", out.getvalue())
 
     def test_write_refuses_failing_profile_and_leaves_file_unchanged(self) -> None:
         self.put(profile(id="other"))
