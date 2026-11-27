@@ -643,13 +643,36 @@ class _Assessor:
         return assessed
 
     def matches_record(self, cpart: CandidatePart, part: Any) -> bool:
+        """Whether the candidate part is the route the record holds: the same route kinds, the same material profile, and
+        no step's declared stock that conflicts with its record operation's setup stock (stock_conflicts)."""
         route = part.intent.route
         if mi.is_fact(route) or tuple(op.kind for op in route) != tuple(step.kind for step in cpart.route):
             return False
         recorded, proposed = part.intent.material_profile, cpart.material
         if isinstance(recorded, str) or isinstance(proposed, str):
-            return bool(recorded == proposed)
-        return bool(recorded.not_applicable and proposed.not_applicable)
+            return bool(recorded == proposed) and not self.stock_conflicts(cpart, part)
+        return bool(recorded.not_applicable and proposed.not_applicable) and not self.stock_conflicts(cpart, part)
+
+    @staticmethod
+    def stock_conflicts(cpart: CandidatePart, part: Any) -> list[str]:
+        """Each way a candidate step's declared stock differs from the known setup stock of the record operation at
+        the same route position, as "<operation> stock <key> <declared> (now <recorded>)". A candidate on other stock is
+        another route: the approval it passes is not an approval of the stock the record cuts."""
+        route = part.intent.route
+        if mi.is_fact(route) or len(route) != len(cpart.route):
+            return []
+        found = []
+        for step, op in zip(cpart.route, route, strict=True):
+            stock = (op.setup or {}).get("stock")
+            for key, stated in (("thickness", step.stock_thickness), ("coating", step.stock_coating)):
+                held = mi.fact(stock[key]) if isinstance(stock, Mapping) and isinstance(stock.get(key), Mapping) else None
+                if stated is None or held is None or not stated.known or not held.known:
+                    continue
+                same = (_text_key(stated.value) == _text_key(held.value) if isinstance(stated.value, str)
+                        and isinstance(held.value, str) else stated.value == held.value)
+                if not same:
+                    found.append(f"{op.id} stock {key} {stated.value} (now {held.value})")
+        return found
 
     # -- route constraints --
     def route_constraints(self, cpart: CandidatePart) -> list[Evaluation]:
@@ -1706,8 +1729,10 @@ def _recommendation(assessor: _Assessor, ordered: list[_Assessed], primary: _Ass
             current = part.intent.material_profile if isinstance(part.intent.material_profile, str) else "unknown"
             sourcing = ("; make_buy becomes buy" if cpart.shaping_kind == "purchased" and part.sourcing == "make" else
                         "; make_buy becomes make" if cpart.shaping_kind != "purchased" and part.sourcing != "make" else "")
+            stock = "".join(f"; {change}" for change in assessor.stock_conflicts(cpart, part))
             proposed.append(f"{cpart.pn}: record material profile {cpart.material_label} and route "
-                            f"{' -> '.join(s.kind for s in cpart.route)} (now {current}, {now}){sourcing} through the approval gate")
+                            f"{' -> '.join(s.kind for s in cpart.route)} (now {current}, {now}){sourcing}{stock} through the "
+                            "approval gate")
     for entry in decision["optical"]:
         missing = [c["name"] for c in entry["purchase_criteria"] if c["status"] != "known"]
         if missing:
