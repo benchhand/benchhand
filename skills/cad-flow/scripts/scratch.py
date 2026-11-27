@@ -424,14 +424,15 @@ def write_baseline(work_fd: int, baseline: dict[str, Any]) -> None:
     write_file(work_fd, "baseline.json", (json.dumps(baseline, indent=2) + "\n").encode("utf-8"))
 
 
-def seed_store(hw: Path, scratch_fd: int) -> int:
+def seed_store(hw: Path, scratch_fd: int, notes: list[str] | None = None) -> int:
     """Hard-link HW's part store (cad-record layout cache.part_objects, cache.part_records) into the
     scratch copy open as `scratch_fd` and return how many files were linked. The store's writers only
     rename onto a name and never write a file in place, so no scratch write reaches HW through a link;
     objects stay read-only. Both trees are walked through descriptors opened without following links,
     and every destination directory and leaf is checked before the first link is made. Where no hard link
     can be made (another filesystem) seeding stops, and the scratch build builds the rest itself;
-    nothing is copied, because the store can be as large as every version together."""
+    nothing is copied, because the store can be as large as every version together. A link in the lead's cache
+    path is refused, except that a caller passing `notes` (init) gets a note instead and starts unseeded."""
     lay, seeded = layout.load(), 0
     hw_fd = open_dir(hw.resolve())
     opened: list[int] = []
@@ -442,6 +443,11 @@ def seed_store(hw: Path, scratch_fd: int) -> int:
             try:
                 source_fd = descend(hw_fd, folder)
             except FileNotFoundError:
+                continue
+            except UsageError:
+                if notes is None:
+                    raise
+                notes.append(f"the lead's {'/'.join(folder)} is behind a symlink, so it is not used; the workspace starts without those stored builds")
                 continue
             opened.append(source_fd)
             names = sorted(entry.name for entry in os.scandir(source_fd)
@@ -483,9 +489,12 @@ def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[
     if not parts or bad:
         raise UsageError(f"--part needs one or more PNs matching {PN.pattern}; got {bad or 'none'}")
     work = workspace(hw, unit)
-    if work.exists() and not reset:
+    if work.exists():
         work_fd = open_dir(work)
         try:
+            if reset:  # the old workspace stays locked while it is replaced
+                with workspace_lock(work_fd):
+                    return create_workspace(hw, unit, parts, work)
             if not exists_at(work_fd, "baseline.json"):
                 raise UsageError(f"{work} has no baseline.json; run `scratch.py init` first")
             with workspace_lock(work_fd):
@@ -496,25 +505,39 @@ def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[
         return 0, {"status": "exists", "unit": unit, "workspace": str(work), "scratch_hw": str(work / "hw"),
                    "parts": baseline["parts"], "warnings": warnings,
                    "note": "kept the existing workspace; --reset replaces it"}
-    shutil.rmtree(work, ignore_errors=True)
+    return create_workspace(hw, unit, parts, work)
+
+
+def create_workspace(hw: Path, unit: str, parts: list[str], work: Path) -> tuple[int, dict[str, Any]]:
+    """Build the workspace in a sibling directory, then move it into place, so a refused or failed init
+    leaves nothing half-made and keeps any workspace it was going to replace."""
     work.parent.mkdir(parents=True, exist_ok=True)
     gitignore = work.parent / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text("*\n", encoding="utf-8")
-    shutil.copytree(hw, work / "hw", ignore=skips(hw))
-    scratch_fd = open_dir(work / "hw")
+    building = work.parent / f".init-{secrets.token_hex(4)}"
+    building.mkdir()
     try:
-        seeded = seed_store(hw, scratch_fd)
-    finally:
-        os.close(scratch_fd)
-    for pn in sorted(set(parts)):
-        if not (hw / "parts" / pn).exists():
-            (work / "hw" / "parts" / pn).mkdir(parents=True, exist_ok=True)
-    baseline = {"unit": unit, "hw": str(hw), "parts": sorted(set(parts)), "files": tree_hashes(work / "hw")}
-    (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
-    (work / "workspace.lock").touch()  # made here, so taking the lock later never changes the workspace
+        shutil.copytree(hw, building / "hw", ignore=skips(hw))
+        info: list[str] = []
+        scratch_fd = open_dir(building / "hw")
+        try:
+            seeded = seed_store(hw, scratch_fd, info)
+        finally:
+            os.close(scratch_fd)
+        for pn in sorted(set(parts)):
+            if not (hw / "parts" / pn).exists():
+                (building / "hw" / "parts" / pn).mkdir(parents=True, exist_ok=True)
+        baseline = {"unit": unit, "hw": str(hw), "parts": sorted(set(parts)), "files": tree_hashes(building / "hw")}
+        (building / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+        (building / "workspace.lock").touch()  # made here, so taking the lock later never changes the workspace
+        shutil.rmtree(work, ignore_errors=True)
+        building.rename(work)
+    except BaseException:
+        shutil.rmtree(building, ignore_errors=True)
+        raise
     return 0, {"status": "created", "unit": unit, "workspace": str(work), "scratch_hw": str(work / "hw"),
-               "parts": baseline["parts"], "files": len(baseline["files"]), "seeded_store_files": seeded}
+               "parts": baseline["parts"], "files": len(baseline["files"]), "seeded_store_files": seeded, "info": info}
 
 
 STAGED_DELIVERY = re.compile(r"^\.[A-Z]{2,5}-[0-9]{4}\.(?:deliver|replaced)-[0-9]+$")
