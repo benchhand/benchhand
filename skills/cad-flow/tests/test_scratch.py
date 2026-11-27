@@ -779,6 +779,27 @@ class Sync(ScratchCase):
         baseline = json.loads((scratch_hw.parent / "baseline.json").read_text(encoding="utf-8"))
         self.assertNotIn("notes", baseline["files"])
 
+    def test_sync_refuses_an_unreadable_directory_instead_of_reading_its_files_as_retired(self) -> None:
+        (self.hw / "notes").mkdir()
+        (self.hw / "notes" / "a.txt").write_text("lead note\n", encoding="utf-8")
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        (self.hw / "notes").chmod(0)
+        self.addCleanup((self.hw / "notes").chmod, 0o755)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"], report["finding"]), (2, "error", "unreadable-directory"), report)
+        self.assertTrue((scratch_hw / "notes" / "a.txt").is_file())
+
+    def test_sync_and_deliver_refuse_an_unreadable_scratch_directory(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        (scratch_hw / "manufacturing").chmod(0)
+        self.addCleanup((scratch_hw / "manufacturing").chmod, 0o755)
+        before = tree(self.hw)
+        for command in ("sync", "deliver"):
+            with self.subTest(command=command):
+                code, report = self.scratch(command, "--hw", "hw", "--unit", "unit-a")
+                self.assertEqual((code, report["finding"]), (2, "unreadable-directory"), report)
+        self.assertEqual(tree(self.hw), before)
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
