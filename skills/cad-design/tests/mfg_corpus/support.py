@@ -136,8 +136,9 @@ def solids() -> Any:
 TODAY = date(2026, 6, 1)
 
 
-def printed_record(supports: Mapping[str, Any] | None = None) -> tuple[Any, Any]:
-    """(the record, the process_checks module) of one printed part on the TEST profile, with the support plan the record asks for."""
+def printed_record(supports: Mapping[str, Any] | None = None, *, standard_state: bool = False) -> tuple[Any, Any]:
+    """(the record, the process_checks module) of one printed part on the TEST profile, with the support plan the record asks for.
+    `standard_state` empties the profile's calibrations, records calibration_state standard and a 0.4 mm nozzle: the shipped guidelines govern."""
     import tempfile
 
     require("yaml")
@@ -155,8 +156,13 @@ def printed_record(supports: Mapping[str, Any] | None = None) -> tuple[Any, Any]
     intent = fx.intent(functions=[{"function": "cosmetic"}], material_profile=capability_profile.MATERIAL, route=route,
                        critical_surfaces=fx.not_applicable("none here"))
     part = fx.part(PN, process="fdm", material=capability_profile.MATERIAL, part_intent=intent)
-    documents = fx.record(parts=[part], capabilities=capability_profile.capabilities(),
-                          materials=capability_profile.materials())
+    capabilities = capability_profile.capabilities()
+    if standard_state:
+        capabilities[0]["calibrations"] = []
+        capabilities[0]["calibration_state"] = fx.calibration_state("standard")
+        capabilities[0]["parameters"] = {"nozzle_diameter": fx.known(fx.quantity(0.4), "supplier_typical",
+                                                                    [fx.source("datasheet", "TEST printer datasheet")])}
+    documents = fx.record(parts=[part], capabilities=capabilities, materials=capability_profile.materials())
     with tempfile.TemporaryDirectory() as tmp:
         hw = fx.write_record(Path(tmp) / "project" / "hw", documents)
         record, problems = pc.intent().check_record(hw)
@@ -172,13 +178,14 @@ def shipped_catalog(pc: Any) -> Any:
     return pc.guidelines().discover(None)
 
 
-def printed_verdict(shape: Any, prefix: str, supports: Mapping[str, Any] | None = None, frame: str = "bed") -> Outcome:
+def printed_verdict(shape: Any, prefix: str, supports: Mapping[str, Any] | None = None, frame: str = "bed", *,
+                    standard_state: bool = False) -> Outcome:
     """What a release concludes about the obligations whose id starts with `prefix` (e.g. "process.fdm.support@") for one
     printed part. The path is form_check.check_version's: `shape` probed by form_check.probe with the plan the record
     asks for and the build axis a bed placement gives, assessed by the process checks into the packet, validated against
     its schema, then assessed by cad-record evidence."""
     require("OCP")
-    record, pc = printed_record(supports)
+    record, pc = printed_record(supports, standard_state=standard_state)
     catalog = shipped_catalog(pc)
     form_check = load("cad_design_form_check", SKILLS / "cad-design" / "scripts" / "form_check.py")
     build_axis = [0.0, 0.0, 1.0] if frame == "bed" else None  # form_check.version_geometry: R^T z of a bed placement

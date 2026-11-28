@@ -328,6 +328,36 @@ class BedStabilityTests(Checks):
         self.assertEqual(found["criterion"]["status"], "unknown")
         self.assertIn("bed contact area not assessed: no calibration or guideline", result.outcome(self.OBLIGATION)["coverage"])
 
+    def test_a_recorded_standard_state_is_quoted_on_the_advisory_and_changes_no_outcome(self) -> None:
+        documents = printed("TST-0101", {"strategy": "none"}, calibrations=[])
+        profile = documents["manufacturing/capabilities.yaml"]["profiles"][0]
+        plain = self.assess(copy.deepcopy(documents), geometry("TST-0101", stable([2.0, 2.0], TRIANGLE)))
+        profile["calibration_state"] = {"status": "standard",
+                                        "source": {"kind": "user", "reference": "factory calibration only", "origin": "the printer owner"}}
+        stated = self.assess(documents, geometry("TST-0101", stable([2.0, 2.0], TRIANGLE)))
+        self.assertEqual(self.outcome(stated, self.OBLIGATION), "not_assessed")
+        self.assertIn("standard built-in calibration; no guideline value covers this check", stated.outcome(self.OBLIGATION)["coverage"])
+        self.assertNotIn("guideline deviations apply", stated.outcome(self.OBLIGATION)["coverage"])
+        self.assertNotIn("standard built-in", plain.outcome(self.OBLIGATION)["coverage"])
+        self.assertEqual([(f["code"], f["outcome"], f["severity"], f.get("reason")) for f in stated.findings],
+                         [(f["code"], f["outcome"], f["severity"], f.get("reason")) for f in plain.findings])
+
+    def test_a_malformed_calibration_state_never_crashes_the_checks_and_changes_no_outcome(self) -> None:
+        """A snapshot is normalised without schema validation, so the state can be any YAML value."""
+        base = printed("TST-0101", {"strategy": "none"}, calibrations=[])
+        plain = pc.assess(MI.normalize_record(copy.deepcopy(base)), geometry("TST-0101", stable([2.0, 2.0], TRIANGLE)), today=TODAY)
+        for label, state in {"a scalar": "standard", "a list": ["standard"], "an unknown status": {"status": "factory"},
+                             "a list status": {"status": ["standard"]}}.items():
+            with self.subTest(label):
+                documents = copy.deepcopy(base)
+                documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibration_state"] = state
+                record = MI.normalize_record(documents)
+                self.assertEqual([p.severity for p in record.problems if p.code == "intent.calibration_state"], ["warning"])
+                result = pc.assess(record, geometry("TST-0101", stable([2.0, 2.0], TRIANGLE)), today=TODAY)
+                self.assertEqual(result.outcome(self.OBLIGATION)["outcome"], plain.outcome(self.OBLIGATION)["outcome"])
+                self.assertEqual([(f["code"], f["outcome"], f["severity"]) for f in result.findings],
+                                 [(f["code"], f["outcome"], f["severity"]) for f in plain.findings])
+
     def test_the_warp_footprint_is_the_larger_extent_of_the_contact_hull(self) -> None:
         warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(15))
         small = self.orient(stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]]), calibrations=[CONTACT, warp])
@@ -1653,14 +1683,14 @@ SUPPORT = "process.fdm.support@TST-0101/print"
 
 
 def guided(*, service: str | None = None, calibrations: tuple = (), parameters: dict | None = None,
-           dispositions: tuple = (), supports: Any = None, pin: tuple = ()) -> dict[str, Any]:
+           dispositions: tuple = (), supports: Any = None, pin: tuple = (), state: dict | None = None) -> dict[str, Any]:
     """A printed part on a 0.4 mm nozzle profile (unless `parameters` say otherwise) whose limits come from the shipped
     guideline sets unless `calibrations` hold them, with support strategy none and the use case's `service` class."""
     route = [FX.operation("print", "fdm", "tst_printer", output_state="printed", orientation=copy.deepcopy(APPROVED),
                           supports=supports or {"strategy": "none"})]
     profile = FX.capability_profile("tst_printer", "fdm", envelope=ENVELOPE, calibrations=list(calibrations),
                                     parameters=copy.deepcopy(NOZZLE_04 if parameters is None else parameters),
-                                    **({"guidelines": list(pin)} if pin else {}))
+                                    **({"guidelines": list(pin)} if pin else {}), **({"calibration_state": state} if state else {}))
     use = FX.use_case(**({"service_class": known(service)} if service else {}))
     documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[profile], materials=materials(),
                           product_data=FX.product(use), decisions=("DR-001", "DR-002"))
@@ -1723,6 +1753,28 @@ class GuidelineLimitTests(Checks):
                             mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
                         result = self.judged(data, service=service)
                         self.assertEqual(self.outcome(result, obligation), "pass", self.codes(result, obligation))
+
+    def test_a_recorded_standard_state_is_quoted_beside_each_guideline_measurement_and_changes_no_outcome(self) -> None:
+        """The coverage joins one fragment per measurement, so the quote must follow every one of them."""
+        state = FX.calibration_state("standard")
+        quote = "(standard built-in calibration; guideline deviations apply)"
+        wall = f"thinnest wall 3.000 mm >= guideline 1.2 mm {quote}"
+        cases = {"wall": (walled(3.0), GEOMETRY, (wall,)),
+                 "small_feature": (walled(3.0, pins=(3.0,)), GEOMETRY, (wall, f"smallest pin 3 mm >= guideline 2 mm {quote}")),
+                 "small_hole": (walled(3.0, holes=(3.0,)), GEOMETRY, (wall, f"smallest hole 3 mm >= guideline 2 mm {quote}")),
+                 "support": (underside(30.0), SUPPORT, ()),
+                 "failing wall": (walled(1.0), GEOMETRY, ()), "failing support": (underside(60.0), SUPPORT, ())}
+        for name, (data, obligation, said) in cases.items():
+            with self.subTest(name):
+                plain, stated = self.judged(data), self.judged(data, state=state)
+                self.assertEqual(self.outcome(stated, obligation), self.outcome(plain, obligation))
+                self.assertEqual(self.codes(stated, obligation), self.codes(plain, obligation))
+                coverage = stated.outcome(obligation)["coverage"]
+                for fragment in said:
+                    self.assertIn(fragment, coverage)
+                if self.outcome(plain, obligation) == "pass":
+                    self.assertIn("standard built-in calibration; guideline deviations apply", coverage)
+                    self.assertNotIn("standard built-in", plain.outcome(obligation)["coverage"])
 
     def test_a_guideline_fail_fails_in_every_service_class(self) -> None:
         for service in (*MI.SERVICE_CLASSES, None):
@@ -2775,8 +2827,10 @@ class GuidelineWithoutCalibrationTests(Checks):
     HOLE = deviation("hole_diameter_deviation", -0.5, 0.5)
     BED = stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]])
 
-    def warped(self, flatness: str, *, catalog: Any, calibrations: tuple = ()) -> Any:
+    def warped(self, flatness: str, *, catalog: Any, calibrations: tuple = (), state: dict | None = None) -> Any:
         documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
+        if state:
+            documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibration_state"] = state
         documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
             surface("datum_a", "datum", criteria=[_flatness_criterion(flatness)])]
         return self.assess(documents, geometry("TST-0101", self.BED), catalog=catalog)
@@ -2798,6 +2852,16 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(self.outcome(result, obligation), "pass")
         self.assertIn("uncalibrated: guideline value 0..1 mm used; calibrate to tighten", result.outcome(obligation)["coverage"])
         self.assertEqual(result.by_code("process.fdm.warp_uncalibrated"), [])
+
+    def test_a_recorded_standard_state_is_quoted_beside_the_guideline_value_and_changes_no_outcome(self) -> None:
+        state = {"status": "standard", "source": {"kind": "user", "reference": "factory calibration only", "origin": "the printer owner"}}
+        plain = self.warped("<= 1.5", catalog=accuracy_catalog(self.WARP))
+        stated = self.warped("<= 1.5", catalog=accuracy_catalog(self.WARP), state=state)
+        obligation = self.thermal(stated)
+        self.assertIn("standard built-in calibration; guideline deviations apply: guideline value 0..1 mm used; calibrate to tighten",
+                      stated.outcome(obligation)["coverage"])
+        self.assertEqual(self.outcome(stated, obligation), self.outcome(plain, obligation))
+        self.assertEqual(sorted(f["code"] for f in stated.findings), sorted(f["code"] for f in plain.findings))
 
     def test_a_guideline_warp_fails_a_flatness_limit_it_misses_with_basis_guideline(self) -> None:
         result = self.warped("<= 0.5", catalog=accuracy_catalog(self.WARP))
@@ -3180,10 +3244,10 @@ class GuidelineWithoutCalibrationTests(Checks):
     REAM = "process.reaming.allowance@TST-0101/ream"
 
     def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo", machine: bool = True,
-               stock: Any = None) -> Any:
+               stock: Any = None, state: dict | None = None, reamer_state: dict | None = None) -> Any:
         """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size. Without `machine` the print
         names no capability profile; with `stock` the print's setup.stock.material_profile is that value."""
-        documents = guided(service=service, calibrations=(CONTACT,))
+        documents = guided(service=service, calibrations=(CONTACT,), state=state)
         intent = documents["parts/TST-0101/part.yaml"]["intent"]
         if not machine:
             intent["route"][0]["capability"] = FX.unknown("no machine recorded")
@@ -3193,10 +3257,28 @@ class GuidelineWithoutCalibrationTests(Checks):
                                              "source": FX.source("user")}]
         intent["route"].append(FX.operation("ream", "reaming", "tst_reamer", targets=[{"feature": "bore"}]))
         intent["critical_surfaces"] = [surface("bore", "bore", "after_finish")]
-        documents["manufacturing/capabilities.yaml"]["profiles"].append(FX.capability_profile("tst_reamer", "reaming"))
+        documents["manufacturing/capabilities.yaml"]["profiles"].append(
+            FX.capability_profile("tst_reamer", "reaming", **({"calibration_state": reamer_state} if reamer_state else {})))
         data = facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [],
                                                          "measured": 12})
         return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
+
+    def test_the_missing_basis_advisory_of_a_finishing_operation_quotes_the_printers_state_not_its_own(self) -> None:
+        result = self.reamed(0.6, catalog=None, state=FX.calibration_state("standard"), reamer_state=FX.calibration_state("custom"))
+        coverage = result.outcome(self.REAM)["coverage"]
+        self.assertIn("standard built-in calibration; no guideline value covers this check", coverage)
+        self.assertNotIn("custom", coverage)
+        unstated = self.reamed(0.6, catalog=None, reamer_state=FX.calibration_state("standard"))
+        self.assertNotIn("standard built-in", unstated.outcome(self.REAM)["coverage"])
+
+    def test_a_custom_state_says_whether_its_calibration_is_ignored_or_out_of_scope(self) -> None:
+        state = FX.calibration_state("custom")
+        for flag, said in (("0", "custom calibration ignored while printer calibration is off; guideline deviations apply"),
+                           ("1", "custom calibration does not cover this check; guideline deviations apply")):
+            with self.subTest(flag=flag), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
+                result = self.assess(guided(service="functional_demo", state=state, calibrations=(CONTACT,)),
+                                     geometry("TST-0101", walled(3.0)), catalog=SHIPPED)
+                self.assertIn(said, result.outcome(GEOMETRY)["coverage"])
 
     def test_a_ream_allowance_after_printing_is_judged_against_the_guideline_hole_deviation(self) -> None:
         for allowance, expected in ((0.6, "pass"), (0.3, "fail")):  # the guideline puts the printed bore up to 0.5 mm oversize

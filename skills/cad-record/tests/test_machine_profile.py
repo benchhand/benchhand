@@ -29,6 +29,7 @@ SKILL = HERE.parent
 machine_profile = load("cad_record_machine_profile", SKILL / "scripts" / "machine_profile.py")
 LAMP_ARM = HERE.parents[2] / "examples" / "lamp-arm" / "hw"
 
+fx = load("cad_record_mi_fixtures_mp", SKILL / "tests" / "fixtures" / "manufacturing_intent.py")
 DATASHEET = {"kind": "datasheet", "reference": "Vendor tech specs", "url": "https://example.com/specs", "accessed": "2026-11-18"}
 
 
@@ -145,6 +146,64 @@ class CheckTests(Case):
         self.put(p)
         self.assertEqual(self.messages(), [])
 
+    def test_standard_calibration_state_without_measurements_is_accepted(self) -> None:
+        for status in ("standard", "unknown"):
+            with self.subTest(status=status):
+                self.put(profile(calibration_state={"status": status, "source": user("the owner runs the built-in calibration only")}))
+                self.assertEqual(self.messages(), [])
+
+    def test_custom_calibration_state_without_a_measured_calibration_is_an_advisory_not_an_error(self) -> None:
+        self.put(profile(calibration_state={"status": "custom", "source": user("the owner tuned the printer")}))
+        self.assertEqual(self.messages(), [])
+        found = machine_profile.advisories(self.hw)
+        self.assertTrue(any(m.startswith("hw/manufacturing/capabilities.yaml: profiles/0/calibration_state:")
+                            and "custom" in m and "bench" in m for m in found), found)
+
+    def test_check_prints_the_custom_state_advisory_and_exits_0(self) -> None:
+        self.put(profile(calibration_state={"status": "custom", "source": user("the owner tuned the printer")}))
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = machine_profile.main(["check", str(self.hw)])
+        self.assertEqual(code, 0)
+        self.assertIn("advisory: hw/manufacturing/capabilities.yaml: profiles/0/calibration_state:", out.getvalue())
+
+    MALFORMED_STATES = {
+        "an explicit null": None,
+        "a list source field": {"status": "standard", "source": {"kind": "user", "reference": "x", "origin": ["owner"]}},
+        "a mapping source field": {"status": "standard", "source": {"kind": "user", "reference": "x", "origin": {"who": "owner"}}},
+        "a scalar state": "standard",
+    }
+
+    def test_a_malformed_calibration_state_is_an_advisory_and_blocks_neither_check_nor_write(self) -> None:
+        for label, state in self.MALFORMED_STATES.items():
+            with self.subTest(label):
+                self.put(profile(calibration_state=state))
+                self.assertEqual(self.messages(), [])
+                out = io.StringIO()
+                with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                    self.assertEqual(machine_profile.main(["check", str(self.hw)]), 0)
+                self.assertIn("advisory: hw/manufacturing/capabilities.yaml: profiles/0/calibration_state", out.getvalue())
+
+    def test_an_error_in_another_field_still_blocks_beside_a_malformed_calibration_state(self) -> None:
+        bad = profile(calibration_state=None)
+        bad["envelope"]["y"] = known(200, "mm", {"kind": "estimate", "reference": "guess", "reason": "r"})
+        self.put(bad)
+        self.assertTrue(any("envelope/y" in m for m in self.messages()))
+
+    def test_a_calibration_state_citation_pulls_no_unrelated_artifact_error_into_the_gate(self) -> None:
+        """A requirement cites extra.pdf with a wrong sha256: its error is the requirement's, not the profiles'. A state
+        that cites the same file for its own provenance must not turn it into a profile error."""
+        documents = fx.tst_record()
+        documents["_sources"]["manufacturing/sources/extra.pdf"] = b"%PDF-1.4 extra\n"
+        wrong = fx.source("datasheet", artifact="manufacturing/sources/extra.pdf", sha256="1" * 64)
+        documents["requirements.yaml"]["requirements"][0].setdefault("acceptance", []).append(
+            fx.criterion("load", ">=", 1, "N", source=wrong))
+        hw = fx.write_record(self.hw.parent / "full" / "hw", documents)
+        self.assertEqual(machine_profile.check(hw), [], "the requirement's artifact error is none of the profiles'")
+        documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibration_state"] = {"status": "standard", "source": wrong}
+        fx.write_record(hw, documents)
+        self.assertEqual(machine_profile.check(hw), [])
+
     def test_pin_to_missing_set_is_refused(self) -> None:
         self.put(profile(guidelines=["no.such.set@1"]))
         found = self.messages()
@@ -252,6 +311,26 @@ class WriteTests(Case):
     def test_write_adds_a_profile_to_a_missing_file(self) -> None:
         self.assertEqual(self.run_write(self.answers(profile())), 0)
         self.assertEqual([p["id"] for p in self.stored()], ["bench"])
+
+    def test_write_saves_a_profile_with_a_custom_state_and_no_measurements(self) -> None:
+        answers = self.answers(profile(calibration_state={"status": "custom", "source": user("the owner tuned the printer")}))
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = int(machine_profile.main(["write", str(self.hw), str(answers)]))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.stored()[0]["calibration_state"]["status"], "custom")
+        self.assertIn("advisory: ", out.getvalue())
+
+    def test_write_saves_a_profile_with_a_malformed_calibration_state_and_prints_an_advisory(self) -> None:
+        for label, state in CheckTests.MALFORMED_STATES.items():
+            with self.subTest(label):
+                self.path.unlink(missing_ok=True)
+                out = io.StringIO()
+                with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                    code = int(machine_profile.main(["write", str(self.hw), str(self.answers(profile(calibration_state=state)))]))
+                self.assertEqual(code, 0)
+                self.assertEqual([p["id"] for p in self.stored()], ["bench"])
+                self.assertIn("advisory: hw/manufacturing/capabilities.yaml: profiles/0/calibration_state", out.getvalue())
 
     def test_write_refuses_failing_profile_and_leaves_file_unchanged(self) -> None:
         self.put(profile(id="other"))

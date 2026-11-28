@@ -110,6 +110,19 @@ class Variants(unittest.TestCase):
                          ("cad.readback@TST-0001", "cad.readback@TST-0002", "process.cnc.stock@TST-0002/turn"))
         self.assertEqual(result.earliest_stage, "parts")
 
+    def test_a_recorded_calibration_state_stales_no_obligation_and_no_accepted_evidence(self) -> None:
+        entries = [acceptance.entry(self.before, "EV-001", {"PN": "TST-0001", "operation": "print"}, "process_planned",
+                                    obligation="process.fdm.support@TST-0001/print", version="v1", manifest_sha256="a" * 64,
+                                    geometry=GEOMETRY)]
+        self.docs["manufacturing/evidence.yaml"] = {"entries": entries}
+        self.before = normalized(self.docs)
+
+        def state(docs: dict[str, Any]) -> None:
+            docs["manufacturing/capabilities.yaml"]["profiles"][0]["calibration_state"] = fx.calibration_state("standard")
+        result = self.compare(state)
+        self.assertEqual((dict(result.changed), result.stale_obligations, result.stale_evidence), ({}, {}, {}))
+        self.assertFalse(result.any)
+
     def test_a_route_change_stales_the_process_plan_and_its_consumers(self) -> None:
         def route(docs: dict[str, Any]) -> None:
             docs["manufacturing/capabilities.yaml"]["profiles"].append(fx.capability_profile("tst_printer_2", "fdm"))
@@ -949,6 +962,14 @@ class Selection(unittest.TestCase):
     def test_a_colour_change_keeps_a_confirmed_selection_current(self) -> None:
         after = copy.deepcopy(self.docs)
         self.part(after)["intent"]["color"] = "#FF8000"
+        self.assertEqual(acceptance.evidence.selection.input_digest(after), self.digest)
+        result = self.compare(after)
+        self.assertEqual((result.selection["changed"], result.selection["stale"]), (False, False))
+        self.assertEqual(result.reopened_decisions, {})
+
+    def test_a_recorded_calibration_state_keeps_a_confirmed_selection_current(self) -> None:
+        after = copy.deepcopy(self.docs)
+        after["manufacturing/capabilities.yaml"]["profiles"][0]["calibration_state"] = fx.calibration_state("standard")
         self.assertEqual(acceptance.evidence.selection.input_digest(after), self.digest)
         result = self.compare(after)
         self.assertEqual((result.selection["changed"], result.selection["stale"]), (False, False))

@@ -315,7 +315,7 @@ class _Record:
         service = intent.get("service")
         materials = [plain(self.record.materials[name].raw) if name in self.record.materials else {"missing": name}
                      for name in self.profiles(pn)]
-        capabilities = [plain(self.record.capabilities[op["capability"]].raw)
+        capabilities = [_without(plain(self.record.capabilities[op["capability"]].raw), "calibration_state")  # wording only: no check reads it
                         if op["capability"] in self.record.capabilities else {"missing": op["capability"]}
                         for op in route if isinstance(op.get("capability"), str)]
         capability_facts = [op.get("capability") for op in route if isinstance(op.get("capability"), Mapping)]

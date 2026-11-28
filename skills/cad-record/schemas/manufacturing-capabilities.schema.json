@@ -73,7 +73,14 @@
         "workholding": {"$ref": "manufacturing.schema.json#/$defs/text_fact"},
         "constraints": {"$ref": "manufacturing.schema.json#/$defs/texts"},
         "calibrations": {"type": "array", "items": {"$ref": "#/$defs/calibration"}},
-        "guidelines": {
+        "calibration_state": {
+          "description": "Whether the machine runs only its standard built-in calibration, a custom one, or is not known to. The state is a record that reports quote; it never sets a limit. standard and unknown need no measurement. custom with no entry in calibrations draws a warning, never an error: a custom calibration is claimed with its measured results. Guideline values govern whatever limit no calibration covers",
+          "type": "object", "additionalProperties": false, "required": ["status", "source"],
+          "properties": {
+            "status": {"enum": ["standard", "custom", "unknown"]},
+            "source": {"description": "who or what states it", "$ref": "manufacturing.schema.json#/$defs/source"}
+          }
+        },        "guidelines": {
           "description": "The manufacturing guideline sets (id@revision) that this profile's machine layer names. They rank above every set that scope selects, and a calibration ranks above them. Sets of the generic, material and nozzle layers resolve by their scope and need no pin. It has no default",
           "type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "manufacturing.schema.json#/$defs/guideline_ref"}
         },

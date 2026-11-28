@@ -462,6 +462,13 @@ class RecordDocuments(SchemaCase):
             "a calibration is scoped to a material": (lambda d: d["profiles"][0]["calibrations"][0]["scope"].pop("material"), False),
             "a template has no calibrations": (lambda d: d["profiles"][0].update(template=True, guidance=["x"]), False),
             "guidance only on templates": (lambda d: d["profiles"][1].update(guidance=["x"]), False),
+            "a standard calibration state": (lambda d: d["profiles"][1].update(calibration_state=fx.calibration_state("standard")), True),
+            "an unknown calibration state": (lambda d: d["profiles"][1].update(calibration_state=fx.calibration_state("unknown")), True),
+            "a custom calibration state": (lambda d: d["profiles"][0].update(calibration_state=fx.calibration_state("custom")), True),
+            "a calibration state outside the enum": (lambda d: d["profiles"][1].update(calibration_state=fx.calibration_state("factory")), False),
+            "a calibration state without its source": (lambda d: d["profiles"][1].update(calibration_state={"status": "standard"}), False),
+            "a calibration state with a stray key": (lambda d: d["profiles"][1].update(
+                calibration_state={**fx.calibration_state("standard"), "note": "x"}), False),
             "parameter as a bare number": (lambda d: d["profiles"][0]["parameters"].update(nozzle_diameter=0.4), False),
         })
 

@@ -649,6 +649,9 @@ class Calibration:
     valid_until: str | None
 
 
+CALIBRATION_STATES = ("standard", "custom", "unknown")
+
+
 @dataclass(frozen=True)
 class CapabilityProfile:
     id: str
@@ -660,7 +663,7 @@ class CapabilityProfile:
     materials: tuple[Mapping[str, Any], ...] | Fact
     calibrations: tuple[Calibration, ...]
     raw: Mapping[str, Any]
-
+    calibration_state: str | None = None  # standard, custom or unknown; None when the profile records none
 
 @dataclass(frozen=True)
 class MaterialProperty:
@@ -925,6 +928,13 @@ def _deepest_error(error: ValidationError, registry: SchemaRegistry, bases: Mapp
                key=lambda leaf: (-len(leaf.absolute_path), leaf.validator in {"oneOf", "anyOf"}, relevance(leaf)), default=error)
 
 
+def advisory_schema_path(rel: str, parts: Sequence[Any]) -> bool:
+    """Whether a schema error at `parts` (its JSON pointer segments) of document `rel` is an advisory: a profile's
+    calibration_state is wording only, so a malformed one never blocks a gate. The one severity rule of every schema reader."""
+    names = [str(part) for part in parts]
+    return rel == "manufacturing/capabilities.yaml" and names[:1] == ["profiles"] and names[2:3] == ["calibration_state"]
+
+
 def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
     """JSON-schema problems of every document (needs jsonschema), offline: every bundled schema resolves by $id."""
     from referencing.jsonschema import DRAFT202012  # noqa: PLC0415 - jsonschema's dependency, needed only to validate
@@ -943,8 +953,13 @@ def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
         _schema_bases(DRAFT202012.create_resource(validator.schema), "", bases)
         for top in sorted(validator.iter_errors(document), key=lambda e: [str(p) for p in e.absolute_path]):
             error = _deepest_error(top, registry, bases)
-            pointer = "/".join(str(part) for part in error.absolute_path)
-            problems.append(Problem("intent.schema", f"hw/{rel}", pointer, f"{pointer + ': ' if pointer else ''}{error.message}"))
+            parts = [str(part) for part in error.absolute_path]
+            pointer = "/".join(parts)
+            message = f"{pointer + ': ' if pointer else ''}{error.message}"
+            if advisory_schema_path(rel, parts):
+                problems.append(Problem("intent.calibration_state", f"hw/{rel}", pointer, message, "warning"))  # wording only
+            else:
+                problems.append(Problem("intent.schema", f"hw/{rel}", pointer, message))
     return problems
 
 
@@ -2043,10 +2058,75 @@ class _Reader:
             if limits is not None and source is not None:
                 calibrations.append(Calibration(data.get("id"), data.get("characteristic"), freeze(scope), limits, uncertainty,
                                                 int(result.get("samples", 0)), source, data.get("date"), data.get("valid_until")))
+        status = self.calibration_state(item, bool(calibrations), ident, path, pointer)
         if not isinstance(ident, str):
             return None
         return CapabilityProfile(ident, int(item.get("revision", 0)), process, item.get("provider"), bool(item.get("template")),
-                                 params, materials, tuple(calibrations), freeze(item))
+                                 params, materials, tuple(calibrations), freeze(item), status)
+
+    def calibration_state(self, item: Mapping[str, Any], measured: bool, ident: Any, path: str, pointer: str) -> str | None:
+        """The typed status of a profile's calibration_state: None when the key is absent, `unknown` (with a warning) when
+        it is null or not a mapping with a known status, since a snapshot is normalised without schema validation. Its
+        source is checked as an advisory (`state_source`). `custom` with no measured calibration warns. It never blocks."""
+        if "calibration_state" not in item:
+            return None
+        where = f"{pointer}/calibration_state"
+        state = _mapping(item["calibration_state"])
+        status = state.get("status")
+        if not isinstance(status, str) or status not in CALIBRATION_STATES:
+            self.problem("intent.calibration_state", path, where,
+                         f"{ident}: calibration_state is not a status of {', '.join(CALIBRATION_STATES)}; read as unknown", "warning")
+            status = "unknown"
+        self.state_source(state.get("source"), ident, path, f"{where}/source")
+        if status == "custom" and not measured:
+            self.problem("intent.calibration_state", path, where,
+                         f"{ident}: calibration_state custom has no measured calibration; record one in calibrations, "
+                         "or state standard or unknown", "warning")
+        return status
+
+    def state_source(self, data: Any, ident: Any, path: str, pointer: str) -> None:
+        """The provenance of a calibration_state, checked as advisories only. It is wording, so it is never registered:
+        no reference, no artifact in the source inventory, nothing that blocks a gate or moves a digest."""
+        if data is None:
+            return
+        for message in self._state_source_faults(data):
+            self.problem("intent.calibration_state", path, pointer, f"{ident}: calibration_state source {message}", "warning")
+
+    def _state_source_faults(self, data: Any) -> list[str]:
+        """What is wrong with the provenance `data` of a calibration_state, as messages (none when it checks out)."""
+        if not isinstance(data, Mapping):
+            return ["is not a mapping"]
+        wrong = sorted(name for name in Source.__dataclass_fields__ if data.get(name) is not None and not isinstance(data[name], str))
+        if wrong:
+            return [f"has non-text {', '.join(wrong)}; its provenance is not checked"]
+        found: list[str] = []
+        decision = data.get("decision")
+        if decision is not None and self.hw is not None and (why := self._decision_problem(decision)) is not None:
+            found.append(f"names decision {decision}, which {why}")
+        if data.get("artifact") is not None and self.hw is not None:
+            found += self._state_artifact_faults(data["artifact"], data.get("sha256"))
+        return found
+
+    def _state_artifact_faults(self, artifact: str, digest: str | None) -> list[str]:
+        """What is wrong with the artifact a calibration_state source names: outside hw/, missing, unreadable or changed."""
+        assert self.hw is not None
+        relative = Path(artifact)
+        target = self.hw / relative
+        if relative.is_absolute() or ".." in relative.parts:
+            return [f"names {artifact}, which is outside hw/"]
+        try:
+            present = target.is_file() and not target.is_symlink()
+        except OSError as error:  # the metadata lookup itself fails (a name too long, say): an advisory, as a read failure is
+            return [f"names hw/{artifact}, which cannot be read: {error.strerror or error}"]
+        if not present:
+            return [f"names hw/{artifact}, which is missing"]
+        if digest is None:
+            return []
+        try:
+            actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        except OSError as error:
+            return [f"names hw/{artifact}, which cannot be read: {error.strerror or error}"]
+        return [] if actual == digest else [f"names hw/{artifact}, which does not match its sha256"]
 
     def materials(self) -> Mapping[str, MaterialProfile]:
         path = "hw/manufacturing/materials.yaml"

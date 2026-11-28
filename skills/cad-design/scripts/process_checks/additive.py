@@ -57,12 +57,15 @@ def _no_basis(ctx: Context, findings: list[Draft], draft: Draft, what: str, othe
     default) a calibration is optional (benchhand-c7q.30): the check
     is not assessed, a minor finding that blocks no gate and is never a pass. On any other process, or with the stock
     material unidentified (no calibration or guideline could be looked up), it stays UNKNOWN with `otherwise` as its
-    coverage."""
+    coverage. The advisory quotes the calibration state of the printer's profile (`op`'s when a `process` is named,
+    else this operation's)."""
     findings.append(draft)
     if (process or _k(ctx)) not in PRINTERS or ctx.stock_material_id(op) is None:
         return UNKNOWN, otherwise
     draft.outcome, draft.severity, draft.reason = NOT_ASSESSED, "minor", NO_BASIS
-    return NOT_ASSESSED, f"{what} not assessed: {why}; print and inspect, or calibrate to assess"
+    label = ctx.state_label(ctx.profile_of(op) if process else ctx.profile)
+    detail = f" ({label}; no guideline value covers this check)" if label else ""
+    return NOT_ASSESSED, f"{what} not assessed: {why}{detail}; print and inspect, or calibrate to assess"
 
 
 def hole_class(axis: Any) -> str:

@@ -1713,5 +1713,73 @@ class EvidenceRunCli(BuiltRecord):
         self.assertIsNone(sleeper.poll(), "the run signals no stray")
 
 
+
+class RecordDigestStateTests(unittest.TestCase):
+    """A calibration_state is wording: it never moves the record digest a packet records. Every other edit does."""
+
+    @staticmethod
+    def files(**changes: Any) -> dict[str, bytes]:
+        profile = {**fx.capability_profile("tst_printer", "fdm"), **changes}
+        return {"manufacturing/capabilities.yaml": json.dumps({"profiles": [profile]}).encode("utf-8"),
+                "product.yaml": b"record_version: 2\n"}
+
+    def test_adding_a_calibration_state_keeps_the_record_digest(self) -> None:
+        self.assertEqual(evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard"))),
+                         evidence.record_digest(self.files()))
+
+    @staticmethod
+    def yaml_digest(text: str) -> str:
+        return evidence.record_digest({"manufacturing/capabilities.yaml": text.encode("utf-8"), "product.yaml": b"record_version: 2\n"})
+
+    BASE = "profiles:\n- id: p\n  calibrations:\n  - id: c\n    valid_until: {until}\n  title: Printer\n"
+
+    def test_a_quoted_date_and_an_unquoted_date_hash_differently(self) -> None:
+        """Consumers read '2026-12-31' as text and 2026-12-31 as a date, so a stale expiry must not pass as current."""
+        self.assertNotEqual(self.yaml_digest(self.BASE.format(until="'2026-12-31'")), self.yaml_digest(self.BASE.format(until="2026-12-31")))
+        self.assertNotEqual(self.yaml_digest(self.BASE.format(until="'12'")), self.yaml_digest(self.BASE.format(until="12")))
+
+    def test_a_comment_only_edit_keeps_the_digest_and_a_real_change_does_not(self) -> None:
+        text = self.BASE.format(until="2026-12-31")
+        self.assertEqual(self.yaml_digest("# a note\n" + text), self.yaml_digest(text))
+        self.assertNotEqual(self.yaml_digest(text.replace("Printer", "Other printer")), self.yaml_digest(text))
+
+    def test_a_duplicate_key_is_not_hidden_by_the_last_one_winning(self) -> None:
+        text = self.BASE.format(until="2026-12-31")
+        self.assertNotEqual(self.yaml_digest(text.replace("  title: Printer\n", "  title: Old\n  title: Printer\n")), self.yaml_digest(text))
+
+    def test_a_yaml_calibration_state_in_block_style_keeps_the_digest(self) -> None:
+        text = self.BASE.format(until="2026-12-31")
+        stated = text + "  calibration_state:\n    status: standard\n    source: {kind: user, reference: x, origin: owner}\n"
+        self.assertEqual(self.yaml_digest(stated), self.yaml_digest(text))
+
+    MERGED = ("defaults: &d\n  title: {title}\n  calibration_state: {{status: {status}, source: {{kind: user, reference: x, origin: owner}}}}\n"
+              "profiles:\n- {merge}: *d\n  id: p\n")
+    MERGE_KEYS = {"a merge key": "<<", "a tagged merge key": "!!merge <<"}
+
+    def test_a_calibration_state_brought_in_by_a_merge_keeps_the_digest(self) -> None:
+        for label, merge in self.MERGE_KEYS.items():
+            with self.subTest(label):
+                standard = self.yaml_digest(self.MERGED.format(title="Printer", status="standard", merge=merge))
+                self.assertEqual(self.yaml_digest(self.MERGED.format(title="Printer", status="custom", merge=merge)), standard)
+
+    def test_a_profile_field_brought_in_by_a_merge_changes_the_digest(self) -> None:
+        for label, merge in self.MERGE_KEYS.items():
+            with self.subTest(label):
+                self.assertNotEqual(self.yaml_digest(self.MERGED.format(title="Other", status="standard", merge=merge)),
+                                    self.yaml_digest(self.MERGED.format(title="Printer", status="standard", merge=merge)))
+
+    def test_a_merged_profile_field_that_the_profile_overrides_is_judged_by_its_effective_value(self) -> None:
+        """Overriding the merged title changes the effective profile; a merge-key source with the same effective profile hashes alike."""
+        merged = "profiles:\n- <<: {title: Printer}\n  id: p\n"
+        inline = "profiles:\n- title: Printer\n  id: p\n"
+        self.assertEqual(self.yaml_digest(merged), self.yaml_digest(inline))
+        self.assertNotEqual(self.yaml_digest("profiles:\n- <<: {title: Printer}\n  title: Own\n  id: p\n"), self.yaml_digest(merged))
+
+    def test_any_other_capability_edit_changes_the_record_digest(self) -> None:
+        stated = evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard")))
+        self.assertNotEqual(evidence.record_digest(self.files(calibration_state=fx.calibration_state("standard"), title="Other")), stated)
+        self.assertNotEqual(evidence.record_digest(self.files(provider="outsourced")), evidence.record_digest(self.files()))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -234,6 +234,7 @@ class Calibrated:
     reasons: tuple[str, ...]
     calibration: Any = None
     resolved: Any = None  # guidelines.Resolved when the status is guideline
+    state: str = ""  # what the profile's calibration_state says (Context.state_phrase), quoted beside a guideline value
 
     @property
     def known(self) -> bool:
@@ -245,7 +246,8 @@ class Calibrated:
         if self.status != "guideline":
             return ""
         lower, upper = self.limits.bounds
-        return f"uncalibrated: guideline value {lower:g}..{upper:g} {self.limits.units} used; calibrate to tighten"
+        lead = f"{self.state}: " if self.state else "uncalibrated: "
+        return f"{lead}guideline value {lower:g}..{upper:g} {self.limits.units} used; calibrate to tighten"
 
     @property
     def basis(self) -> str:
@@ -303,6 +305,7 @@ class Limit:
     calibrated: Calibrated
     resolved: Any = None  # guidelines.Resolved; None when no catalog was given or the operation has no capability profile
     base_mm: float | None = None  # the profile's line width, else its nozzle diameter; None when it states neither
+    state: str = ""  # what the profile's calibration_state says (Context.state_phrase), quoted on a guideline pass
 
     @property
     def status(self) -> str:
@@ -744,7 +747,7 @@ class Context:
         if found not in self.resolutions:
             self.resolutions.append(found)
         if found.status == "guideline" and found.operator == "between":
-            return Calibrated("guideline", characteristic, found.value, (), None, found)
+            return Calibrated("guideline", characteristic, found.value, (), None, found, self.state_phrase(profile))
         why = found.reasons or ((f"the guideline {characteristic} limit is {found.operator}, not an interval",)
                                 if found.status == "guideline" else (f"no guideline states {characteristic}",))
         status = instead.status if not instead.known else "unknown"
@@ -756,6 +759,25 @@ class Context:
         printer guideline settles a check and a calibration only tightens it (benchhand-c7q.30). A guideline value is
         noted as uncalibrated."""
         return PASS, _noted(coverage, cal.note) if cal.note else coverage
+
+    def state_label(self, profile: Any | None) -> str:
+        """What `profile`'s recorded calibration_state says, for a report to quote; empty when none is recorded or there is
+        no profile (it never falls back to this operation's). A custom calibration is either ignored (printer calibration is
+        off) or does not cover the check. Wording only: it never changes an outcome."""
+        status = profile.calibration_state if profile is not None else None
+        if status == "standard":
+            return "standard built-in calibration"
+        if status == "custom":
+            return ("custom calibration ignored while printer calibration is off" if self.calibration_off(profile)
+                    else "custom calibration does not cover this check")
+        if status == "unknown":
+            return "calibration state unknown"
+        return ""
+
+    def state_phrase(self, profile: Any | None = None) -> str:
+        """The state of `profile` (this operation's unless named) where a guideline value governs the check."""
+        label = self.state_label(profile or self.profile)
+        return f"{label}; guideline deviations apply" if label else ""
 
     def calibration_off(self, profile: Any | None = None) -> bool:
         """Whether the FDM calibration flag is off for this operation's capability profile (only FDM has the flag)."""
@@ -809,7 +831,7 @@ class Context:
         self.consulted.append(found)
         if found not in self.resolutions:
             self.resolutions.append(found)
-        return Limit(characteristic, side, cal, found, context.base_mm)
+        return Limit(characteristic, side, cal, found, context.base_mm, self.state_phrase())
 
     @property
     def service_class(self) -> str | None:
@@ -822,6 +844,8 @@ class Context:
         class (a calibration only tightens). An unknown limit is UNKNOWN (its callers report why)."""
         if limit.status == "unknown":
             return UNKNOWN, _noted(coverage, "limit unknown")
+        if limit.status == "guideline" and limit.state:
+            return PASS, _noted(coverage, limit.state)
         return PASS, coverage
 
     def capability_gate(self, kinds: Iterable[str] | None = None) -> Result | None:

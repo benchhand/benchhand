@@ -1245,5 +1245,42 @@ class FlowProfileFindings(unittest.TestCase):
         self.assertEqual([item for item in report["findings"] if item.get("code") == "flow.conflict"], [])
 
 
+class CalibrationStateAtTheGate(unittest.TestCase):
+    """A malformed calibration_state is wording: the validate CLI reports it as a warning and still exits 0."""
+
+    ABSENT = object()
+    STATES = {
+        "an explicit null": None,
+        "a scalar state": "standard",
+        "an unknown status": {"status": "calibrated-ish"},
+    }
+
+    def run_gate(self, state: Any) -> tuple[int, list[dict[str, Any]]]:
+        temporary = tempfile.TemporaryDirectory(prefix="cad-record-state-")
+        self.addCleanup(temporary.cleanup)
+        documents = fx.tst_record()
+        profile = documents["manufacturing/capabilities.yaml"]["profiles"][1]
+        if state is self.ABSENT:
+            profile.pop("calibration_state", None)
+        else:
+            profile["calibration_state"] = state
+        project = Path(temporary.name) / "project"
+        fx.write_record(project / "hw", documents)
+        result = subprocess.run([sys.executable, str(VALIDATOR), "--json", str(project)], capture_output=True, text=True, check=False)
+        return result.returncode, json.loads(result.stdout)["findings"]
+
+    def test_a_malformed_state_is_a_warning_and_the_gate_exits_zero(self) -> None:
+        base_code, base = self.run_gate(self.ABSENT)  # the fixture's own errors (no flow profile)
+        base_errors = [f["message"] for f in base if f["severity"] == "error"]
+        for label, state in self.STATES.items():
+            with self.subTest(label):
+                code, findings = self.run_gate(state)
+                self.assertEqual([f["message"] for f in findings if f["severity"] == "error"], base_errors)
+                self.assertEqual(code, base_code)
+                reported = [f for f in findings if "calibration_state" in f["message"] or f.get("code") == "intent.calibration_state"]
+                self.assertEqual({f["severity"] for f in reported}, {"warning"})
+                self.assertTrue(reported)
+
+
 if __name__ == "__main__":
     unittest.main()

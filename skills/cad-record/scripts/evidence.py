@@ -100,6 +100,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 
 mi = _load_module("cad_record_manufacturing_intent", SCRIPTS / "manufacturing_intent.py")
+yaml_loader = _load_module("cad_record_yaml_loader", SCRIPTS / "yaml_loader.py")
 impact = _load_module("cad_record_impact", SCRIPTS / "impact.py")
 layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
@@ -1345,10 +1346,84 @@ def record_inputs(hw: Path) -> dict[str, bytes]:
     return found
 
 
+CAPABILITIES_REL = "manufacturing/capabilities.yaml"
+
+
+def _typed(node: Any) -> Any:
+    """A YAML node as JSON that keeps what a reader tells apart: each scalar with its resolved tag (a quoted 2026-12-31 is
+    a str, a bare one a timestamp), each mapping as its pairs in document order (a duplicate key stays visible)."""
+    yaml = yaml_loader.yaml
+    if isinstance(node, yaml.ScalarNode):
+        return ["s", node.tag, node.value]
+    if isinstance(node, yaml.SequenceNode):
+        return ["q", node.tag, [_typed(item) for item in node.value]]
+    return ["m", node.tag, [[_typed(key), _typed(value)] for key, value in node.value]]
+
+
+MERGE_TAG = "tag:yaml.org,2002:merge"
+STATE_KEY = "calibration_state"
+
+
+def _merge_sources(value: Any) -> list[Any]:
+    """The mappings a merge key's value names: one mapping, or a sequence of them (a ValueError for anything else)."""
+    yaml = yaml_loader.yaml
+    sources = value.value if isinstance(value, yaml.SequenceNode) else [value]
+    if not all(isinstance(source, yaml.MappingNode) for source in sources):
+        raise ValueError("a merge key names something other than a mapping")
+    return sources
+
+
+def _resolved(node: Any) -> Any:
+    """`node` with every merge key applied, as a YAML loader reads it (an own key beats a merged one; of the sources of
+    one merge the first wins), and with each calibration_state key left out wherever it stands: the key is wording only,
+    and so is the copy of it that an anchor or a merge source carries. A duplicate own key stays visible, as in `_typed`."""
+    yaml = yaml_loader.yaml
+    if isinstance(node, yaml.SequenceNode):
+        return yaml.SequenceNode(node.tag, [_resolved(item) for item in node.value])
+    if not isinstance(node, yaml.MappingNode):
+        return node
+    inherited: dict[str, tuple[Any, Any]] = {}
+    own = []
+    for key, value in node.value:
+        if key.tag == MERGE_TAG:
+            for source in reversed(_merge_sources(value)):
+                for k, v in _resolved(source).value:
+                    inherited[json.dumps(_typed(k))] = (k, v)
+        else:
+            own.append((key, _resolved(value)))
+    taken = {json.dumps(_typed(key)) for key, _ in own}
+    pairs = [pair for ident, pair in inherited.items() if ident not in taken] + own
+    return yaml.MappingNode(node.tag, [(k, v) for k, v in pairs if not (isinstance(k, yaml.ScalarNode) and k.value == STATE_KEY)])
+
+
+def digest_form(rel: str, data: bytes) -> bytes:
+    """The bytes of record input `rel` that a freshness digest covers: its own, except that capabilities.yaml is read
+    as typed YAML nodes with its merge keys applied and without any calibration_state, which is wording only (no check
+    reads it, and no outcome moves with it), so recording or editing one, in a profile or in the anchor a merge takes it
+    from, never stales a packet or a stamp, while a profile field that a merge brings in does. Every other edit changes
+    it, a quoted date from a bare one and a duplicate key included; only comments and layout do not count. A file that does
+    not parse as a document with a profiles list stays as it is."""
+    if rel != CAPABILITIES_REL:
+        return data
+    yaml = yaml_loader.yaml
+    try:
+        root = yaml.compose(data.decode("utf-8"), Loader=yaml.SafeLoader)
+        if not isinstance(root, yaml.MappingNode):
+            return data
+        resolved = _resolved(root)
+        if not any(isinstance(key, yaml.ScalarNode) and key.value == "profiles" and isinstance(value, yaml.SequenceNode)
+                   for key, value in resolved.value):
+            return data
+        typed = _typed(resolved)
+    except (UnicodeError, ValueError, RecursionError, yaml.YAMLError):
+        return data
+    return b"capabilities-without-calibration-state:" + json.dumps(typed, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
 def record_digest(files: Mapping[str, bytes]) -> str:
-    """sha256 of record inputs (relative path -> bytes) as path-framed canonical JSON."""
-    return _canonical_sha({"record": sorted([rel, hashlib.sha256(data).hexdigest()] for rel, data in files.items()
-                                            if is_record_input(rel))})
+    """sha256 of record inputs (relative path -> bytes) as path-framed canonical JSON (digest_form of each)."""
+    return _canonical_sha({"record": sorted([rel, hashlib.sha256(digest_form(rel, data)).hexdigest()]
+                                            for rel, data in files.items() if is_record_input(rel))})
 
 
 def _safe_file(hw: Path, rel: str) -> Path:

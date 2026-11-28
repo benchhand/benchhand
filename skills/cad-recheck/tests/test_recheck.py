@@ -935,6 +935,79 @@ class RecheckHookTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("stamp is stale", result.stderr)
 
+    def stage_capabilities(self, **changes: Any) -> None:
+        profile = {**fx.capability_profile("tst_printer", "fdm"), **changes}
+        path = self.root / "hw" / "manufacturing" / "capabilities.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"profiles": [profile]}, indent=1) + "\n", encoding="utf-8")
+        self.git("add", "hw/manufacturing/capabilities.yaml")
+
+    def test_recording_a_calibration_state_keeps_the_stamp_and_its_packet_current(self) -> None:
+        self.stage_product("detail")
+        self.stage_capabilities()
+        self.stamp(passed=True, stage="detail")
+        self.stage_capabilities(calibration_state=fx.calibration_state("standard"))
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_neighbouring_capability_edit_still_makes_the_stamp_stale(self) -> None:
+        self.stage_product("detail")
+        self.stage_capabilities()
+        self.stamp(passed=True, stage="detail")
+        self.stage_capabilities(calibration_state=fx.calibration_state("standard"), title="Edited printer")
+        result = self.verify()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stale", result.stderr)
+
+    def stage_merged_capabilities(self, title: str, status: str) -> None:
+        path = self.root / "hw" / "manufacturing" / "capabilities.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"profiles:\n- &base\n  id: tst_base\n  revision: 1\n  title: {title}\n  process: fdm\n  provider: local\n"
+                        "  parameters: {}\n  materials: {status: unknown, reason: TST}\n  calibrations: []\n"
+                        f"  calibration_state: {{status: {status}, source: {{kind: user, reference: x, origin: owner}}}}\n"
+                        "- <<: *base\n  id: tst_printer\n", encoding="utf-8")
+        self.git("add", "hw/manufacturing/capabilities.yaml")
+
+    def test_a_calibration_state_brought_in_by_a_merge_keeps_the_stamp_current(self) -> None:
+        self.stage_product("detail")
+        self.stage_merged_capabilities("TST", "standard")
+        self.stamp(passed=True, stage="detail")
+        self.stage_merged_capabilities("TST", "custom")
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_profile_field_brought_in_by_a_merge_makes_the_stamp_stale(self) -> None:
+        self.stage_product("detail")
+        self.stage_merged_capabilities("TST", "standard")
+        self.stamp(passed=True, stage="detail")
+        self.stage_merged_capabilities("Edited", "standard")
+        result = self.verify()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stale", result.stderr)
+
+    def stage_dated_capabilities(self, date_text: str) -> None:
+        """A profile whose one calibration is dated `date_text`, written as the YAML text given (quoted or not)."""
+        calibration = fx.calibration("tst_cal", "hole_diameter_deviation", "tst_material", {"value": 0.1, "units": "mm"})
+        profile = fx.capability_profile("tst_printer", "fdm", calibrations=[calibration])
+        text = json.dumps({"profiles": [profile]}, indent=1)
+        dated = text.replace('"date": "2026-01-01"', f'"date": {date_text}')
+        self.assertNotEqual(text, dated)
+        path = self.root / "hw" / "manufacturing" / "capabilities.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(dated + "\n", encoding="utf-8")
+        self.git("add", "hw/manufacturing/capabilities.yaml")
+
+    def test_a_quoted_date_turned_into_a_date_is_refused_by_the_schema_not_stamped_current(self) -> None:
+        """The digest tells the two apart (test_evidence); the staged-schema gate now stops the unquoted date first."""
+        self.stage_product("detail")
+        self.stage_dated_capabilities('"2026-12-31"')
+        self.stamp(passed=True, stage="detail")
+        self.stage_dated_capabilities("2026-12-31")
+        result = self.verify()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("intent.schema", result.stderr)
+        self.assertIn("calibrations/0/date", result.stderr)
+
     def run_report(self, packet: Path | None, status: str = "pass") -> Path:
         """An `evidence.py run` report around the evidence packet in `packet` (null when the run stopped)."""
         report = {"kind": "cad-evidence-run", "schema_version": 1, "status": status, "scope": "commit", "stage": "detail",

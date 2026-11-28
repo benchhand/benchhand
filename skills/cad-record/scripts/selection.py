@@ -272,6 +272,11 @@ def input_digest(documents: Mapping[str, Any], *, calibration: bool | None = Non
     for rel in ("requirements.yaml", "interfaces.yaml", "manufacturing/capabilities.yaml", "manufacturing/materials.yaml"):
         if rel in documents:
             scoped[rel] = documents[rel]
+    capabilities = scoped.get("manufacturing/capabilities.yaml")
+    if isinstance(capabilities, Mapping) and isinstance(capabilities.get("profiles"), list):  # calibration_state is wording only
+        scoped["manufacturing/capabilities.yaml"] = {**capabilities, "profiles": [
+            {k: v for k, v in profile.items() if k != "calibration_state"} if isinstance(profile, Mapping) else profile
+            for profile in capabilities["profiles"]]}
     selection = documents.get("manufacturing/selection.yaml")
     if isinstance(selection, Mapping):
         scoped["manufacturing/selection.yaml#candidates"] = selection.get("candidates")

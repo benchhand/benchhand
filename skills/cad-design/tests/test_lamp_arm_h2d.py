@@ -246,6 +246,31 @@ class H2dCalibrationFlagTests(unittest.TestCase):
         self.assertIn("no guideline value covers min_bed_contact_area", found[0]["uncertainty"])
         self.assertEqual(found[0]["remedy"], "for a tighter limit, print a test coupon on the target printer")
 
+    def state_copy(self, status: str) -> Any:
+        """The record of the temporary copy with h2d's calibration_state set to `status`."""
+        path = self.hw / "manufacturing" / "capabilities.yaml"
+        data = yaml.safe_load(path.read_text())
+        data["profiles"][0]["calibration_state"] = {
+            "status": status, "source": {"kind": "user", "reference": "the owner runs the built-in calibration only",
+                                         "origin": "the printer owner"}}
+        path.write_text(yaml.safe_dump(data, sort_keys=False))
+        return load(self.hw)
+
+    def test_a_recorded_calibration_state_changes_wording_only(self) -> None:
+        before = self.judge(False)
+        self.record = self.state_copy("standard")
+        after = self.judge(False)
+
+        def grade(result: Any) -> tuple[list, list]:
+            return ([(o.id, result.outcome(o.id)["outcome"], result.outcome(o.id).get("reason")) for o in result.expected],
+                    sorted((f["code"], f["outcome"], f["severity"]) for f in result.findings))
+
+        self.assertEqual(grade(after), grade(before))
+        obligation = f"process.fdm.orientation@{PRINTED[0]}/print"
+        self.assertIn("standard built-in calibration; no guideline value covers this check", after.outcome(obligation)["coverage"])
+        self.assertNotIn("guideline deviations apply", after.outcome(obligation)["coverage"])
+        self.assertNotIn("standard built-in", before.outcome(obligation)["coverage"])
+
 
 if __name__ == "__main__":
     unittest.main()
