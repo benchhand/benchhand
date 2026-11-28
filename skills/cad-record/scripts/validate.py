@@ -127,10 +127,11 @@ def load_json(path: Path, findings: list[dict[str, str]]) -> Any:
 
 
 def validate_document(
-    data: Any, schema_name: str, path: str, findings: list[dict[str, str]]
+    data: Any, schema_name: str, path: str, findings: list[dict[str, str]], *, code: str | None = None
 ) -> bool:
     """Validate `data` against `schemas/<schema_name>`, with format checks, through the validator
-    schema_registry keeps for this checkout's schemas; each error becomes a finding at its JSON pointer."""
+    schema_registry keeps for this checkout's schemas; each error becomes a finding at its JSON pointer, with
+    `code` when given. Error paths mix int and str parts (a YAML key 1 beside a key a), so they sort as text."""
     schema_path = SCHEMAS / schema_name
     try:
         schema_registry.schema(SCHEMAS, schema_name)
@@ -138,10 +139,10 @@ def validate_document(
         findings.append(finding(str(schema_path), f"cannot load schema: {error}"))
         return False
     validator = schema_registry.document_validator(SCHEMAS, schema_name, formats=True)
-    errors = sorted(validator.iter_errors(data), key=lambda item: list(item.absolute_path))
+    errors = sorted(validator.iter_errors(data), key=lambda item: [str(part) for part in item.absolute_path])
     for item in errors:
         location = "/".join(str(part) for part in item.absolute_path)
-        findings.append(finding(path, f"{location + ': ' if location else ''}{item.message}"))
+        findings.append(finding(path, f"{location + ': ' if location else ''}{item.message}", code=code))
     return not errors
 
 
@@ -836,7 +837,23 @@ def _intent_finding(hw: Path, item: Mapping[str, Any]) -> dict[str, Any]:
     return {**item, "path": _below_hw(hw, str(item["path"]))}
 
 
-def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
+def _valid_freeze(product: Mapping[str, Any]) -> dict[str, Any]:
+    """`{"flow": {"frozen": ...}}` of a product that failed its schema, when the freeze itself is well formed (no
+    schema error at or below flow/frozen), else `{}`. An unrelated schema error, an invalid id for example, must not
+    strip the freeze: the acceptance anchor is still checked against it."""
+    flow = product.get("flow")
+    frozen = flow.get("frozen") if isinstance(flow, Mapping) else None
+    if not isinstance(frozen, Mapping):
+        return {}
+    try:
+        validator = schema_registry.document_validator(SCHEMAS, "product.schema.json", formats=True)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    own = [item for item in validator.iter_errors(product) if tuple(item.absolute_path)[:2] == ("flow", "frozen")]
+    return {} if own else {"flow": {"frozen": dict(frozen)}}
+
+
+def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any], valid: Mapping[str, bool],
                                part_records: Mapping[str, tuple[dict[str, Any], str]],
                                verification: list[dict[str, str]], findings: list[dict[str, Any]],
                                today: date | None = None) -> Any:
@@ -847,16 +864,24 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
     hw/manufacturing/ documents against their schemas, the normalization problems (references, units,
     routes, profiles, completeness), the waivers of its ledgers as of `today` (the current date when None),
     and verification rows that state a result its ledger does not hold (an error from the design freeze
-    on). Returns the normalized record."""
-    parsed = {name: data for name, data in documents.items() if data is not None}
+    on). Returns the normalized record.
+
+    The normalization reads every document by its schema's shape, so it sees only the documents that passed
+    their schema (as part_records holds only valid part records): a document that failed is already reported
+    by its schema finding, and is treated like an absent one rather than iterated as the wrong type."""
+    parsed = {name: data for name, data in documents.items() if valid.get(name)}
+    declared = documents.get("product.yaml")
+    if "product.yaml" not in parsed and isinstance(declared, Mapping) and "record_version" in declared:
+        # a product that fails its schema is not read, but its declared version still is: the version is checked on
+        # the document as written, so the finding names the version it declares rather than None
+        parsed["product.yaml"] = {"record_version": declared["record_version"], **_valid_freeze(declared)}
     parsed.update({f"parts/{pn}/part.yaml": part for pn, (part, _) in part_records.items()})
-    manufacturing = {}
     for rel, schema in intent.DOCUMENT_SCHEMAS:
         path = hw / rel
         if rel.startswith("manufacturing/") and "*" not in rel and path.is_file():  # the guideline wildcard is read below
-            manufacturing[rel] = (schema, load_yaml(path, findings))
-            if manufacturing[rel][1] is not None:
-                parsed[rel] = manufacturing[rel][1]
+            data = load_yaml(path, findings)
+            if validate_document(data, schema, str(path), findings, code=intent.SCHEMA_INVALID):  # None (an empty file) is checked too
+                parsed[rel] = data
     record = intent.normalize_record(parsed, hw=hw)
     findings.extend(_intent_finding(hw, problem.finding()) for problem in record.problems)
     if record.version != intent.RECORD_VERSION:
@@ -864,8 +889,6 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
     known = len(record.problems)
     record = intent.with_guidelines(record, hw)  # a guideline file that discovery refuses is an error, by name
     findings.extend(_intent_finding(hw, problem.finding()) for problem in record.problems[known:])
-    for rel, (schema, data) in manufacturing.items():
-        validate_document(data, schema, str(hw / rel), findings)
     findings.extend(_intent_finding(hw, problem.finding()) for problem in intent.plausibility_problems(parsed))  # warnings only
     product = documents.get("product.yaml")
     flow = product.get("flow") if isinstance(product, dict) else None
@@ -1171,7 +1194,6 @@ def validate_project(project_dir: Path, today: date | None = None) -> list[dict[
                 findings.append(finding(str(hw / "bom.csv"), f"BOM quantity of {pn} is {totals[pn]}, but assembly.yaml "
                                         f"places it {count} times ({', '.join(o.ref for o in placed)})"))
 
-    requirements = documents.get("requirements.yaml")
     verification = read_csv(hw / "verification.csv", CSV_COLUMNS["verification.csv"], findings)
     seen_requirement_ids: set[str] = set()
     for index, row in enumerate(verification, start=2):
@@ -1181,7 +1203,8 @@ def validate_project(project_dir: Path, today: date | None = None) -> list[dict[
         if req_id in seen_requirement_ids:
             findings.append(finding(row_path, f"duplicate verification for {req_id}"))
         seen_requirement_ids.add(req_id)
-    if isinstance(requirements, dict):
+    if valid.get("requirements.yaml"):
+        requirements = documents["requirements.yaml"]
         known: set[Any] = {item.get("id") for item in requirements.get("requirements", []) if isinstance(item, dict)}
         for req_id in sorted(known - seen_requirement_ids):
             findings.append(finding(str(hw / "verification.csv"), f"requirement {req_id} has no verification row"))
@@ -1205,7 +1228,7 @@ def validate_project(project_dir: Path, today: date | None = None) -> list[dict[
     if valid.get("product.yaml"):
         check_flow(documents["product.yaml"], str(hw / "product.yaml"), hw, part_records, findings)
     check_flow_profile(hw, documents, valid, part_records, findings)
-    record = check_manufacturing_intent(hw, documents, part_records, verification, findings, today)
+    record = check_manufacturing_intent(hw, documents, valid, part_records, verification, findings, today)
     check_existing(hw, record, inventory, findings)
     check_acceptance_anchor(hw, record, findings)
     check_design_rules(hw, documents, valid, part_records, inventory, findings)

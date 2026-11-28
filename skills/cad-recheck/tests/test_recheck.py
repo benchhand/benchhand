@@ -47,6 +47,9 @@ LAYOUT_GATE = ("layout", "parts")  # the `gate:` front matter of the decision th
 LAYOUT_MANIFEST = '{"label":"v1","files":{}}\n'
 LAYOUT_BUILD = ("v1", hashlib.sha256(LAYOUT_MANIFEST.encode()).hexdigest())
 STAMP_TIME = "2026-11-19T10:00:00Z"
+# The product.yaml keys that stay the same in every fixture project; stamp.py refuses a staged document that fails its schema.
+SCHEMA_VALID_PRODUCT = {"record_version": 2, "id": "test-project", "units": "mm", "regime": "iso",
+                        "general_tolerance": {"status": "unknown", "reason": "not recorded yet", "question": "Q-013"}}
 LEGACY_PRODUCT = "id: test-project\nflow:\n  stage: {stage}\n  recheck_from: {threshold}\n"
 
 
@@ -110,13 +113,13 @@ class RecheckHookTests(unittest.TestCase):
             self.add_profile(stage)
             return
         flow = {"stage": stage, **({"recheck_from": threshold} if threshold else {})}
-        data = {"record_version": 2, "id": "test-project", "flow": flow,
-                "use_case": acceptance.confirmed_use_case("appearance_concept")}
+        data = {**SCHEMA_VALID_PRODUCT, "flow": flow, "use_case": acceptance.confirmed_use_case("appearance_concept")}
         product.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
         self.add_profile(stage)
         assembly = self.root / "hw" / "assembly.yaml"
         if not assembly.exists():
-            assembly.write_text("operations: []\n", encoding="utf-8")
+            assembly.write_text("operations: []\nsubassemblies:\n  - {id: main, title: Main, parts: [PRT-0001]}\njoints: []\n",
+                                encoding="utf-8")
 
     def add_profile(self, stage: str, project: Path | None = None) -> None:
         """The project-start profile, due from SPECIFY on, in the product of `project` (default: the repository)."""
@@ -322,6 +325,96 @@ class RecheckHookTests(unittest.TestCase):
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.refused_gate(self.verify())
 
+    # Record documents that fail their schema by one wrong-typed key. normalize_record iterates or indexes
+    # each of these keys by the shape the schema promises, so it must never see them.
+    SCHEMA_INVALID = (
+        ("requirements.yaml", "requirements", 7),
+        ("requirements.yaml", "preferences", 7),
+        ("requirements.yaml", "assumptions", 7),
+        ("requirements.yaml", "open_questions", 7),
+        ("interfaces.yaml", "interfaces", 7),
+        ("interfaces.yaml", "interfaces", "text"),
+        ("interfaces.yaml", "interfaces", [1, 2]),
+        ("assembly.yaml", "operations", [1, 2]),
+        ("manufacturing/capabilities.yaml", "profiles", 7),
+        ("manufacturing/materials.yaml", "profiles", 7),
+        ("manufacturing/selection.yaml", "candidates", 7),
+        ("manufacturing/evidence.yaml", "entries", 7),
+        ("manufacturing/findings.yaml", "dispositions", 7),
+    )
+
+    def test_a_staged_schema_invalid_document_refuses_the_advance_naming_it(self) -> None:
+        """An advance that would pass is refused, by the stamp writer and by `--verify`, when a staged record
+        document fails its schema: exit 2, the file and the key on stderr, no traceback."""
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.assertEqual(self.verify().returncode, 0, "the project advances before the invalid document is staged")
+        packet = self.root / ".checks.json"  # built from the clean record, as the writer would take it
+        for rel, key, value in self.SCHEMA_INVALID:
+            with self.subTest(file=rel, key=key, value=value):
+                path = self.root / "hw" / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({key: value}), encoding="utf-8")
+                self.git("add", f"hw/{rel}")
+                writer = self.run_python(STAMP, "--stage", "layout", "--checks", str(packet), "--passed", cwd=self.root)
+                verified = self.verify()
+                self.git("rm", "-q", "-f", "--", f"hw/{rel}")
+                for what, result in (("writer", writer), ("verify", verified)):
+                    self.assertEqual(result.returncode, 2, f"{what}: {result.stdout}{result.stderr}")
+                    self.assertNotIn("Traceback", result.stderr, what)
+                    self.assertIn("intent.schema", result.stderr, what)  # the diagnostic contract's code
+                    self.assertIn(f"hw/{rel}", result.stderr, what)
+                    self.assertIn(key, result.stderr, what)
+
+    def test_a_staged_empty_document_is_judged_by_its_schema(self) -> None:
+        """An empty file or a null loads as None, an empty mapping as {}. None never passes a schema; {} passes
+        only where the schema requires nothing. The refusal names the file; a passing one is not a schema refusal."""
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        packet = self.root / ".checks.json"
+        schemas = Path(__file__).resolve().parents[2] / "cad-record" / "schemas"
+        for rel in ("manufacturing/capabilities.yaml", "manufacturing/materials.yaml", "manufacturing/selection.yaml",
+                    "manufacturing/evidence.yaml", "manufacturing/findings.yaml"):
+            required = json.loads((schemas / f"manufacturing-{Path(rel).stem}.schema.json").read_text(encoding="utf-8")).get("required")
+            for text in ("", "null\n", "{}\n"):
+                with self.subTest(file=rel, text=text):
+                    path = self.root / "hw" / rel
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(text, encoding="utf-8")
+                    self.git("add", f"hw/{rel}")
+                    writer = self.run_python(STAMP, "--stage", "layout", "--checks", str(packet), "--passed", cwd=self.root)
+                    verified = self.verify()
+                    self.git("rm", "-q", "-f", "--", f"hw/{rel}")
+                    for what, result in (("writer", writer), ("verify", verified)):
+                        self.assertNotIn("Traceback", result.stderr, what)
+                        if text != "{}\n" or required:
+                            self.assertEqual(result.returncode, 2, f"{what}: {result.stdout}{result.stderr}")
+                            self.assertIn("intent.schema", result.stderr, what)
+                            self.assertIn(f"hw/{rel} fails its schema", result.stderr, what)
+                        else:
+                            self.assertNotIn("fails its schema", result.stderr, what)
+
+    def test_a_staged_document_with_numeric_and_text_keys_is_refused_not_a_crash(self) -> None:
+        """Two schema errors under one mapping whose YAML keys are an integer and a string have error paths that
+        cannot be ordered as raw values. The writer, the index check and the committed check each refuse it
+        (exit 2, the schema code, no traceback)."""
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        packet = self.root / ".checks.json"
+        path = self.root / "hw" / "manufacturing" / "evidence.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("entries:\n  - fingerprints:\n      1: x\n      a: y\n", encoding="utf-8")
+        self.git("add", "hw/manufacturing/evidence.yaml")
+        writer = self.run_python(STAMP, "--stage", "layout", "--checks", str(packet), "--passed", cwd=self.root)
+        verified = self.verify()
+        self.git("commit", "-q", "-m", "stage the mixed-key evidence")
+        committed = self.run_python(STAMP, "--verify", "--committed", cwd=self.root)
+        for what, result in (("writer", writer), ("verify", verified), ("committed", committed)):
+            self.assertEqual(result.returncode, 2, f"{what}: {result.stdout}{result.stderr}")
+            self.assertNotIn("Traceback", result.stderr, what)
+            self.assertIn("intent.schema", result.stderr, what)
+            self.assertIn("hw/manufacturing/evidence.yaml", result.stderr, what)
+
     def test_a_malformed_gate_value_is_a_refusal_naming_the_record(self) -> None:
         written: list[Path] = []
         for what, value in (("a scalar", "layout"), ("a list", "[layout, parts]"), ("no to", "{from: layout}"),
@@ -466,16 +559,16 @@ class RecheckHookTests(unittest.TestCase):
         self.provisional_gate("parts", decision=None)
         (self.root / ".gitignore").write_text("/hw/versions/\n", encoding="utf-8")
         self.git("add", ".gitignore")
-        product_path = self.root / "hw/product.yaml"
-        product = json.loads(product_path.read_text(encoding="utf-8"))
-        product["flow"]["frozen"] = {"version": "v1"}
-        product_path.write_text(json.dumps(product), encoding="utf-8")
-        self.git("add", "hw/product.yaml")
         artifact = b"STEP fixture\n"
         (self.root / "hw/versions/v1/assembly.step").write_bytes(artifact)
         digest = self.stage_manifest("v1", json.dumps({"label": "v1", "files": {
             "assembly.step": hashlib.sha256(artifact).hexdigest(),
         }}))
+        product_path = self.root / "hw/product.yaml"
+        product = json.loads(product_path.read_text(encoding="utf-8"))
+        product["flow"]["frozen"] = {"version": "v1", "manifest_sha256": digest, "decision": "DR-001"}
+        product_path.write_text(json.dumps(product), encoding="utf-8")
+        self.git("add", "hw/product.yaml")
         write_test_decision(self.root / "hw", "DR-001", status="accepted", date=DAY, gate=LAYOUT_GATE,
                             gate_build=("v1", digest))
         self.git("add", "hw/decisions")
@@ -899,7 +992,7 @@ class RecheckHookTests(unittest.TestCase):
         """Stage a detail-stage product in the moved project and stamp it with --hw. Return the project."""
         project = self.move_project(subdirectory)
         (project / "hw" / "product.yaml").write_text(
-            json.dumps({"record_version": 2, "id": "test-project", "flow": {"stage": "detail", "recheck_from": "layout"},
+            json.dumps({**SCHEMA_VALID_PRODUCT, "flow": {"stage": "detail", "recheck_from": "layout"},
                         "use_case": acceptance.confirmed_use_case("appearance_concept")}, indent=1) + "\n", encoding="utf-8")
         self.add_profile("detail", project)
         self.git("add", subdirectory)
