@@ -7,10 +7,10 @@ overhang, cutter, kerf) belong to made parts. The function of a bought item is i
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
-from .core import FAIL, PASS, UNKNOWN, Context, Draft, Result, assembly_data, commodity_identity, intent, policy, text, unknown
+from .core import FAIL, PASS, UNKNOWN, Context, Draft, Result, commodity_identity, occurrence_ids, policy, text, unknown
 
 TRACEABLE = frozenset({"datasheet", "standard", "supplier", "test", "calibration"})
 
@@ -116,32 +116,13 @@ def dimensions(ctx: Context) -> Result:
                   "the interface fit are not compared here")
 
 
-def _occurrence_ids(ctx: Context) -> tuple[Callable[[Any], Any], tuple[Any, ...]]:
-    """The function that maps a reference to its occurrence id, and the occurrences of the part under check, both read
-    from the assembly inventory. When the inventory fails to build (validate reports why), references stand as written."""
-    data = assembly_data()
-    frames = {pn: part.raw.get("model_frame", data.DEFAULT_FRAME) for pn, part in ctx.record.parts.items()}
-    try:
-        inventory = data.normalize(intent().thaw(ctx.record.assembly_inventory), frames)
-    except data.InventoryError:
-        return (lambda ref: ref), ()
-
-    def occurrence_id(ref: Any) -> Any:
-        try:
-            return inventory.resolve(ref).id
-        except data.UnresolvedReference:
-            return None  # a reference the inventory cannot resolve names no occurrence, so it matches none
-
-    return occurrence_id, inventory.of(ctx.pn)
-
-
 def mounting(ctx: Context) -> Result:
     """Mounted: an interface or an operation names the part. A part placed twice or more needs an operation naming
     each occurrence as part or into, since an interface names the part number, not one placement."""
     pn = ctx.pn
     interfaces = list(ctx.mi.interfaces_of(ctx.record, pn))
     operations = ctx.record.assembly_operations
-    occurrence_id, placed = _occurrence_ids(ctx)
+    occurrence_id, placed = occurrence_ids(ctx)
     mine = [o.id for o in placed] if len(placed) > 1 else [pn, *(o.id for o in placed)]
     named: dict[str, set[str]] = {}
     for op in () if ctx.mi.is_fact(operations) else operations:

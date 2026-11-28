@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://srobroek.com/cad/schemas/motion-play-detail.schema.json",
+  "title": "Mechanism play evidence (evidence/play.json of a motion-play check bundle)",
+  "description": "The detail cad-motion play.py publishes beside its required-check packet: per interface the joint, the moving parts, the declared play components, the scenario samples and every play case (the nominal one and each corner of the play box), with what each case measured, what joint limits skipped and how much of each requested scenario was evaluated. A scenario with no evaluated pose leaves the obligation unknown",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interfaces", "limits"],
+  "properties": {
+    "interfaces": {
+      "type": "object",
+      "propertyNames": {"type": "string", "pattern": "^IF-[0-9]{3}$"},
+      "additionalProperties": {"$ref": "#/$defs/assessment"}
+    },
+    "limits": {"description": "what the method does not cover", "type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interface", "joint", "moving", "outcome", "components", "samples", "nominal", "cases", "unknown"],
+      "properties": {
+        "interface": {"type": "string", "pattern": "^IF-[0-9]{3}$"},
+        "joint": {"description": "the joint whose clearance the play is; null when none connects the parts directly", "type": ["string", "null"]},
+        "moving": {"description": "the occurrence references the joint's child subtree carries", "type": "array", "items": {"type": "string"}},
+        "outcome": {"enum": ["pass", "fail", "unknown"]},
+        "components": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false, "required": ["declared", "half_extreme", "units"],
+            "properties": {
+              "declared": {"description": "the declaration as read: a bound, not applicable with its reason, or undeclared", "type": "string"},
+              "half_extreme": {"description": "the offset to either side of the nominal pose", "type": "number"},
+              "units": {"type": ["string", "null"]}
+            }
+          }
+        },
+        "samples": {
+          "type": "object", "additionalProperties": false, "required": ["source", "count"],
+          "properties": {
+            "source": {"enum": ["scenario_cases", "per_joint_sweep"]},
+            "cases": {"type": "array", "items": {"type": "string"}},
+            "steps": {"type": "integer", "minimum": 2},
+            "count": {"type": "integer", "minimum": 0}
+          }
+        },
+        "nominal": {"oneOf": [{"$ref": "#/$defs/case"}, {"type": "null"}]},
+        "cases": {"type": "array", "items": {"$ref": "#/$defs/case"}},
+        "unknown": {"description": "why the obligation stays open", "type": "array", "items": {"type": "string"}}
+      }
+    },
+    "case": {
+      "description": "One play case over the scenario samples",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "status", "collisions", "collision_count", "violations", "failures", "closest",
+                   "samples_skipped_by_limits", "limit_findings", "scenarios"],
+      "properties": {
+        "label": {"description": "nominal, or the play extreme of each component (axial+ radial-u- ...)", "type": "string"},
+        "status": {"enum": ["clear", "fail", "unknown"]},
+        "collisions": {"type": "array", "items": {"allOf": [{"$ref": "#/$defs/where"}], "required": ["volume_mm3"],
+                                                  "properties": {"volume_mm3": {"type": "number"}}}},
+        "collision_count": {"type": "integer", "minimum": 0},
+        "violations": {"type": "array", "items": {"allOf": [{"$ref": "#/$defs/where"}],
+                                                  "required": ["clearance_mm", "required_mm", "requirement"],
+                                                  "properties": {"clearance_mm": {"type": "number"}, "required_mm": {"type": "number"},
+                                                                 "requirement": {"type": "string"}}}},
+        "failures": {"description": "kernel failures and scenarios with no evaluated pose", "type": "array", "items": {"type": "string"}},
+        "closest": {"oneOf": [{"allOf": [{"$ref": "#/$defs/where"}], "required": ["distance_mm"],
+                               "properties": {"distance_mm": {"type": "number"}}}, {"type": "null"}]},
+        "samples_skipped_by_limits": {"type": "integer", "minimum": 0},
+        "limit_findings": {"description": "the samples a joint limit kept from being measured (the first of them)",
+                           "type": "array", "items": {"$ref": "#/$defs/limit_skip"}},
+        "scenarios": {
+          "description": "each requested scenario (case:<ID>, or per_joint_sweep): its samples and how many were evaluated; a shared pose counts for every scenario that has it",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false, "required": ["samples", "evaluated"],
+            "properties": {"samples": {"type": "integer", "minimum": 0}, "evaluated": {"type": "integer", "minimum": 0}}
+          }
+        }
+      }
+    },
+    "where": {
+      "type": "object",
+      "required": ["sample", "source", "pose", "pair"],
+      "properties": {
+        "sample": {"type": "integer", "minimum": 0},
+        "source": {"type": "string"},
+        "pose": {"$ref": "#/$defs/pose"},
+        "pair": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string"}}
+      }
+    },
+    "pose": {"description": "joint id -> value", "type": "object", "additionalProperties": {"type": "number"}},
+    "limit_skip": {
+      "type": "object", "additionalProperties": false, "required": ["sample", "source", "pose", "findings"],
+      "properties": {
+        "sample": {"type": "integer", "minimum": 0},
+        "source": {"type": "string"},
+        "pose": {"$ref": "#/$defs/pose"},
+        "findings": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["check", "joint", "value", "min", "max", "unit", "message"],
+            "properties": {
+              "check": {"const": "joint_limit"},
+              "joint": {"type": "string"},
+              "value": {"type": "number"},
+              "min": {"type": "number"},
+              "max": {"type": "number"},
+              "unit": {"type": "string"},
+              "message": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

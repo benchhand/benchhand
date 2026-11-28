@@ -1064,14 +1064,15 @@ class PartRenderState(unittest.TestCase):
             render.build_scene(self.hw, self.version, ["front"], (400, 300), materials.MaterialTable.load(), path,
                                hide=[TARGET])
 
-    def test_ghosted_and_hidden_window_parts_are_see_through_and_a_ghosted_target_is_not_dropped(self) -> None:
+    def test_hiding_or_ghosting_a_window_part_leaves_its_recorded_transparency_to_the_visibility_check(self) -> None:
+        """Hide and ghost change pictures only: an opaque window stays an occluder, and a ghosted target is kept."""
         self.write()
         path = requirements(self.hw, FRONT)
-        for flags, see_through in (({}, []), ({"ghost": [WINDOW]}, [WINDOW]), ({"hide": [WINDOW]}, [WINDOW])):
+        for flags in ({}, {"ghost": [WINDOW]}, {"hide": [WINDOW]}, {"ghost": [TARGET]}):
             with self.subTest(flags=flags):
                 checks = render.build_scene(self.hw, self.version, ["front"], (400, 300), materials.MaterialTable.load(),
                                             path, **flags)[2]["visibility"]
-                self.assertEqual((checks[0]["see_through"], checks[0]["targets"]), (see_through, [TARGET]))
+                self.assertEqual((checks[0]["see_through"], checks[0]["targets"]), ([], [TARGET]))
 
 
 class VisibilityGrade(unittest.TestCase):
@@ -1289,25 +1290,23 @@ class BrowserRender(unittest.TestCase):
             self.assertEqual(png, Path(absent_summary["pngs"][view]).read_bytes(), view)
             self.assertEqual(hidden["views"][view]["render_inputs"]["hidden"], [OTHER])
 
-    def test_a_ghosted_part_is_drawn_but_never_occludes_a_target_behind_it(self) -> None:
+    def test_ghosting_or_hiding_an_opaque_window_changes_the_picture_but_never_the_visibility_evidence(self) -> None:
+        """The window is opaque: the target behind it fails whether the picture draws the window, ghosts it or leaves it out."""
         self.hw.mkdir(parents=True, exist_ok=True)
         requirements(self.hw, FRONT)
         box_version.write(self.hw, "v1", BOXES, box_parts("opaque"), record_version=2)
-        fractions = {}
+        evidence = {}
         pngs = {}
         for label, flags in (("opaque", ()), ("ghost", ("--ghost", WINDOW)), ("hide", ("--hide", WINDOW))):
             code, summary, metadata = self.scratch_render(label, "--version", "v1", "--views", "front", *flags)
             target = metadata["visibility"][0]["targets"][0]
-            fractions[label] = (code, target["silhouette_px"], target["visible_px"])
+            evidence[label] = (code, metadata["visibility"][0]["see_through"], target["silhouette_px"], target["visible_px"],
+                               target["status"])
             pngs[label] = Path(summary["pngs"]["front"]).read_bytes()
-        # A ghost stays in the picture, so the camera frames the window as it does for the opaque one; a hidden
-        # window is not framed, so the target fills more of the frame.
-        silhouette, hidden_silhouette = fractions["opaque"][1], fractions["hide"][1]
+        silhouette = evidence["opaque"][2]
         self.assertGreater(silhouette, 1000)
-        self.assertEqual(fractions["opaque"], (1, silhouette, 0))
-        self.assertEqual(fractions["ghost"], (0, silhouette, silhouette))
-        self.assertEqual(fractions["hide"], (0, hidden_silhouette, hidden_silhouette))
-        self.assertGreater(hidden_silhouette, silhouette)
+        for label in ("opaque", "ghost", "hide"):
+            self.assertEqual(evidence[label], (1, [], silhouette, 0, "fail"), label)
         self.assertEqual(len(set(pngs.values())), 3)  # the ghost is drawn: neither the opaque nor the hidden picture
 
     def test_the_part_yaml_default_hides_and_show_brings_the_part_back(self) -> None:
@@ -1330,20 +1329,6 @@ class BrowserRender(unittest.TestCase):
             hidden_png = Path(hidden_summary["pngs"][view]).read_bytes()
             self.assertEqual(hidden_png, Path(absent_summary["pngs"][view]).read_bytes(), view)
             self.assertNotEqual(hidden_png, Path(shown_summary["pngs"][view]).read_bytes(), view)  # the fixture does reach the floor
-
-    def test_a_large_hidden_window_does_not_set_the_visibility_camera(self) -> None:
-        self.hw.mkdir(parents=True, exist_ok=True)
-        boxes = {**BOXES, WINDOW: ((-300.0, -22.0, -300.0), (300.0, -20.0, 300.0))}
-        silhouettes = {}
-        for label, binding, flags in (("hidden", FRONT, ("--hide", WINDOW)),
-                                      ("alone", {**FRONT, "window": [TARGET]}, ())):
-            requirements(self.hw, binding)
-            box_version.write(self.hw, "v1" if label == "hidden" else "v2", boxes, box_parts("opaque"), record_version=2)
-            _, _, metadata = self.scratch_render(label, "--version", "v1" if label == "hidden" else "v2",
-                                                 "--views", "front", *flags)
-            silhouettes[label] = metadata["visibility"][0]["targets"][0]["silhouette_px"]
-        self.assertGreater(silhouettes["alone"], 1000)
-        self.assertEqual(silhouettes["hidden"], silhouettes["alone"])
 
     def test_a_ghosted_visibility_target_keeps_its_silhouette_and_is_seen_through_a_clear_window(self) -> None:
         self.hw.mkdir(parents=True, exist_ok=True)

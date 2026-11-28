@@ -696,13 +696,14 @@ async function boot() {
 
   // One mask pass into maskTarget: each part drawn by partMaterial(id), the floor by floorMaterial
   // (left out when null). Returns the RGBA bytes in bottom-up rows; maskClass reads a pixel's class.
-  function readMask(partMaterial, floorMaterial) {
+  function readMask(partMaterial, floorMaterial, ghostsOcclude = false) {
     const rgba = new Uint8Array(width * height * 4);
     world.background = null;
     const toneMapping = renderer.toneMapping;
     renderer.toneMapping = THREE.NoToneMapping;
     // A ghosted part is see-through: it, and every ghost edge, stays out of the mask unless it is the subject.
-    withObjectsHidden(ghostObjects((id) => partMaterial(id) !== maskSubject), () => {
+    // With `ghostsOcclude` (requirement evidence) a ghost is its physical self: only its edges, no surface, stay out.
+    withObjectsHidden(ghostObjects((id) => !ghostsOcclude && partMaterial(id) !== maskSubject), () => {
       withMaterials(partMaterial, floorMaterial, () => {
         renderer.setRenderTarget(maskTarget);
         renderer.setClearColor(0x000000, 1);
@@ -777,18 +778,18 @@ async function boot() {
   // direction, framed on its window and target parts; every other part is hidden and the floor left
   // out. Per target: its silhouette drawn alone, and the pixels where it stays the nearest surface
   // with the occluders drawn too, which are the other window and target parts except see-through ones.
+  // The evidence is the physical scene: a hidden or ghosted part is drawn and occludes unless its
+  // recorded transparency puts it in check.see_through. Hiding and ghosting change pictures only.
   function measureVisibility(check) {
     applyExplode(false);
-    for (const part of parts.values()) part.nodes.forEach((node, i) => { node.visible = part.rest[i].visible; });
+    for (const part of parts.values()) part.nodes.forEach((node, i) => { node.visible = part.rest[i].visible || part.hidden; });
     const drawn = [...new Set([...check.window, ...check.targets])];
     const unknown = drawn.filter((id) => !parts.has(id));
     if (unknown.length) throw new Error(`visibility check names unknown occurrences ${unknown.join(", ")}`);
     const seeThrough = new Set(check.see_through);
-    const framed = drawn.filter((id) => !parts.get(id).hidden);  // a hidden window part is not in the picture
-    const fit = fitCamera(camera, vertexSample((framed.length ? framed : drawn).flatMap((id) => parts.get(id).meshes)),
-      check.direction, 1, check.up);
+    const fit = fitCamera(camera, vertexSample(drawn.flatMap((id) => parts.get(id).meshes)), check.direction, 1, check.up);
     const nearestPixels = (target, shown) => withIsolatedSubject(shown, () => {
-      const rgba = readMask((id) => (id === target ? maskSubject : maskOther), null);
+      const rgba = readMask((id) => (id === target ? maskSubject : maskOther), null, true);
       let count = 0;
       for (let i = 0; i < rgba.length; i += 4) if (maskClass(rgba[i]) === 2) count += 1;
       return count;

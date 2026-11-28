@@ -22,8 +22,9 @@
 # schema-sha256 19cbfed3c714ae92a3b27ed8242078c59455f05ede808f77d92f9a9b51da70b7 skills/cad-record/schemas/manufacturing-guideline.schema.json
 # schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
 # schema-sha256 cecbad00c27eeebb9c3dbe27456aa4ca395507e60eac54d286ac8a1dc0915023 skills/cad-record/schemas/manufacturing-selection.schema.json
-# schema-sha256 e582e2845100b0fc5159954a56091179d6b3251d8df406c3939d3cb145ebea2d skills/cad-record/schemas/manufacturing.schema.json
+# schema-sha256 b7fb7520fa80956f7bd6db00db7857817f19f94d28ab8b51614505442628af91 skills/cad-record/schemas/manufacturing.schema.json
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
+# schema-sha256 07a622e0eee99f19dc5b09e17beac09136b4f30983c4a3bb39f0aed8e1e0f197 skills/cad-record/schemas/motion-play-detail.schema.json
 # schema-sha256 6e0abef226162aa78724b8958db0fb3464ddff043f7a287898ebe2af78bb5fb8 skills/cad-record/schemas/part.schema.json
 # schema-sha256 a925c74c84c3c9b3ef53579fdb4d41f295eef9af85ea8646996db71d5db66b36 skills/cad-record/schemas/preflight-report.schema.json
 # schema-sha256 1ec25097f8c2802056f7d44d0ad27f8d60a8561192d0c73d54457898c000de9f skills/cad-record/schemas/product.schema.json
@@ -328,6 +329,8 @@ __all__ = [
     "ManufacturingObligationId",
     "ManufacturingObligationOutcome",
     "ManufacturingOccurrenceRef",
+    "ManufacturingOpenCriteria",
+    "ManufacturingOpenCriteriaCriteriaItems",
     "ManufacturingOutcome",
     "ManufacturingPn",
     "ManufacturingPreferenceId",
@@ -376,6 +379,19 @@ __all__ = [
     "MotionPlan",
     "MotionPlanMaxStep",
     "MotionPlanSegmentsItems",
+    "MotionPlayDetail",
+    "MotionPlayDetailAssessment",
+    "MotionPlayDetailAssessmentComponentsAdditionalProperties",
+    "MotionPlayDetailAssessmentSamples",
+    "MotionPlayDetailCase",
+    "MotionPlayDetailCaseClosestOneOf0",
+    "MotionPlayDetailCaseCollisionsItems",
+    "MotionPlayDetailCaseScenariosAdditionalProperties",
+    "MotionPlayDetailCaseViolationsItems",
+    "MotionPlayDetailLimitSkip",
+    "MotionPlayDetailLimitSkipFindingsItems",
+    "MotionPlayDetailPose",
+    "MotionPlayDetailWhere",
     "Part",
     "PartAllowance",
     "PartComponent",
@@ -4033,12 +4049,40 @@ ManufacturingOutcome = Literal["pass", "fail", "unknown", "not_applicable", "not
 ManufacturingNotAssessedReason = Literal["calibration_off", "no_capability_profile", "no_guideline", "no_check"]
 
 
+class ManufacturingOpenCriteriaCriteriaItems(TypedDict):
+    """Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/open_criteria/properties/criteria/items
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    feature: Required[ManufacturingSemanticId]
+    criterion: Required[ManufacturingCriterion]
+
+
+class ManufacturingOpenCriteria(TypedDict):
+    """The criteria that alone leave an unknown outcome open: no check measures them on the model. A current pass ledger entry that names the obligation, one of these features as its subject feature and the same criterion settles that criterion; once every one is settled the obligation takes `otherwise`, the outcome of everything else the method covered. Evidence never settles a fail
+
+    Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/open_criteria
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    - if {"properties":{"otherwise":{"const":"not_assessed"}},"required":["otherwise"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
+
+    Field notes:
+    - criteria: minItems: 1
+    """
+    criteria: Required[list[ManufacturingOpenCriteriaCriteriaItems]]
+    otherwise: Required[Literal["pass", "not_applicable", "not_assessed"]]
+    reason: NotRequired[ManufacturingNotAssessedReason]
+
+
 class ManufacturingObligationOutcome(TypedDict):
     """Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/obligation_outcome
 
     Not expressible as types (see the schema):
     - additionalProperties: false
     - if {"properties":{"outcome":{"const":"not_assessed"}},"required":["outcome"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
+    - if {"required":["open_criteria"]} then {"properties":{"outcome":{"const":"unknown"}}}
 
     Field notes:
     - coverage: what the method covered, and what it did not
@@ -4052,6 +4096,7 @@ class ManufacturingObligationOutcome(TypedDict):
     uncertainty: NotRequired[ManufacturingText]
     coverage: Required[ManufacturingText]
     findings: NotRequired[ManufacturingSemanticIds]
+    open_criteria: NotRequired[ManufacturingOpenCriteria]
 
 
 # A stable finding code, such as process.fdm.overhang
@@ -5339,6 +5384,201 @@ class MotionPlan(TypedDict):
     coverage: NotRequired[Literal["full", "partial"]]
     coverage_reason: NotRequired[str]
     generated: NotRequired[str]
+
+
+class MotionPlayDetailAssessmentComponentsAdditionalProperties(TypedDict):
+    """Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/assessment/properties/components/additionalProperties
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - declared: the declaration as read: a bound, not applicable with its reason, or undeclared
+    - half_extreme: the offset to either side of the nominal pose
+    """
+    declared: Required[str]
+    half_extreme: Required[float]
+    units: Required[str | None]
+
+
+class MotionPlayDetailAssessmentSamples(TypedDict):
+    """Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/assessment/properties/samples
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - steps: minimum: 2
+    - count: minimum: 0
+    """
+    source: Required[Literal["scenario_cases", "per_joint_sweep"]]
+    cases: NotRequired[list[str]]
+    steps: NotRequired[int]
+    count: Required[int]
+
+
+# Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/case/properties/collisions/items
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: volume_mm3: float, sample: int, source: str, pose: MotionPlayDetailPose, pair: list[str]
+#
+# Field notes:
+# - sample: minimum: 0
+# - pair: minItems: 2; maxItems: 2
+MotionPlayDetailCaseCollisionsItems = Mapping[str, Any]
+
+
+# Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/case/properties/violations/items
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: clearance_mm: float, required_mm: float, requirement: str, sample: int, source: str, pose: MotionPlayDetailPose, pair: list[str]
+#
+# Field notes:
+# - sample: minimum: 0
+# - pair: minItems: 2; maxItems: 2
+MotionPlayDetailCaseViolationsItems = Mapping[str, Any]
+
+
+# Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/case/properties/closest/oneOf/0
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: distance_mm: float, sample: int, source: str, pose: MotionPlayDetailPose, pair: list[str]
+#
+# Field notes:
+# - sample: minimum: 0
+# - pair: minItems: 2; maxItems: 2
+MotionPlayDetailCaseClosestOneOf0 = Mapping[str, Any]
+
+
+# joint id -> value
+#
+# Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/pose
+MotionPlayDetailPose = Mapping[str, float]
+
+
+class MotionPlayDetailLimitSkipFindingsItems(TypedDict):
+    """Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/limit_skip/properties/findings/items
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    check: Required[Literal["joint_limit"]]
+    joint: Required[str]
+    value: Required[float]
+    min: Required[float]
+    max: Required[float]
+    unit: Required[str]
+    message: Required[str]
+
+
+class MotionPlayDetailLimitSkip(TypedDict):
+    """Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/limit_skip
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - sample: minimum: 0
+    - findings: minItems: 1
+    """
+    sample: Required[int]
+    source: Required[str]
+    pose: Required[MotionPlayDetailPose]
+    findings: Required[list[MotionPlayDetailLimitSkipFindingsItems]]
+
+
+class MotionPlayDetailCaseScenariosAdditionalProperties(TypedDict):
+    """Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/case/properties/scenarios/additionalProperties
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - samples: minimum: 0
+    - evaluated: minimum: 0
+    """
+    samples: Required[int]
+    evaluated: Required[int]
+
+
+class MotionPlayDetailCase(TypedDict):
+    """One play case over the scenario samples
+
+    Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/case
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - label: nominal, or the play extreme of each component (axial+ radial-u- ...)
+    - collision_count: minimum: 0
+    - failures: kernel failures and scenarios with no evaluated pose
+    - samples_skipped_by_limits: minimum: 0
+    - limit_findings: the samples a joint limit kept from being measured (the first of them)
+    - scenarios: each requested scenario (case:<ID>, or per_joint_sweep): its samples and how many were evaluated; a shared pose counts for every scenario that has it
+    """
+    label: Required[str]
+    status: Required[Literal["clear", "fail", "unknown"]]
+    collisions: Required[list[MotionPlayDetailCaseCollisionsItems]]
+    collision_count: Required[int]
+    violations: Required[list[MotionPlayDetailCaseViolationsItems]]
+    failures: Required[list[str]]
+    closest: Required[MotionPlayDetailCaseClosestOneOf0 | None]
+    samples_skipped_by_limits: Required[int]
+    limit_findings: Required[list[MotionPlayDetailLimitSkip]]
+    scenarios: Required[Mapping[str, MotionPlayDetailCaseScenariosAdditionalProperties]]
+
+
+class MotionPlayDetailAssessment(TypedDict):
+    """Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/assessment
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - interface: pattern: "^IF-[0-9]{3}$"
+    - joint: the joint whose clearance the play is; null when none connects the parts directly
+    - moving: the occurrence references the joint's child subtree carries
+    - unknown: why the obligation stays open
+    """
+    interface: Required[str]
+    joint: Required[str | None]
+    moving: Required[list[str]]
+    outcome: Required[Literal["pass", "fail", "unknown"]]
+    components: Required[Mapping[str, MotionPlayDetailAssessmentComponentsAdditionalProperties]]
+    samples: Required[MotionPlayDetailAssessmentSamples]
+    nominal: Required[MotionPlayDetailCase | None]
+    cases: Required[list[MotionPlayDetailCase]]
+    unknown: Required[list[str]]
+
+
+class MotionPlayDetail(TypedDict):
+    """Mechanism play evidence (evidence/play.json of a motion-play check bundle)
+
+    The detail cad-motion play.py publishes beside its required-check packet: per interface the joint, the moving parts, the declared play components, the scenario samples and every play case (the nominal one and each corner of the play box), with what each case measured, what joint limits skipped and how much of each requested scenario was evaluated. A scenario with no evaluated pose leaves the obligation unknown
+
+    Source: skills/cad-record/schemas/motion-play-detail.schema.json#
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - interfaces: propertyNames: {"type":"string","pattern":"^IF-[0-9]{3}$"}
+    - limits: what the method does not cover
+    """
+    interfaces: Required[Mapping[str, MotionPlayDetailAssessment]]
+    limits: Required[list[str]]
+
+
+# Source: skills/cad-record/schemas/motion-play-detail.schema.json#/$defs/where
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: sample: int, source: str, pose: MotionPlayDetailPose, pair: list[str]
+#
+# Field notes:
+# - sample: minimum: 0
+# - pair: minItems: 2; maxItems: 2
+MotionPlayDetailWhere = Mapping[str, Any]
 
 
 class PartManufactureMesh(TypedDict):

@@ -1757,6 +1757,35 @@ class GuidelineLimitTests(Checks):
         self.assertEqual(found["criterion"]["status"], "unknown")
         self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
 
+    def test_a_resin_flatness_criterion_is_an_explicit_open_finding_since_no_resin_check_measures_it(self) -> None:
+        """Only FDM registers thermal_distortion, the check that reads flatness: on resin the criterion is a coverage gap."""
+        datum = [surface("datum_a", "datum", criteria=[_flatness_criterion("<= 0.1")])]
+        documents = shaped("resin", [], material=POLYMER, critical=datum, supports={"strategy": "none"})
+        data = facts(faces=(face("f1", features=("datum_a",)),),
+                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
+        result = self.assess(documents, geometry("TST-0902", data))
+        obligation = "process.resin.geometry@TST-0902/form"
+        self.assertEqual(self.outcome(result, obligation), "unknown")
+        found = self.finding(result, "process.resin.criterion_unchecked")
+        self.assertEqual((found["outcome"], found["severity"], found["criterion"]["property"], found["subject"]["feature"]),
+                         ("unknown", "major", "flatness", "datum_a"))
+
+    def test_an_obligation_open_only_on_unchecked_criteria_names_them_and_its_outcome_without_them(self) -> None:
+        """Evidence can settle such a criterion (cad-record evidence.py), so the row says which ones are open and what the
+        obligation is once they are settled; an obligation open for any other reason names none."""
+        flat = _flatness_criterion("<= 0.1")
+        data = facts(faces=(face("f1", features=("datum_a",)), face("f2", features=("datum_b",))),
+                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
+        obligation = "process.resin.geometry@TST-0902/form"
+        for label, surfaces, expected in (
+                ("only the flatness", [surface("datum_a", "datum", criteria=[flat])],
+                 {"criteria": [{"feature": "datum_a", "criterion": flat}], "otherwise": "not_assessed", "reason": "no_guideline"}),
+                ("and a datum with no criterion", [surface("datum_a", "datum", criteria=[flat]), surface("datum_b", "datum")], None)):
+            with self.subTest(label):
+                documents = shaped("resin", [], material=POLYMER, critical=surfaces, supports={"strategy": "none"})
+                row = self.assess(documents, geometry("TST-0902", data)).outcome(obligation)
+                self.assertEqual((row["outcome"], row.get("open_criteria")), ("unknown", expected))
+
     def test_a_resin_wall_with_no_calibration_is_not_assessed_and_a_known_miss_still_fails(self) -> None:
         documents = shaped("resin", [], material=POLYMER, supports={"strategy": "none"})
         obligation = "process.resin.geometry@TST-0902/form"
@@ -3059,11 +3088,15 @@ class GuidelineWithoutCalibrationTests(Checks):
                 self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
                 self.assertIn(f"{what} not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
 
-    def received(self, *, catalog: Any, critical: bool = True) -> Any:
+    def received(self, *, catalog: Any, critical: bool = True, into: str = "TST-0101") -> Any:
         """An insert pressed into the 4.2 mm printed boss bore of TST-0101: a critical bore whose limits are 3.0..5.0 mm,
-        or, without `critical`, a bore no critical surface names."""
+        or, without `critical`, a bore no critical surface names. An `into` of `@body` names TST-0101's one explicit
+        occurrence."""
         documents = guided(service="functional_demo", calibrations=(CONTACT,))
-        documents["assembly.yaml"]["operations"] = [{"id": "insert_m3", "kind": "insert", "part": "TST-0101", "into": "TST-0101",
+        if into.startswith("@"):
+            documents["assembly.yaml"]["occurrences"] = [{"id": into[1:], "PN": "TST-0101"}]
+            documents["assembly.yaml"]["subassemblies"] = [{"id": "main", "title": "Main", "occurrences": [into]}]
+        documents["assembly.yaml"]["operations"] = [{"id": "insert_m3", "kind": "insert", "part": "TST-0101", "into": into,
                                                      "direction": [0, 0, -1], "acceptance": {"kind": "seated", "features": ["boss"]}}]
         if critical:
             documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
@@ -3081,10 +3114,12 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(note["recheck"]["families"], ["assembly.order", "process.fdm.trial"])
 
     def test_a_receiving_only_bore_never_passes_on_an_interval_alone(self) -> None:
-        result = self.received(catalog=SHIPPED, critical=False)
-        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
-        found = self.finding(result, "process.fdm.receiving_criterion_missing")
-        self.assertEqual((found["outcome"], found["subject"]["feature"]), ("unknown", "boss"))
+        for into in ("TST-0101", "@body"):  # the part number, or its occurrence reference
+            with self.subTest(into=into):
+                result = self.received(catalog=SHIPPED, critical=False, into=into)
+                self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+                found = self.finding(result, "process.fdm.receiving_criterion_missing")
+                self.assertEqual((found["outcome"], found["subject"]["feature"]), ("unknown", "boss"))
 
     def test_a_critical_receiving_bore_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
         result = self.received(catalog=None)

@@ -2008,7 +2008,9 @@ def packet_report(packet: dict[str, Any], bundle: Path, reused: bool) -> dict[st
     return {
         "status": packet["result"], "complete": packet["complete"], "bundle": str(bundle), "reused": reused,
         "outcomes": dict(sorted(counts.items())),
-        "open": [{"obligation": o["obligation"], "outcome": o["outcome"]} for o in packet["outcomes"] if o["outcome"] in ("fail", "unknown")],
+        "open": [{"obligation": o["obligation"], "outcome": o["outcome"],
+                  **({"open_criteria": o["open_criteria"]} if "open_criteria" in o else {})}
+                 for o in packet["outcomes"] if o["outcome"] in ("fail", "unknown")],
         "not_assessed": [{"obligation": o["obligation"], "reason": o.get("reason")}
                          for o in packet["outcomes"] if o["outcome"] == "not_assessed"],
         "findings": [{key: f[key] for key in ("id", "code", "severity", "outcome", "subject")}

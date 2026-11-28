@@ -21,12 +21,16 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
+
+from jsonschema import Draft202012Validator
 
 HERE = Path(__file__).resolve().parent
 SKILLS = HERE.parents[1]
 SCRIPT = HERE.parent / "scripts" / "play.py"
 FIXTURES = HERE / "fixtures"
+DETAIL_SCHEMA = SKILLS / "cad-record" / "schemas" / "motion-play-detail.schema.json"  # evidence/play.json
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
@@ -149,8 +153,11 @@ class PlayGeometryTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.folder.cleanup()
 
-    def run_play(self, name: str, play_block: dict, rotating: tuple[str, ...] = ()) -> tuple[int, dict]:
-        hw = fx.write_record(self.root / name / "hw", documents(play_block, rotating=rotating))
+    def run_play(self, name: str, play_block: dict, rotating: tuple[str, ...] = (),
+                 extra: dict[str, Any] | None = None) -> tuple[int, dict]:
+        docs = documents(play_block, rotating=rotating)
+        docs.update(extra or {})
+        hw = fx.write_record(self.root / name / "hw", docs)
         proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), "--hw", str(hw), "--parts-dir",
                                str(self.root / "geometry" / "parts"), "--steps", "5"],
                               capture_output=True, text=True, timeout=1800, check=False)
@@ -161,9 +168,34 @@ class PlayGeometryTests(unittest.TestCase):
             self.assertEqual(list(finding.iter_errors(item)), [], item["id"])
         for row in result["outcomes"]:
             self.assertEqual(list(outcome.iter_errors(row)), [], row["obligation"])
+        detail = Draft202012Validator(json.loads(DETAIL_SCHEMA.read_text(encoding="utf-8")))
+        self.assertEqual([e.message for e in detail.iter_errors(result["detail"])], [], "play.json matches its schema")
         self.assertEqual([o["id"] for o in result["expected"]],
                          ["motion.play@IF-001", *(f"motion.play@{pn}" for pn in rotating)])
         return proc.returncode, result
+
+    def test_a_named_scenario_whose_every_pose_a_limit_skips_keeps_the_obligation_unknown(self) -> None:
+        """The bridge follows the arm (J-002 = J-001) but stops at 5 deg. Case `near` stays inside that limit; every
+        pose of case `reach` (the arm held at 15 deg) puts the bridge past it, so nothing of `reach` is measured."""
+        bridge = {k: v for k, v in JOINTS[1].items() if k != "nominal"}
+        joints = [dict(JOINTS[0]), {**bridge, "type": "revolute", "min": -5, "max": 5,
+                                    "coupling": {"type": "linear", "driver": "J-001", "ratio": 1}}]
+        plans = {"motion/cases/near/plan.yaml": {"schema": 1, "segments": [{"id": "nudge", "to": {"J-001": 2}}]},
+                 "motion/cases/reach/plan.yaml": {"schema": 1, "start": {"J-001": 15}, "segments": [{"id": "held", "hold_frames": 1}]}}
+        play_block = {"axial": mm(0.4), "radial": mm(0.2), "angular": mm(0.2, "deg"), "scenario_cases": ["near", "reach"]}
+        docs = documents(play_block)
+        docs["assembly.yaml"]["joints"] = joints
+        code, result = self.run_play("reach", play_block, extra={**plans, "assembly.yaml": docs["assembly.yaml"]})
+        self.assertEqual((code, result["result"]), (1, "unknown"))
+        [row] = result["outcomes"]
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("scenario case reach: no pose evaluated", row["uncertainty"])
+        self.assertIn("J-002 value 15.0 deg is outside [-5.0, 5.0]", row["uncertainty"])
+        nominal = result["detail"]["interfaces"]["IF-001"]["nominal"]
+        self.assertEqual({name: (s["samples"], s["evaluated"]) for name, s in nominal["scenarios"].items()},
+                         {"case:near": (nominal["scenarios"]["case:near"]["samples"],) * 2, "case:reach": (1, 0)})
+        self.assertGreater(nominal["scenarios"]["case:near"]["samples"], 0)
+        self.assertEqual([f["joint"] for limit in nominal["limit_findings"] for f in limit["findings"]], ["J-002"])
 
     def test_play_extremes_turn_a_nominal_pass_into_a_collision(self) -> None:
         code, result = self.run_play("loose", {"axial": mm(2.0), "radial": mm(0.2), "angular": mm(0.1, "deg")})

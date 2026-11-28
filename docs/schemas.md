@@ -19,8 +19,9 @@ schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 s
 schema-sha256 19cbfed3c714ae92a3b27ed8242078c59455f05ede808f77d92f9a9b51da70b7 skills/cad-record/schemas/manufacturing-guideline.schema.json
 schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
 schema-sha256 cecbad00c27eeebb9c3dbe27456aa4ca395507e60eac54d286ac8a1dc0915023 skills/cad-record/schemas/manufacturing-selection.schema.json
-schema-sha256 e582e2845100b0fc5159954a56091179d6b3251d8df406c3939d3cb145ebea2d skills/cad-record/schemas/manufacturing.schema.json
+schema-sha256 b7fb7520fa80956f7bd6db00db7857817f19f94d28ab8b51614505442628af91 skills/cad-record/schemas/manufacturing.schema.json
 schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
+schema-sha256 07a622e0eee99f19dc5b09e17beac09136b4f30983c4a3bb39f0aed8e1e0f197 skills/cad-record/schemas/motion-play-detail.schema.json
 schema-sha256 6e0abef226162aa78724b8958db0fb3464ddff043f7a287898ebe2af78bb5fb8 skills/cad-record/schemas/part.schema.json
 schema-sha256 a925c74c84c3c9b3ef53579fdb4d41f295eef9af85ea8646996db71d5db66b36 skills/cad-record/schemas/preflight-report.schema.json
 schema-sha256 1ec25097f8c2802056f7d44d0ad27f8d60a8561192d0c73d54457898c000de9f skills/cad-record/schemas/product.schema.json
@@ -4786,17 +4787,50 @@ Source: `/$defs/obligation_outcome`
 | `uncertainty` | `ManufacturingText` | no |  |  |
 | `coverage` | `ManufacturingText` | yes |  | what the method covered, and what it did not |
 | `findings` | `ManufacturingSemanticIds` | no |  |  |
+| `open_criteria` | `ManufacturingOpenCriteria` | no |  |  |
 
 Constraints not expressed by the type:
 
 - additionalProperties: false
 - if {"properties":{"outcome":{"const":"not_assessed"}},"required":["outcome"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
+- if {"required":["open_criteria"]} then {"properties":{"outcome":{"const":"unknown"}}}
 
 ### ManufacturingOccurrenceRef
 
 Source: `/$defs/occurrence_ref`
 
 Alias of `AssemblyOccurrenceRef`
+
+### ManufacturingOpenCriteria
+
+Source: `/$defs/open_criteria`
+
+The criteria that alone leave an unknown outcome open: no check measures them on the model. A current pass ledger entry that names the obligation, one of these features as its subject feature and the same criterion settles that criterion; once every one is settled the obligation takes `otherwise`, the outcome of everything else the method covered. Evidence never settles a fail
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `criteria` | `list[ManufacturingOpenCriteriaCriteriaItems]` | yes |  |  |
+| `otherwise` | `Literal["pass", "not_applicable", "not_assessed"]` | yes |  |  |
+| `reason` | `ManufacturingNotAssessedReason` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- if {"properties":{"otherwise":{"const":"not_assessed"}},"required":["otherwise"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
+- `criteria`: minItems: 1
+
+### ManufacturingOpenCriteriaCriteriaItems
+
+Source: `/$defs/open_criteria/properties/criteria/items`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `feature` | `ManufacturingSemanticId` | yes |  |  |
+| `criterion` | `ManufacturingCriterion` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
 
 ### ManufacturingOutcome
 
@@ -5295,6 +5329,263 @@ Constraints not expressed by the type:
 - `to`: minProperties: 1
 - `hold_frames`: minimum: 1
 - `hold_frames`: maximum: 10000
+
+## motion-play-detail.schema.json
+
+- File: `skills/cad-record/schemas/motion-play-detail.schema.json`
+- `$id`: `https://srobroek.com/cad/schemas/motion-play-detail.schema.json`
+
+Mechanism play evidence (evidence/play.json of a motion-play check bundle)
+
+### MotionPlayDetail
+
+Source: schema root
+
+**Mechanism play evidence (evidence/play.json of a motion-play check bundle)**
+
+The detail cad-motion play.py publishes beside its required-check packet: per interface the joint, the moving parts, the declared play components, the scenario samples and every play case (the nominal one and each corner of the play box), with what each case measured, what joint limits skipped and how much of each requested scenario was evaluated. A scenario with no evaluated pose leaves the obligation unknown
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `interfaces` | `Mapping[str, MotionPlayDetailAssessment]` | yes |  |  |
+| `limits` | `list[str]` | yes |  | what the method does not cover |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `interfaces`: propertyNames: {"type":"string","pattern":"^IF-[0-9]{3}$"}
+
+### MotionPlayDetailAssessment
+
+Source: `/$defs/assessment`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `interface` | `str` | yes |  |  |
+| `joint` | `str \| None` | yes |  | the joint whose clearance the play is; null when none connects the parts directly |
+| `moving` | `list[str]` | yes |  | the occurrence references the joint's child subtree carries |
+| `outcome` | `Literal["pass", "fail", "unknown"]` | yes |  |  |
+| `components` | `Mapping[str, MotionPlayDetailAssessmentComponentsAdditionalProperties]` | yes |  |  |
+| `samples` | `MotionPlayDetailAssessmentSamples` | yes |  |  |
+| `nominal` | `MotionPlayDetailCase \| None` | yes |  |  |
+| `cases` | `list[MotionPlayDetailCase]` | yes |  |  |
+| `unknown` | `list[str]` | yes |  | why the obligation stays open |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `interface`: pattern: "^IF-[0-9]{3}$"
+
+### MotionPlayDetailAssessmentComponentsAdditionalProperties
+
+Source: `/$defs/assessment/properties/components/additionalProperties`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `declared` | `str` | yes |  | the declaration as read: a bound, not applicable with its reason, or undeclared |
+| `half_extreme` | `float` | yes |  | the offset to either side of the nominal pose |
+| `units` | `str \| None` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### MotionPlayDetailAssessmentSamples
+
+Source: `/$defs/assessment/properties/samples`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `source` | `Literal["scenario_cases", "per_joint_sweep"]` | yes |  |  |
+| `cases` | `list[str]` | no |  |  |
+| `steps` | `int` | no |  |  |
+| `count` | `int` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `steps`: minimum: 2
+- `count`: minimum: 0
+
+### MotionPlayDetailCase
+
+Source: `/$defs/case`
+
+One play case over the scenario samples
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `label` | `str` | yes |  | nominal, or the play extreme of each component (axial+ radial-u- ...) |
+| `status` | `Literal["clear", "fail", "unknown"]` | yes |  |  |
+| `collisions` | `list[MotionPlayDetailCaseCollisionsItems]` | yes |  |  |
+| `collision_count` | `int` | yes |  |  |
+| `violations` | `list[MotionPlayDetailCaseViolationsItems]` | yes |  |  |
+| `failures` | `list[str]` | yes |  | kernel failures and scenarios with no evaluated pose |
+| `closest` | `MotionPlayDetailCaseClosestOneOf0 \| None` | yes |  |  |
+| `samples_skipped_by_limits` | `int` | yes |  |  |
+| `limit_findings` | `list[MotionPlayDetailLimitSkip]` | yes |  | the samples a joint limit kept from being measured (the first of them) |
+| `scenarios` | `Mapping[str, MotionPlayDetailCaseScenariosAdditionalProperties]` | yes |  | each requested scenario (case:<ID>, or per_joint_sweep): its samples and how many were evaluated; a shared pose counts for every scenario that has it |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `collision_count`: minimum: 0
+- `samples_skipped_by_limits`: minimum: 0
+
+### MotionPlayDetailCaseClosestOneOf0
+
+Source: `/$defs/case/properties/closest/oneOf/0`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `distance_mm` | `float` | yes |  |  |
+| `sample` | `int` | yes |  |  |
+| `source` | `str` | yes |  |  |
+| `pose` | `MotionPlayDetailPose` | yes |  |  |
+| `pair` | `list[str]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- `sample`: minimum: 0
+- `pair`: minItems: 2
+- `pair`: maxItems: 2
+
+### MotionPlayDetailCaseCollisionsItems
+
+Source: `/$defs/case/properties/collisions/items`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `volume_mm3` | `float` | yes |  |  |
+| `sample` | `int` | yes |  |  |
+| `source` | `str` | yes |  |  |
+| `pose` | `MotionPlayDetailPose` | yes |  |  |
+| `pair` | `list[str]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- `sample`: minimum: 0
+- `pair`: minItems: 2
+- `pair`: maxItems: 2
+
+### MotionPlayDetailCaseScenariosAdditionalProperties
+
+Source: `/$defs/case/properties/scenarios/additionalProperties`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `samples` | `int` | yes |  |  |
+| `evaluated` | `int` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `samples`: minimum: 0
+- `evaluated`: minimum: 0
+
+### MotionPlayDetailCaseViolationsItems
+
+Source: `/$defs/case/properties/violations/items`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `clearance_mm` | `float` | yes |  |  |
+| `required_mm` | `float` | yes |  |  |
+| `requirement` | `str` | yes |  |  |
+| `sample` | `int` | yes |  |  |
+| `source` | `str` | yes |  |  |
+| `pose` | `MotionPlayDetailPose` | yes |  |  |
+| `pair` | `list[str]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- `sample`: minimum: 0
+- `pair`: minItems: 2
+- `pair`: maxItems: 2
+
+### MotionPlayDetailLimitSkip
+
+Source: `/$defs/limit_skip`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `sample` | `int` | yes |  |  |
+| `source` | `str` | yes |  |  |
+| `pose` | `MotionPlayDetailPose` | yes |  |  |
+| `findings` | `list[MotionPlayDetailLimitSkipFindingsItems]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `sample`: minimum: 0
+- `findings`: minItems: 1
+
+### MotionPlayDetailLimitSkipFindingsItems
+
+Source: `/$defs/limit_skip/properties/findings/items`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `check` | `Literal["joint_limit"]` | yes |  |  |
+| `joint` | `str` | yes |  |  |
+| `value` | `float` | yes |  |  |
+| `min` | `float` | yes |  |  |
+| `max` | `float` | yes |  |  |
+| `unit` | `str` | yes |  |  |
+| `message` | `str` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### MotionPlayDetailPose
+
+Source: `/$defs/pose`
+
+joint id -> value
+
+Alias of `Mapping[str, float]`
+
+### MotionPlayDetailWhere
+
+Source: `/$defs/where`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `sample` | `int` | yes |  |  |
+| `source` | `str` | yes |  |  |
+| `pose` | `MotionPlayDetailPose` | yes |  |  |
+| `pair` | `list[str]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- `sample`: minimum: 0
+- `pair`: minItems: 2
+- `pair`: maxItems: 2
 
 ## part.schema.json
 

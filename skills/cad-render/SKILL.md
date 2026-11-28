@@ -88,12 +88,12 @@ Repeating the same version and subject reuses its verified immutable bundle, inc
 
 A large reference or existing body (a mount-face envelope disc, a purchased housing) can cover the parts a
 view is about. Hide or ghost it; never write a custom renderer for that.
-- `--ghost <PN|occurrence-id>` draws the part translucent with visible edges. It never occludes the subject or a visibility target.
+- `--ghost <PN|occurrence-id>` draws the part translucent with visible edges. It never occludes the subject.
 - `--hide <PN|occurrence-id>` leaves the part out of every view and of the framing.
 - Both repeat. A PN names every occurrence of it, an id (`@ring-a` or `ring-a`) one. `--show <id>` forces a part visible that its default hides or ghosts.
 - `part.yaml` `render: shown|ghost|hidden` sets the default for a part. The flags override it. Without `render`, the renderer shows a part and ghosts existing equipment (`make_buy: existing`).
 - An unknown id, one id under two flags, a hidden `closeup-` or `part-` subject and a hidden visibility target exit 2.
-- A hidden or ghosted window part is see-through to the visibility check, like `transparency: transparent`.
+- Hiding and ghosting change pictures only. The visibility check draws a hidden or ghosted window part and judges it by its recorded `transparency`, so an opaque cover still occludes.
 - `render.json` lists `hidden` and `ghosted`, and each view's `render_inputs` holds both, so a change re-renders a view that a prior version would otherwise supply.
 - `cad-motion motion.py render` takes the same three flags for its frames and contact sheet.
 

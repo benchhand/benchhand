@@ -32,7 +32,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from .core import (FAIL, MAXIMUM, MINIMUM, NOT_APPLICABLE, NOT_ASSESSED, PASS, UNKNOWN, Calibrated, Context, Draft, Geometry, Limit,
-                   Result, angle, combine, gated, length, policy, source_dict, text, unknown)
+                   OpenCriterion, Result, angle, combine, gated, length, occurrence_ids, policy, source_dict, text, unknown)
 
 FINISHING_KINDS = frozenset({"reaming", "finishing", "cnc", "drilling"})  # operations that can restore a surface
 PRINTERS = frozenset({"fdm", "resin"})  # printer calibration is optional on these (benchhand-c7q.30)
@@ -811,10 +811,11 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
     return parts
 
 
-# The critical-surface properties another check of a printed route reads for every feature: flatness in thermal
-# distortion. Per feature, _critical adds the one it consumes itself: a bore's diameter (hole_fits) or the deviation of
-# its role. Every other criterion goes through _unchecked: the band-width check, else an explicit open finding.
-JUDGED_PROPERTIES = frozenset({"flatness"})
+# The critical-surface properties another check of a printed route reads for every feature, with the check that reads
+# it: flatness in thermal distortion. A property counts as judged only on a route whose handler table registers that
+# check (FDM, not resin). Per feature, _critical adds the one it consumes itself: a bore's diameter (hole_fits) or the
+# deviation of its role. Every other criterion goes through _unchecked: the band-width check, else an explicit open finding.
+JUDGED_PROPERTIES = {"flatness": "thermal_distortion"}
 # The criterion properties that name a dimensional size of the model (a length the print can miss), so a band of one in
 # a length unit can be compared with the as-printed spread. The table is explicit: a name is never read as a size from
 # its suffix (roughness_height is a roughness). A deviation, roughness or flatness is never a size; any property not
@@ -835,9 +836,12 @@ def _is_size(ctx: Context, prop: str, units: str | None) -> bool:
 
 
 def _judged_properties(ctx: Context) -> frozenset[str]:
-    """JUDGED_PROPERTIES plus join_distortion when a later joining operation judges the surface as made."""
+    """The JUDGED_PROPERTIES whose check this route kind registers, plus join_distortion when a later joining operation
+    judges the surface as made."""
+    handlers = HANDLERS.get(_k(ctx), {})
+    judged = frozenset(prop for prop, check in JUDGED_PROPERTIES.items() if check in handlers)
     joined = any(op.kind == "joining" for op in ctx.after())
-    return JUDGED_PROPERTIES | ({"join_distortion"} if joined else frozenset())
+    return judged | ({"join_distortion"} if joined else frozenset())
 
 
 def _length_mm(ctx: Context, value: Any, units: str | None) -> float | None:
@@ -879,7 +883,7 @@ def _unchecked(ctx: Context, g: Geometry, surface: Any, item: Mapping[str, Any],
                           f"whether the {surface.role} {feature} meets its {prop} criterion is not checked",
                           remedy=f"print and inspect {feature} for {prop}, or state it as a tolerance a check reads",
                           recheck=[f"process.{kind}.geometry"], feature=feature))
-    return UNKNOWN, f"{feature} {prop} not checked: no check measures it"
+    return OpenCriterion(f"{feature} {prop} not checked: no check measures it", feature, item)
 
 
 def _reason(findings: Sequence[Draft]) -> str:
@@ -957,9 +961,12 @@ def _receiving(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[s
     if mi.is_fact(operations):
         return []
     critical = ctx.critical_features()
+    occurrence_id, placed = occurrence_ids(ctx)
+    mine = {o.id for o in placed}
     parts: list[tuple[str, str]] = []
     for item in operations:
-        if item.get("into") != ctx.pn or item.get("kind") not in ("press_fit", "heat_set", "insert"):
+        into = item.get("into")  # the part number, or an occurrence of it the inventory resolves
+        if (into != ctx.pn and occurrence_id(into) not in mine) or item.get("kind") not in ("press_fit", "heat_set", "insert"):
             continue
         for feature in (item.get("acceptance") or {}).get("features") or ():
             hole = next((h for h in g.holes() if feature in (h.get("features") or ())), None)
@@ -1101,3 +1108,4 @@ FDM = {"orientation": gated(orientation), "geometry": gated(geometry), "support"
        "thermal_distortion": gated(thermal_distortion)}
 RESIN = {"orientation": gated(orientation), "geometry": gated(geometry), "support": gated(support),
          "drainage": drainage, "post_cure": gated(post_cure)}
+HANDLERS = {"fdm": FDM, "resin": RESIN}  # by route kind, as dispatch registers them

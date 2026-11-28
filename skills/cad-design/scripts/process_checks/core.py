@@ -121,6 +121,42 @@ class Result:
     uncertainty: str | None = None
     source: Mapping[str, Any] | None = None
     reason: str | None = None  # why a not_assessed result was not assessed; no other outcome carries one
+    # Set by combine when the result is UNKNOWN only through OpenCriterion parts: {"criteria": [{feature, criterion}],
+    # "otherwise": the outcome without them, "reason": its not_assessed reason}. Evidence of each criterion can settle it.
+    open_criteria: Mapping[str, Any] | None = None
+
+
+class OpenCriterion(tuple[str, str]):
+    """An UNKNOWN sub-check part for one criterion of one feature that no check measures on the model. It unpacks as
+    (UNKNOWN, coverage) like every part and remembers the feature and criterion, so combine can name what evidence of
+    that criterion alone would settle."""
+
+    feature: str
+    criterion: Mapping[str, Any]
+
+    def __new__(cls, coverage: str, feature: str, criterion: Mapping[str, Any]) -> OpenCriterion:
+        part = super().__new__(cls, (UNKNOWN, coverage))
+        part.feature, part.criterion = feature, criterion
+        return part
+
+
+def _outcome_of(parts: Sequence[tuple[str, str]]) -> str:
+    outcomes = {o for o, _ in parts if o != NOT_APPLICABLE}
+    return next((o for o in OUTCOME_ORDER if o in outcomes), NOT_APPLICABLE)
+
+
+def _open_criteria(outcome: str, parts: Sequence[tuple[str, str]], reason: str | None) -> dict[str, Any] | None:
+    """The open criteria of an UNKNOWN result whose every UNKNOWN part is an OpenCriterion, else None."""
+    open_parts = [p for p in parts if isinstance(p, OpenCriterion)]
+    rest = [p for p in parts if not isinstance(p, OpenCriterion)]
+    otherwise = _outcome_of(rest)
+    if outcome != UNKNOWN or not open_parts or otherwise in (UNKNOWN, FAIL):
+        return None
+    found: dict[str, Any] = {"criteria": tuple({"feature": p.feature, "criterion": p.criterion} for p in open_parts),
+                             "otherwise": otherwise}
+    if otherwise == NOT_ASSESSED:
+        found["reason"] = reason
+    return found
 
 
 def combine(method: str, parts: Iterable[tuple[str, str]], findings: list[Draft], *,
@@ -129,15 +165,16 @@ def combine(method: str, parts: Iterable[tuple[str, str]], findings: list[Draft]
     """A Result from sub-check (outcome, coverage) pairs: fail if any fails, else unknown if any is
     unknown, else not_assessed if any is, else pass; not_applicable sub-checks drop out, and all of them makes it
     not_applicable. An outcome outside those five raises HandlerError, so a stray value never counts as a pass. `reason` is
-    kept only when the result is not_assessed."""
+    kept only when the result is not_assessed. A result left UNKNOWN only by OpenCriterion parts names them in
+    `open_criteria`, with the outcome the other parts give."""
     parts = list(parts)
     for o, _ in parts:
         if o not in (*OUTCOME_ORDER, NOT_APPLICABLE):
             raise HandlerError(f"combine: {o!r} is not a check outcome")
-    outcomes = {o for o, _ in parts if o != NOT_APPLICABLE}
-    outcome = next((o for o in OUTCOME_ORDER if o in outcomes), NOT_APPLICABLE)
+    outcome = _outcome_of(parts)
     coverage = "; ".join(c for _, c in parts if c) or "nothing to assess"
-    return Result(outcome, method, coverage, findings, uncertainty, source, reason if outcome == NOT_ASSESSED else None)
+    return Result(outcome, method, coverage, findings, uncertainty, source, reason if outcome == NOT_ASSESSED else None,
+                  _open_criteria(outcome, parts, reason))
 
 
 def text(value: str) -> dict[str, str]:
@@ -447,6 +484,25 @@ def guideline_scope(record: Any, pn: str, catalog: Any, today: date) -> tuple[li
         reasons = [f"none of its {len(route)} route operations acts on a component of {pn} ({', '.join(ids)})" if route
                    else f"{pn} has no route operation"]
     return [], list(dict.fromkeys(reasons))
+
+
+def occurrence_ids(ctx: Context) -> tuple[Callable[[Any], Any], tuple[Any, ...]]:
+    """The function that maps a reference to its occurrence id, and the occurrences of the part under check, both read
+    from the assembly inventory. When the inventory fails to build (validate reports why), references stand as written."""
+    data = assembly_data()
+    frames = {pn: part.raw.get("model_frame", data.DEFAULT_FRAME) for pn, part in ctx.record.parts.items()}
+    try:
+        inventory = data.normalize(intent().thaw(ctx.record.assembly_inventory), frames)
+    except data.InventoryError:
+        return (lambda ref: ref), ()
+
+    def occurrence_id(ref: Any) -> Any:
+        try:
+            return inventory.resolve(ref).id
+        except data.UnresolvedReference:
+            return None  # a reference the inventory cannot resolve names no occurrence, so it matches none
+
+    return occurrence_id, inventory.of(ctx.pn)
 
 
 def parse_side(value: str) -> tuple[float, float, float] | None:

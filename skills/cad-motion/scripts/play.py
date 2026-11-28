@@ -53,7 +53,8 @@ motion between samples, intermediate offsets and other directions, loads beyond 
 compliance, contact forces, friction and dynamics.
 
 With --version the packet is published to hw/checks/<V>/motion-play/ (bundle.checks): result.json
-(schemas/manufacturing-check-result.schema.json) and evidence/play.json (every case and sample).
+(schemas/manufacturing-check-result.schema.json) and evidence/play.json (every case and sample,
+schemas/motion-play-detail.schema.json).
 Exit 0 = every obligation passes, 1 = a failure or an unknown, 2 = usage or input error.
 """
 
@@ -337,14 +338,16 @@ def joint_of(if_id: str, interface: Any, chain: Any) -> tuple[Any | None, str | 
 @dataclass
 class CaseResult:
     """One case over the scenario samples: collisions (undeclared overlap), clearance requirements
-    broken, kernel failures, the closest exact reading, and the samples a joint limit skipped."""
+    broken, kernel failures (a scenario with no evaluated pose among them), the closest exact reading,
+    the samples a joint limit skipped with their limit findings, and each scenario's samples and evaluated samples."""
 
     label: str
     collisions: list[dict[str, Any]] = field(default_factory=list)
     violations: list[dict[str, Any]] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
     closest: dict[str, Any] | None = None
-    limited: int = 0
+    limits: list[dict[str, Any]] = field(default_factory=list)
+    scenarios: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @property
     def failed(self) -> bool:
@@ -354,7 +357,8 @@ class CaseResult:
         return {"label": self.label, "status": "fail" if self.failed else "unknown" if self.failures else "clear",
                 "collisions": self.collisions[:MAX_LISTED], "collision_count": len(self.collisions),
                 "violations": self.violations[:MAX_LISTED], "failures": self.failures[:MAX_LISTED],
-                "closest": self.closest, "samples_skipped_by_limits": self.limited}
+                "closest": self.closest, "samples_skipped_by_limits": len(self.limits),
+                "limit_findings": self.limits[:MAX_LISTED], "scenarios": self.scenarios}
 
 
 @dataclass
@@ -368,7 +372,10 @@ class Evaluator:
     margins: Any
     checked: list[tuple[str, str]]
 
-    def run(self, chain: Any, label: str, samples: list[Any], moving: set[str]) -> CaseResult:
+    def run(self, chain: Any, label: str, samples: list[Any], moving: set[str],
+            groups: Mapping[str, Sequence[int]] | None = None) -> CaseResult:
+        """One case over `samples`. `groups` names the samples of each requested scenario (scenario_samples); a
+        scenario with no evaluated sample is a failure of the case, whatever the others measured."""
         crossing = [p for p in self.checked if (p[0] in moving) != (p[1] in moving)]
         required = {p: r for p, r in self.requirements.items() if (p[0] in moving) != (p[1] in moving)}
         sweep_plan = sweep.plan(chain, samples, crossing, self.fitted, required, 0.0, self.margins)
@@ -376,7 +383,8 @@ class Evaluator:
         result = CaseResult(label)
         for planned in sweep_plan.samples:
             if planned.transforms is None:
-                result.limited += 1
+                result.limits.append({"sample": planned.sample.index, "source": planned.sample.source,
+                                      "pose": sweep.rounded(planned.sample.values), "findings": planned.limits})
                 continue
             sample = planned.sample
             for k, index in enumerate(sweep_plan.selected):
@@ -398,7 +406,21 @@ class Evaluator:
                 if isinstance(outcome, pair_measure.Measured) and (
                         result.closest is None or distance < result.closest["distance_mm"]):
                     result.closest = {**where, "distance_mm": round(distance, 4)}
+        skipped = {row["sample"]: row for row in result.limits}
+        for name, indices in (groups or {"samples": [s.index for s in samples]}).items():
+            evaluated = [i for i in indices if i not in skipped]
+            result.scenarios[name] = {"samples": len(indices), "evaluated": len(evaluated)}
+            if evaluated:
+                continue
+            messages = dict.fromkeys(f["message"] for i in indices for f in skipped[i]["findings"])
+            result.failures.append(f"{_scenario_label(name)}: no pose evaluated: all {len(indices)} of its samples are "
+                                   "outside a joint limit" + (f" ({'; '.join(list(messages)[:MAX_LISTED])})" if messages else ""))
         return result
+
+
+def _scenario_label(name: str) -> str:
+    """`case:<ID>` as `scenario case <ID>`; the per-joint sweep or the pooled samples as they are named."""
+    return f"scenario case {name.removeprefix('case:')}" if name.startswith("case:") else name.replace("_", "-")
 
 
 @dataclass
@@ -438,29 +460,36 @@ class Assessment:
                 "cases": [case.report() for case in self.cases], "unknown": self.reasons()}
 
 
-def scenario_samples(chain: Any, hw: Path, cases: Sequence[str], steps: int) -> tuple[list[Any], dict[str, Any], list[str]]:
-    """(the samples, their description, why a scenario case could not be used): the frames of the
-    declared scenario cases, else the per-joint sweep; the nominal pose when nothing moves."""
+def scenario_samples(chain: Any, hw: Path, cases: Sequence[str],
+                     steps: int) -> tuple[list[Any], dict[str, Any], list[str], dict[str, list[int]]]:
+    """(the samples, their description, why a scenario case could not be used, the sample indices of each named
+    scenario): the frames of the declared scenario cases (`case:<ID>`), else the per-joint sweep (`per_joint_sweep`);
+    the nominal pose when nothing moves. A pose two cases share is measured once and counts for both."""
     problems: list[str] = []
     samples: list[Any] = []
-    seen: set[tuple[float, ...]] = set()
+    groups: dict[str, list[int]] = {}
+    seen: dict[tuple[float, ...], int] = {}
     for case in cases:
         try:
             frames = plan_module.expand(chain, plan_module.load(chain, hw, LAYOUT, case))
         except (plan_module.PlanError, pose.MotionError) as error:
             problems.append(f"scenario case {case}: {error}")
             continue
+        mine = groups.setdefault(f"case:{case}", [])
         for frame in frames:
             key = sweep.sample_key(chain, frame.settings)
             if key not in seen:
-                seen.add(key)
+                seen[key] = len(samples)
                 samples.append(sweep.Sample(len(samples), f"case:{case}#{frame.index}", dict(frame.settings), dict(frame.values)))
+            if seen[key] not in mine:
+                mine.append(seen[key])
     if cases:
-        return samples, {"source": "scenario_cases", "cases": list(cases), "count": len(samples)}, problems
+        return samples, {"source": "scenario_cases", "cases": list(cases), "count": len(samples)}, problems, groups
     samples = sweep.generate_poses(chain, steps, 0)
     if not samples:
         samples = [sweep.Sample(0, "nominal", {}, chain.complete({}))]
-    return samples, {"source": "per_joint_sweep", "steps": steps, "count": len(samples)}, problems
+    return (samples, {"source": "per_joint_sweep", "steps": steps, "count": len(samples)}, problems,
+            {"per_joint_sweep": [s.index for s in samples]})
 
 
 def assess_interface(if_id: str, interface: Any, chain: Any, hw: Path, steps: int, evaluator: Evaluator) -> Assessment:
@@ -475,14 +504,14 @@ def assess_interface(if_id: str, interface: Any, chain: Any, hw: Path, steps: in
     entry.bounds = play_bounds(if_id, interface, joint, joint.id in chain.couplings.laws)
     entry.unknown.extend(entry.bounds.unknown)
     play = interface.functional.raw.get("play") if isinstance(interface.functional.raw.get("play"), Mapping) else {}
-    samples, entry.samples, problems = scenario_samples(chain, hw, list(play.get("scenario_cases") or ()), steps)
+    samples, entry.samples, problems, groups = scenario_samples(chain, hw, list(play.get("scenario_cases") or ()), steps)
     entry.unknown.extend(problems)
     if not samples:
         entry.unknown.append(f"{if_id}: no scenario pose to evaluate")
         return entry
-    entry.nominal = evaluator.run(chain, "nominal", samples, moving)
+    entry.nominal = evaluator.run(chain, "nominal", samples, moving, groups)
     for case in corner_cases(joint, entry.bounds.halves):
-        entry.cases.append(evaluator.run(offset_chain(chain, joint, case.offset), case.label, samples, moving))
+        entry.cases.append(evaluator.run(offset_chain(chain, joint, case.offset), case.label, samples, moving, groups))
     return entry
 
 
