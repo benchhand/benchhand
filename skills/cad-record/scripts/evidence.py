@@ -399,6 +399,7 @@ class Assessment:
     selection: Mapping[str, Any]
     selection_approved: bool | None
     entry_results: Mapping[str, str] = field(default_factory=dict)  # each ledger entry's status for this version
+
     def results(self) -> dict[str, str]:
         return {ident: status.result for ident, status in self.statuses.items()}
 
@@ -963,11 +964,14 @@ CRITERION_KEYS = ("property", "operator", "value", "units")  # what makes two cr
 
 def criterion_scope(entry: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]] | None:
     """(feature, criterion) of a ledger entry about one criterion of one feature of the obligation it names: it names
-    the obligation, a subject feature and the criterion. None for an entry about a whole obligation or requirement.
+    the obligation, a subject feature that lies inside the obligation's anchor (not the obligation's own feature)
+    and the criterion. None for an entry about a whole obligation or requirement.
     Such an entry speaks only to that criterion: its pass settles that open criterion of a producer outcome
     (open_criteria) and never the obligation; its fail fails the obligation."""
     subject, criterion = _mapping(entry.get("subject")), entry.get("criterion")
-    if entry.get("obligation") and isinstance(subject.get("feature"), str) and isinstance(criterion, Mapping):
+    obligation = entry.get("obligation")
+    if obligation and isinstance(subject.get("feature"), str) and isinstance(criterion, Mapping) \
+            and mi.obligation_anchor(subject) != _anchor(str(obligation)):
         return subject["feature"], criterion
     return None
 
