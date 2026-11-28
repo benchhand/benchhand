@@ -637,7 +637,7 @@ def run():
         empty=zero_result(max_stress, max_displacement, loads)
         if empty: raise AnalysisError(empty)
         # The mode decides what the result reports: a fast case states no stress figure, safety factor or verdict.
-        result={{"run_id":JOB["run_id"], "part":JOB.get("part"), "occurrence":JOB.get("occurrence"), "solid_index":JOB.get("solid_index"), "mode":JOB["mode"], **reported(JOB["mode"], von_mises=stress, displacement=displacement, yield_mpa=float(JOB["material"]["yield"]), required_safety_factor=JOB.get("required_safety_factor")), "node_count":nodes, "element_count":elements, "solve_time_seconds":solve_seconds}}
+        result={{"run_id":JOB["run_id"], "part":JOB.get("part"), "occurrence":JOB.get("occurrence"), "solid_index":JOB.get("solid_index"), "mode":JOB["mode"], **reported(JOB["mode"], von_mises=stress, displacement=displacement, yield_mpa=(float(JOB["material"]["yield"]) if "yield" in JOB["material"] else None), required_safety_factor=JOB.get("required_safety_factor")), "node_count":nodes, "element_count":elements, "solve_time_seconds":solve_seconds}}
         result["solver_versions"]=JOB["solver_versions"]
         result["warnings"]=[]
         result["worst_case_pose"]={{"step":JOB["step"], **({{"pose":JOB["pose"]}} if JOB.get("pose") is not None else {{}}), **({{"evidence":JOB["evidence"]}} if JOB.get("evidence") is not None else {{}})}}

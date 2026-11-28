@@ -131,7 +131,7 @@ class StressCase(conditions_tests.SourcedFEACase):
                 written.append(name)
         marker = {"run_id": job["run_id"], "mode": job["mode"],
                   **fea_modes.reported(job["mode"], von_mises=[0.0, 1.0], displacement=plan["displacement"],
-                                       yield_mpa=job["material"]["yield"], required_safety_factor=None),
+                                       yield_mpa=job["material"].get("yield"), required_safety_factor=None),
                   "node_count": 1349 + position, "element_count": 600 + position, "solver_versions": job["solver_versions"],
                   "warnings": [], "retained_files": written,
                   "mesh_input_hashes": {"geometry_sha256": "a" * 64, "geo_sha256": "b" * 64},
@@ -392,13 +392,13 @@ class StrengthFromTheStudy(StressCase):
         self.assertEqual((convergence["status"], convergence["method"]), ("not_demonstrated", "two_mesh_stress_study"))
         self.assertTrue(any("stress_not_settled" in gap for gap in report["evidence"]["gaps"]), report["evidence"]["gaps"])
 
-    def test_a_stress_case_without_a_strength_criterion_leaves_strength_unknown(self) -> None:
+    def test_a_stress_case_without_a_strength_criterion_leaves_strength_not_assessed(self) -> None:
         self.plan = interior_plan()
         self.build(conditions_tests.documents())
         status, report = self.call(self.stress_case(1.0))
         self.assertEqual(status, 0, report)
         row, _ = self.strength(report)
-        self.assertEqual(row["outcome"], "unknown")
+        self.assertEqual(row["outcome"], "not_assessed")
         self.assertIn("acceptance.strength", row["uncertainty"])
 
     def test_a_study_outside_the_strength_rule_leaves_strength_unknown(self) -> None:

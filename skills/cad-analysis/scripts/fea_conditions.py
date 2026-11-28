@@ -32,7 +32,7 @@ import math
 import os
 import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
@@ -95,6 +95,7 @@ ENGINEERING_FAMILIES = ("engineering.strength", "engineering.stiffness", "engine
 # cutting route keeps its stock's state, so the stock profile's own process lies upstream of the part's route.
 FORMING = {"fdm": "printed", "resin": "printed", "casting": "cast", "moulding": "moulded"}
 LEVEL = "simulation_supported"
+NOT_ASSESSED_REASON = "no_check"  # cad-record's not_assessed reason for an obligation no check measures
 DECISION = re.compile(r"DR-[0-9]{3}")
 REQUIREMENT = re.compile(r"REQ-[0-9]{3}")
 # A decision (mesh convergence, effective isotropic model) counts only when its MADR status is this. It is
@@ -103,7 +104,8 @@ APPROVED_STATUS = "accepted"
 
 
 STUDY_BLOCK = re.compile(r"```mesh-convergence[ \t]*\r?\n(.*?)```", re.S)
-MONITORED = ("max_von_mises_mpa", "max_displacement_mm")  # what a study must show settled
+STIFFNESS_MONITORED = ("max_displacement_mm",)  # what a study must show settled for a stiffness-only case
+MONITORED = ("max_von_mises_mpa", *STIFFNESS_MONITORED)  # and for a case with a strength criterion
 MIN_REFINEMENTS = 3
 CONVERGENCE_LIMIT = 0.1  # the largest relative_change_max a study may claim for "settled"
 # Tolerances for vector comparisons: a study's force components against the case's, per application region
@@ -473,7 +475,17 @@ class _Assessor:
         return {"model": "effective_isotropic", "reasons": reasons, "orientation": conditions["orientation"],
                 "decision": model["decision"], "justification": model["justification"]}
 
+    def strength_named(self) -> bool:
+        """Whether the case names a strength acceptance key: only then does it need a yield and a settled peak stress."""
+        return bool((self.case.get("acceptance") or {}).get("strength"))
+
+    def needed_properties(self) -> dict[str, tuple[str, str]]:
+        """The profile properties the solve takes: the yield only when the case names a strength criterion."""
+        return {key: found for key, found in PROPERTIES.items() if key != "yield" or self.strength_named()}
+
     def allowable_required(self) -> bool:
+        if not self.strength_named():
+            return False
         service = self.record.use_case.service_class
         if not service.known or service.value == "unknown":
             self.gaps.append("the use case's service class is unknown, so whether a yield allowable is required is unknown")
@@ -526,7 +538,7 @@ class _Assessor:
 
     def properties(self, profile: Any, conditions: Mapping[str, Any], allowable: bool) -> tuple[list[dict[str, Any]], dict[str, float]]:
         rows, values = [], {}
-        for key, (name, units) in PROPERTIES.items():
+        for key, (name, units) in self.needed_properties().items():
             needs_allowable = allowable and key == "yield"
             found = self.mi.resolve_property(profile, name, orientation=conditions["orientation"],
                                              conditioning=conditions["conditioning"], temperature=conditions["temperature"],
@@ -708,7 +720,8 @@ class _Assessor:
             return {"status": "not_demonstrated", "decision": ref, "problems": problems, "reason": "; ".join(problems)}
         problems += study_problems(study, geometry=geometry, profile_id=profile.id, profile_sha=profile_sha,
                                    supports=self.case["fixed_faces"], loads=self.case["loads"],
-                                   mesh_size=self.case["mesh_size"])
+                                   mesh_size=self.case["mesh_size"],
+                                   monitored=MONITORED if self.strength_named() else STIFFNESS_MONITORED)
         if problems:
             return {"status": "not_demonstrated", "decision": ref, "problems": problems, "reason": "; ".join(problems)}
         return {"status": "demonstrated", "decision": ref,
@@ -914,9 +927,10 @@ def _number(value: Any) -> float | None:
 
 
 def study_problems(study: Mapping[str, Any], *, geometry: str | None, profile_id: str, profile_sha: str, supports: Any,
-                   loads: Any, mesh_size: float) -> list[str]:
+                   loads: Any, mesh_size: float, monitored: Sequence[str] = MONITORED) -> list[str]:
     """Why a study does not demonstrate convergence of this case (empty when it does): it must be bound to this
-    geometry, material, supports, forces per region and mesh, and its refinements must meet its own criterion."""
+    geometry, material, supports, forces per region and mesh, and its refinements must meet its own criterion
+    for each `monitored` series. A case with no strength criterion monitors the displacement only."""
     problems: list[str] = []
     if geometry is None:
         problems.append("the case's geometry file cannot be read to bind the study to it")
@@ -938,7 +952,7 @@ def study_problems(study: Mapping[str, Any], *, geometry: str | None, profile_id
     if tolerance is None or not 0 < tolerance <= CONVERGENCE_LIMIT:
         problems.append(f"criterion.relative_change_max must be a number above 0 and at most {CONVERGENCE_LIMIT:g}")
         tolerance = None
-    problems += _refinement_problems(study.get("refinements"), mesh_size, tolerance)
+    problems += _refinement_problems(study.get("refinements"), mesh_size, tolerance, monitored)
     return problems
 
 
@@ -956,26 +970,26 @@ def _load_problems(study_loads: Any, case_loads: Any) -> list[str]:
     return []
 
 
-def _refinement_series(rows: list[Any]) -> tuple[list[float], dict[str, list[float]]] | str:
+def _refinement_series(rows: list[Any], monitored: Sequence[str]) -> tuple[list[float], dict[str, list[float]]] | str:
     """The sizes and the monitored series of the refinement rows, or why a row is unusable."""
     sizes: list[float] = []
-    series: dict[str, list[float]] = {name: [] for name in MONITORED}
+    series: dict[str, list[float]] = {name: [] for name in monitored}
     for index, row in enumerate(rows):
-        message = f"refinement {index + 1} needs a positive size_mm and positive {' and '.join(MONITORED)}"
+        message = f"refinement {index + 1} needs a positive size_mm and positive {' and '.join(monitored)}"
         size = _number(row.get("size_mm")) if isinstance(row, Mapping) else None
-        values = [_number(row.get(name)) if isinstance(row, Mapping) else None for name in MONITORED]
+        values = [_number(row.get(name)) if isinstance(row, Mapping) else None for name in monitored]
         if size is None or size <= 0 or any(value is None or value <= 0 for value in values):
             return message
         sizes.append(size)
-        for name, value in zip(MONITORED, values):
+        for name, value in zip(monitored, values):
             series[name].append(value)   # type: ignore[arg-type]
     return sizes, series
 
 
-def _refinement_problems(rows: Any, mesh_size: float, tolerance: float | None) -> list[str]:
+def _refinement_problems(rows: Any, mesh_size: float, tolerance: float | None, monitored: Sequence[str]) -> list[str]:
     if not isinstance(rows, list) or len(rows) < MIN_REFINEMENTS:
         return [f"the study needs at least {MIN_REFINEMENTS} refinement results, coarse to fine"]
-    parsed = _refinement_series(rows)
+    parsed = _refinement_series(rows, monitored)
     if isinstance(parsed, str):
         return [parsed]
     sizes, series = parsed
@@ -1073,7 +1087,7 @@ def packet(result: Mapping[str, Any], a: Assessment, *, mode: str) -> dict[str, 
             findings.append(finding)
     states = {row["outcome"] for row in outcomes}
     verdict = ("fail" if "fail" in states else "unknown" if "unknown" in states else
-               "pass" if "pass" in states else "not_applicable")
+               "not_assessed" if "not_assessed" in states else "pass" if "pass" in states else "not_applicable")
     return {"schema_version": 1, "record_version": 2, "producer": PRODUCER, "scope": [subject],
             "expected": a.expected, "outcomes": outcomes, "findings": findings, "dependencies": dict(a.dependencies),
             "complete": len(outcomes) == len(a.expected), "result": verdict}
@@ -1088,6 +1102,16 @@ _CHECKS = {
 
 def _outcome(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assessment,
              subject: Mapping[str, Any], mode: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """One expected obligation's outcome. A strength obligation of a case with no strength criterion, whose record
+    is sound, is not assessed: only a case that names `acceptance.strength` is held to a strength check."""
+    if obligation["family"] == "engineering.strength" and "strength" not in a.criteria and not a.record_gaps:
+        _check, _key, units, what = _CHECKS["engineering.strength"]
+        return _not_assessed(obligation, a, subject, units, what, mode)
+    return _checked_outcome(obligation, result, a, subject, mode)
+
+
+def _checked_outcome(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assessment,
+                     subject: Mapping[str, Any], mode: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
     family = obligation["family"]
     gaps = list(a.evidence_gaps) + convergence_gaps(a.convergence)
     if a.record_gaps:
@@ -1113,8 +1137,7 @@ def _outcome(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assess
         return _stress_strength(obligation, result, a, subject, criterion, gaps)
     measured = result.get(key)
     if criterion is None:
-        why = (FAST_STRENGTH if check == "strength" and mode == "fast" else
-               f"no sourced acceptance criterion: name the requirement under acceptance.{check}")
+        why = f"no sourced acceptance criterion: name the requirement under acceptance.{check}"
         return _row(obligation, "unknown", a, subject, [why], measured, units, what)
     if not isinstance(measured, (int, float)) or isinstance(measured, bool) or not math.isfinite(measured):
         return _row(obligation, "unknown", a, subject, [f"the solve reported no {what}"], None, units, what, criterion)
@@ -1125,6 +1148,18 @@ def _outcome(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assess
     if check == "strength":
         gaps.append(FULL_STRENGTH)
     return _row(obligation, "pass" if not gaps else "unknown", a, subject, gaps, measured, units, what, criterion)
+
+
+def _not_assessed(obligation: Mapping[str, Any], a: Assessment, subject: Mapping[str, Any], units: str,
+                  what: str, mode: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """A strength obligation of a case that names no acceptance.strength: no check measures it, so it is neither a
+    pass nor an unknown that a yield or a settled peak stress could close. A fast case cannot name one: its reason
+    points to the stress study instead."""
+    why = FAST_STRENGTH if mode == "fast" else (
+        "no check measures strength: the case names no acceptance.strength, so it assesses stiffness only and "
+        "needs neither a yield strength nor a settled peak stress. Name the requirement under acceptance.strength "
+        f"to assess {subject['PN']}'s strength")
+    return _row(obligation, "not_assessed", a, subject, [why], None, units, what)
 
 
 def _unchecked_record(obligation: Mapping[str, Any], a: Assessment, subject: Mapping[str, Any], mode: str,
@@ -1273,10 +1308,15 @@ def _row(obligation: Mapping[str, Any], outcome: str, a: Assessment, subject: Ma
         return row, None
     ident = family.replace(".", "_")
     row["findings"] = [ident]
+    unassessed = outcome == "not_assessed"
+    if unassessed:
+        row["reason"] = NOT_ASSESSED_REASON
     finding = {
-        "id": ident, "code": f"fea.{family.split('.', 1)[1]}.{'margin' if outcome == 'fail' else 'unverified'}",
-        "obligation": obligation["id"], "subject": subject, "severity": "critical" if outcome == "fail" else "major",
+        "id": ident, "code": f"fea.{family.split('.', 1)[1]}.{'margin' if outcome == 'fail' else 'not_assessed' if unassessed else 'unverified'}",
+        "obligation": obligation["id"], "subject": subject,
+        "severity": "critical" if outcome == "fail" else "minor" if unassessed else "major",
         "outcome": outcome,
+        **({"reason": NOT_ASSESSED_REASON} if unassessed else {}),
         "measured": ({"value": measured, "units": units} if isinstance(measured, (int, float)) and units else
                      {"status": "unknown", "reason": uncertainty}),
         "criterion": (_criterion(criterion) if criterion is not None else

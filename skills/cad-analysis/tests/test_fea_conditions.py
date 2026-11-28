@@ -284,7 +284,7 @@ class Refusals(SourcedFEACase):
         held.parent.mkdir(parents=True, exist_ok=True)
         held.write_bytes(snapshot)
         self.seal("v1")
-        return self.case({"conditions": DRY_23C})
+        return self.case({"conditions": DRY_23C}, acceptance={"strength": "REQ-001"})
 
     def test_a_source_artifact_whose_bytes_differ_from_its_sha256_is_refused_before_the_solve(self) -> None:
         path = self.sourced_artifact(recorded=b"the datasheet as recorded\n", snapshot=b"a different datasheet\n")
@@ -335,7 +335,7 @@ class Refusals(SourcedFEACase):
 
     def test_production_service_needs_a_yield_allowable(self) -> None:
         self.build(documents(service_class="production"))
-        self.assertIn("material.allowable", self.refused(self.case({"conditions": DRY_23C})))
+        self.assertIn("material.allowable", self.refused(self.case({"conditions": DRY_23C}, acceptance={"strength": "REQ-001"})))
 
     def test_a_materials_document_that_fails_its_schema_is_refused_before_the_solve(self) -> None:
         docs = documents()
@@ -361,7 +361,7 @@ class Refusals(SourcedFEACase):
 class QualifiedProfile(SourcedFEACase):
     def test_the_solver_gets_the_profile_values_and_the_result_is_simulation_evidence_only(self) -> None:
         self.build(documents())
-        status, report = self.call(self.case({"conditions": DRY_23C}))
+        status, report = self.call(self.case({"conditions": DRY_23C}, acceptance={"strength": "REQ-001", "stiffness": "REQ-002"}))
         self.assertEqual(status, 0, report)
         self.assertEqual(self.solved, [{"name": "tst_alloy_rod (TST fixture)", "E": 70000.0, "nu": 0.33,
                                         "density": 2700.0, "yield": 250.0}])
@@ -377,7 +377,7 @@ class QualifiedProfile(SourcedFEACase):
         self.assertEqual(binding["material_profile"]["id"], "tst_alloy_rod")
         manifest = json.loads((self.hw / "analysis" / "v1" / "bracket" / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["recipe"]["conditions"]["binding"], binding)
-        # No criterion is named and no convergence is shown: an expected check stays unknown, never pass.
+        # Both criteria are named, but no convergence is shown: an expected check stays unknown, never pass.
         self.assertEqual(set(self.outcomes(report).values()), {"unknown"})
         self.assertEqual(report["engineering"]["result"], "unknown")
         self.validate_packet(report["engineering"])
@@ -398,6 +398,57 @@ class QualifiedProfile(SourcedFEACase):
         self.assertEqual(report["engineering"]["dependencies"]["decision_dr_002"],
                          hashlib.sha256(decision_path(self.hw, "DR-002").read_bytes()).hexdigest())
         self.validate_packet(report["engineering"])
+
+    TESTED = fx.quantity(lower=10, upper=40, units="deg_C")
+    NO_YIELD = (prop("youngs_modulus", 70000, "MPa", temperature=TESTED),
+                prop("poisson_ratio", 0.33, "dimensionless", temperature=TESTED),
+                prop("density", 2700, "kg_m3", temperature=TESTED))
+    # Displacement settles (0.190 -> 0.198 -> 0.199) while the peak stress still moves 8% between the two finest meshes.
+    UNSETTLED_STRESS = [{"size_mm": 4, "max_von_mises_mpa": 70.0, "max_displacement_mm": 0.190},
+                        {"size_mm": 2, "max_von_mises_mpa": 76.0, "max_displacement_mm": 0.198},
+                        {"size_mm": 1, "max_von_mises_mpa": 83.3, "max_displacement_mm": 0.199}]
+
+    def stiffness_case(self, *, strength: bool = False) -> Path:
+        named = {"strength": "REQ-001", "stiffness": "REQ-002"} if strength else {"stiffness": "REQ-002"}
+        path = self.case({"conditions": SERVICE}, acceptance=named, mesh_convergence={"decision": "DR-002"})
+        self.approve(self.study(path, refinements=self.UNSETTLED_STRESS))
+        return path
+
+    def test_a_stiffness_only_case_passes_stiffness_without_a_yield_strength_or_a_settled_peak_stress(self) -> None:
+        self.build(documents(profiles=[alloy(*self.NO_YIELD)]))
+        self.solution = {"max_displacement_mm": 0.2, "node_count": 1200, "element_count": 600}
+        status, report = self.call(self.stiffness_case())
+        self.assertEqual(status, 0, report)
+        self.assertNotIn("yield", self.solved[0])
+        self.assertEqual(report["mesh"]["convergence"]["status"], "demonstrated", report["mesh"]["convergence"])
+        self.assertEqual(self.outcomes(report)[f"engineering.stiffness@{PN}"], "pass")
+        self.assertTrue(report["evidence"]["service_evidence"], report["evidence"]["gaps"])
+
+    def test_the_strength_of_a_stiffness_only_case_is_not_assessed_with_a_reason_never_pass(self) -> None:
+        self.build(documents())
+        status, report = self.call(self.stiffness_case())
+        self.assertEqual(status, 0, report)
+        strength = f"engineering.strength@{PN}"
+        self.assertEqual(self.outcomes(report)[strength], "not_assessed")
+        row = next(r for r in report["engineering"]["outcomes"] if r["obligation"] == strength)
+        self.assertEqual(row["reason"], "no_check")
+        self.assertIn("acceptance.strength", row["uncertainty"])
+        finding = next(f for f in report["engineering"]["findings"] if f["obligation"] == strength)
+        self.assertEqual((finding["outcome"], finding["reason"], finding["severity"]), ("not_assessed", "no_check", "minor"))
+        self.assertEqual(report["engineering"]["result"], "not_assessed")
+        self.validate_packet(report["engineering"])
+
+    def test_a_case_with_a_strength_criterion_still_needs_a_yield_strength(self) -> None:
+        self.build(documents(profiles=[alloy(*self.NO_YIELD)]))
+        self.assertEqual(self.refused(self.stiffness_case(strength=True)), ["material.property"])
+
+    def test_a_case_with_a_strength_criterion_still_needs_the_peak_stress_to_settle(self) -> None:
+        self.build(documents())
+        status, report = self.call(self.stiffness_case(strength=True))
+        self.assertEqual(status, 0, report)
+        self.assertEqual(report["mesh"]["convergence"]["status"], "not_demonstrated")
+        self.assertTrue(any("max_von_mises_mpa" in p for p in report["mesh"]["convergence"]["problems"]))
+        self.assertEqual(self.outcomes(report)[f"engineering.stiffness@{PN}"], "unknown")
 
     def test_the_engineering_packet_is_sealed_where_evidence_reads_producer_packets(self) -> None:
         """The record version 2 packet is published beside its analysis bundle as hw/checks/<V>/fea-<case>/,
@@ -485,7 +536,8 @@ class QualifiedProfile(SourcedFEACase):
         self.build(documents(profiles=[printed()], part=part))
         write_test_decision(self.hw, "DR-003", title="DR-003: effective isotropic model")
         model = {"decision": "DR-003", "justification": "TST: Z-direction values bound the layer-normal load path"}
-        status, report = self.call(self.case({"conditions": {**DRY_23C, "orientation": "Z"}, "effective_isotropic": model}))
+        status, report = self.call(self.case({"conditions": {**DRY_23C, "orientation": "Z"}, "effective_isotropic": model},
+                                             acceptance={"strength": "REQ-001"}))
         self.assertEqual(status, 0, report)
         self.assertEqual((self.solved[0]["E"], self.solved[0]["yield"]), (1500.0, 20.0))
         self.assertEqual(report["material"]["isotropy"]["model"], "effective_isotropic")
@@ -497,7 +549,7 @@ class QualifiedProfile(SourcedFEACase):
                         prop("density", 2700, "kg_m3"), prop("yield_strength", 250, "MPa"),
                         prop("yield_strength", 200, "MPa", basis="allowable"), typical_not_allowable=False)
         self.build(documents(profiles=[profile], service_class="production"))
-        status, report = self.call(self.case({"conditions": DRY_23C}))
+        status, report = self.call(self.case({"conditions": DRY_23C}, acceptance={"strength": "REQ-001"}))
         self.assertEqual(status, 0, report)
         self.assertEqual(self.solved[0]["yield"], 200.0)
         rows = {row["input"]: row for row in report["material"]["properties"]}
