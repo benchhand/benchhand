@@ -114,6 +114,12 @@ VOLUME_EPS = 1e-9
 INTERFERENCE_MM3 = 1e-3
 OVERLAP_GATE_MM = 1e-6
 FUZZY_MM = 1e-7
+# The fuzzy value of the interference common. Placements carry round-off of up to about 5e-7 mm
+# (6-decimal translations, composed joint chains), so a designed coincidence, an insert flush with its
+# bore floor, can sit a few FUZZY_MM apart; there the common keeps all of a shape or none of it
+# (benchhand-013: 0 or 150.7 mm^3 for a 39.4 mm^3 ring). OVERLAP_FUZZY_MM sits well above that
+# round-off and well below any modelled gap.
+OVERLAP_FUZZY_MM = 1e-5
 # BRepExtrema_DistShapeShape's point-in-solid tolerance (its SolidTreatment, OCCT 8.0.1), which
 # `interference` applies inside compounds as well. Bounding boxes farther apart than SOLID_GAP_MM
 # (the tolerance plus as much again for rounding) leave no point within it of the other shape.
@@ -998,7 +1004,7 @@ def interference(shape_a: Any, shape_b: Any, box_gap: float = 0.0, threads: bool
     The distance is BRepExtrema's between the boundaries, and 0 when one shape lies inside the
     other: BRepExtrema finds that inside a SOLID or COMPSOLID, `_contained` inside a solid of a
     COMPOUND. The shared volume is the Boolean common, run non-destructively (the inputs, which posed parts
-    share with every other pose, keep their tolerances) with fuzzy value FUZZY_MM, and measured with
+    share with every other pose, keep their tolerances) with fuzzy value OVERLAP_FUZZY_MM, and measured with
     `volume_properties`; it is 0 without a Boolean when the shapes are farther apart than
     OVERLAP_GATE_MM. A shared volume above INTERFERENCE_MM3 is interference.
 
@@ -1031,7 +1037,7 @@ def interference(shape_a: Any, shape_b: Any, box_gap: float = 0.0, threads: bool
     common.SetArguments(shape_list([shape_a]))
     common.SetTools(shape_list([shape_b]))
     common.SetNonDestructive(True)
-    common.SetFuzzyValue(FUZZY_MM)
+    common.SetFuzzyValue(OVERLAP_FUZZY_MM)
     common.Build()
     if not common.IsDone():  # Build leaves it not done on any kernel error
         raise MotionError("interference computation failed")

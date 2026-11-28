@@ -327,7 +327,7 @@ class RuleVersion:
         and the fast-mode band."""
         if not (math.isfinite(band_mm) and band_mm > 0.0):
             raise ValueError(f"the mesh band must be a positive number of mm, got {band_mm!r}")
-        constants = {name: getattr(pose, name) for name in ("OVERLAP_GATE_MM", "FUZZY_MM", "VOLUME_EPS",
+        constants = {name: getattr(pose, name) for name in ("OVERLAP_GATE_MM", "FUZZY_MM", "OVERLAP_FUZZY_MM", "VOLUME_EPS",
                                                             "CONTAINMENT_TOL_MM", "SOLID_GAP_MM", "INTERFERENCE_MM3")}
         constants.update(SLACK_MM=SLACK_MM, SUSPECT_DEFLECTIONS=SUSPECT_DEFLECTIONS, REEVALUATE_MM=REEVALUATE_MM)
         return cls(SCHEMA_VERSION, RULE_REVISION, _source_hashes(), constants,
