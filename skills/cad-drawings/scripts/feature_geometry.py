@@ -325,6 +325,38 @@ def side_by_side(first: Face, second: Face, along: Vector) -> bool:
 
 
 @dataclass(frozen=True)
+class Bevel:
+    """A plane chamfer's two joined planes, in leg order, and its legs: its extent along each plane's normal.
+
+    The first leg is the chamfer's size and ``angle_deg`` its angle, atan(second leg / first leg)."""
+
+    planes: tuple[int, int]
+    legs: tuple[float, float]
+
+    @property
+    def angle_deg(self) -> float:
+        return math.degrees(math.atan2(self.legs[1], self.legs[0]))
+
+
+def bevel(face: Face, faces: Mapping[int, Face], lengths: Mapping[int, float]) -> Bevel | None:
+    """The plane chamfer ``face`` makes between the two faces it shares the longest edges with.
+
+    ``lengths`` maps each candidate neighbour to its shared edge length (or any multiple of it). Leg order:
+    the longer shared edge first, the lower face index first on equal lengths. Recognition and the drawing
+    both state a chamfer through this order, so its size and angle agree. None when fewer than two
+    candidates remain or either of the two is not a plane."""
+    joined = sorted(lengths, key=lambda n: (-lengths[n], n))[:2]
+    if len(joined) < 2 or any(faces[i].support_type != "plane" for i in joined):
+        return None
+    points = list(face.boundary_points())
+    legs = []
+    for index in joined:
+        values = [dot(p, unit(faces[index].normal)) for p in points]
+        legs.append(max(values) - min(values))
+    return Bevel((joined[0], joined[1]), (legs[0], legs[1]))
+
+
+@dataclass(frozen=True)
 class ResolvedFeature:
     """A semantic feature bound to this run's STEP: its faces, their regions, anchors and relations."""
 

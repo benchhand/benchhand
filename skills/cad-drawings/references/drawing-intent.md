@@ -14,7 +14,7 @@ drawing with `geometry_unaccounted`.
 | `kind` | Faces | Required characteristics |
 |---|---|---|
 | `plane_face` | coplanar planes | location along its frame axis (none for a datum or a plane through the origin) |
-| `bore` | inward cylinders; optional floors and drill-point cones | diameter (radius if partial), axis location, circular pattern or grid, depth when floored |
+| `bore` | inward cylinders; optional floors and drill-point cones | diameter (radius if partial, unless `interfaces.yaml` binds a fit or heat-set seat to it), axis location, circular pattern or grid, depth when floored |
 | `shaft` | outward cylinders | diameter, axis location |
 | `slot` | two opposed walls, one or two end radii, optional floor | width, length (closed), centre location or pattern, depth from a planar entry or floor elevation |
 | `groove` | root cylinder, two walls | root diameter, width, axial location |
@@ -27,6 +27,12 @@ drawing with `geometry_unaccounted`.
 
 Every axial end of a bore, shaft, groove or taper cylinder or cone must lie on a located plane, or
 meet a chamfer, round, taper, surface or socket face; otherwise request a `length` dimension.
+
+A plane chamfer has two legs: its extent along the normals of the two planes it joins. Its size is
+the leg along the plane that shares the longer edge with it. On equal edges, the plane with the lower
+face index comes first. Its angle is atan(other leg / size). Recognition and the sheet both use this
+order (`feature_geometry.bevel`). An unequal chamfer thus gets the same size and angle on the sheet
+as in recognition.
 
 Four or more instances of one bore or shaft that fill a regular grid inside a circle (a grille) are a
 grid (ISO 129-1 equally spaced features): one callout states the pitch, the two grid directions and the
@@ -105,6 +111,13 @@ datums. Instances with a missing or extra node keep one location each.
 `interfaces.yaml` binds interface sizes: `press_fit`, `running_fit`, `locating_fit` with `hole` and
 `shaft` endpoints `{PN, feature, region?}`; `heat_set[].feature` for the host seat; and
 `retaining_ring.feature` with `groove_d` such as `4.8 h10` for the shaft groove.
+
+An interface size is a diameter. A partial bore or shaft bound to one prints `⌀` with the fit's
+nominal and class, never a radius. On an ISO sheet that reads `⌀5 H11 (+0.075/0)`.
+
+A `heat_set` seat takes its limits from `hole_d` and `hole_tol`. Without `hole_tol`, nothing states
+the seat's limits. The sheet leaves out the seat's diameter. The drawing fails with
+`tolerance_missing`, which names `hole_tol`. No zero tolerance or general tolerance stands in for it.
 
 `engagement_length_mm` is optional. It goes in four places:
 

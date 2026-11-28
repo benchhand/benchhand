@@ -804,12 +804,7 @@ class Measurer:
                 found.append(Tolerance("fit", limits_.lower * micron, limits_.upper * micron, nominal=nominal,
                                        designation=cls, source=f"{interface['id']} {key} {fit['fit']}"))
             if side == "hole":
-                for heat in limits.get("heat_set") or []:
-                    if heat["pair"][0] == self.pn and heat.get("feature") == feature.id:
-                        low, high = heat.get("hole_tol", (0.0, 0.0))
-                        found.append(Tolerance("heat_set", Decimal(str(low)), Decimal(str(high)),
-                                               nominal=Decimal(str(heat["hole_d"])), designation=None,
-                                               source=f"{interface['id']} heat_set {heat['insert']}"))
+                found += self._heat_set_tolerances(interface, feature)
             ring = limits.get("retaining_ring")
             if side == "shaft" and isinstance(ring, Mapping) and ring.get("pair", [None])[0] == self.pn \
                     and ring.get("feature") == feature.id:
@@ -832,6 +827,21 @@ class Measurer:
         self._post_process_check(feature, tolerance)
         return tolerance
 
+    def _heat_set_tolerances(self, interface: Mapping[str, Any], feature: ResolvedFeature) -> list[Tolerance]:
+        """The limits of each heat-set seat ``interface`` binds to the feature: ``hole_d`` and ``hole_tol``."""
+        found = []
+        for heat in (interface.get("limits") or {}).get("heat_set") or []:
+            if heat["pair"][0] != self.pn or heat.get("feature") != feature.id:
+                continue
+            if "hole_tol" not in heat:
+                raise IntentError("tolerance_missing", f"{interface['id']} heat_set {heat['insert']} states hole_d "
+                                  f"{heat['hole_d']} and no hole_tol, so the seat's limits are unknown; state the "
+                                  f"insert maker's hole tolerance as hole_tol [lower, upper] in mm")
+            low, high = heat["hole_tol"]
+            found.append(Tolerance("heat_set", Decimal(str(low)), Decimal(str(high)), nominal=Decimal(str(heat["hole_d"])),
+                                   designation=None, source=f"{interface['id']} heat_set {heat['insert']}"))
+        return found
+
     def _post_process_check(self, feature: ResolvedFeature, tolerance: Tolerance) -> None:
         """Whether the drawn fit is planned to be achieved: the feature's own route operations and
         inspection (finished_state_findings)."""
@@ -846,20 +856,28 @@ class Measurer:
     def _shaft(self, feature: ResolvedFeature, frame: DatumFrame) -> None:
         self._round_feature(feature, frame, inward=False)
 
+    def _round_size(self, feature: ResolvedFeature, instances: Sequence[Instance], inward: bool) -> None:
+        """A bore's or shaft's diameter, or a partial one's radius when no interface size binds it: a fit class,
+        heat-set seat or ring groove limits a diameter. An interface size with unknown limits is refused."""
+        diameter = 2 * instances[0].radius
+        try:
+            tolerance = self._size_tolerance(feature, "hole" if inward else "shaft", diameter)
+        except IntentError as exc:
+            self.add(finding(exc.code, f"{feature.id}: {exc}", feature=feature.id))
+            return
+        partial = all((self.faces[i].span_deg or 360.0) < 359.0 for inst in instances for i in inst.faces)
+        operation = "radius" if partial and tolerance is None else "diameter"
+        self.char(feature, operation, instances[0].radius if operation == "radius" else diameter, feature.faces,
+                  quantity=len(instances), tolerance=tolerance,
+                  details={"instances": len(instances), "regions": sorted(set(feature.regions.values())),
+                           "axis_dir": instances[0].axis_dir, "inward": inward, "ends": [inst.ends for inst in instances]})
+
     def _round_feature(self, feature: ResolvedFeature, frame: DatumFrame, inward: bool) -> None:
         instances = self._cylinders(feature, inward)
         radii = {round(inst.radius, 6) for inst in instances}
         if len(radii) > 1:
             raise IntentError("measurement_mismatch", f"instances have different diameters {sorted(2 * r for r in radii)}")
-        diameter = 2 * instances[0].radius
-        partial = all((self.faces[i].span_deg or 360.0) < 359.0 for inst in instances for i in inst.faces)
-        tolerance = self._size_tolerance(feature, "hole" if inward else "shaft", diameter)
-        operation = "radius" if partial else "diameter"
-        value = instances[0].radius if partial else diameter
-        self.char(feature, operation, value, feature.faces, quantity=len(instances), tolerance=tolerance,
-                  details={"instances": len(instances), "regions": sorted(set(feature.regions.values())),
-                           "axis_dir": instances[0].axis_dir, "inward": inward,
-                           "ends": [inst.ends for inst in instances]})
+        self._round_size(feature, instances, inward)
         self._axis_location(feature, frame, instances)
         axis = frame.axis_of(instances[0].axis_dir)
         floors = [f for f in self.own(feature) if f.support_type == "plane" and fg.parallel(f.normal, instances[0].axis_dir)]
@@ -1048,21 +1066,17 @@ class Measurer:
                       suffix=str(number) if len(sizes) > 1 else "", details={"angle_deg": angle})
 
     def _bevel_legs(self, face: Face) -> tuple[float, float]:
-        """A plane chamfer's legs: its extent along the normals of the two faces it joins along its long edges."""
+        """A plane chamfer's legs, in recognition's order (``feature_geometry.bevel``): its extent along the
+        normals of the two faces it joins along its long edges."""
         lengths: dict[int, float] = {}
         for edge in face.edges:
             other = self.faces.get(edge.neighbour) if edge.neighbour is not None else None
             if other is not None and other.support_type == "plane" and not fg.parallel(other.normal, face.normal):
                 lengths[other.index] = lengths.get(other.index, 0.0) + fg.norm(fg.sub(edge.points[-1], edge.points[0]))
-        joined = sorted(lengths, key=lambda i: (-lengths[i], i))[:2]
-        if len(joined) < 2 or fg.parallel(self.faces[joined[0]].normal, self.faces[joined[1]].normal):
+        found = fg.bevel(face, self.faces, lengths)
+        if found is None or fg.parallel(self.faces[found.planes[0]].normal, self.faces[found.planes[1]].normal):
             raise IntentError("invalid_drawing_intent", f"plane chamfer face {face.index} does not join two faces")
-        points = list(face.boundary_points())
-        legs = []
-        for index in sorted(joined):
-            values = [fg.dot(p, fg.unit(self.faces[index].normal)) for p in points]
-            legs.append(max(values) - min(values))
-        return legs[0], legs[1]
+        return found.legs
 
     def _round(self, feature: ResolvedFeature, frame: DatumFrame) -> None:
         sizes: dict[float, list[int]] = {}

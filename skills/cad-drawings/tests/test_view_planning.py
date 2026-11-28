@@ -337,6 +337,44 @@ class SocketCallout(unittest.TestCase):
         self.assertEqual(sheet._callout_text(square, "iso"), "square socket across flats 5.6")
 
 
+class InterfaceSizeOnABore(unittest.TestCase):
+    """A bore that interfaces.yaml binds: the fit class or the heat-set limits it states, never a made-up one."""
+
+    def measure(self, span_deg: float, diameter: float, limits: dict) -> drawing_intent.Measured:
+        bore = Face(1, "cylinder", 1.0, (0.0,) * 6, (), (), axis_point=(0.0, 0.0, 0.0), axis_dir=Z,
+                    radius=diameter / 2, inward=True, axial=(0.0, 10.0), span_deg=span_deg)
+        faces = [plane(0, (0.0, 0.0, 0.0), Z), bore, plane(2, (0.0, 0.0, 10.0), Z)]
+        features = {"base": ResolvedFeature("base", "plane_face", (0,)), "bore": ResolvedFeature("bore", "bore", (1,)),
+                    "top": ResolvedFeature("top", "plane_face", (2,))}
+        part = {"drawing": {"type": "detail", "features": {name: {"size": "general"} for name in features},
+                            "coordinate_frame": {"origin": {"intersection": ["base", "bore"]}, "z": {"normal_to": "base"}}}}
+        interfaces = [{"id": "IF-001", "limits": limits}]
+        return drawing_intent.measure("TST-0006", part, {}, interfaces, Binding(features, {0: "base", 1: "bore", 2: "top"}, ()),
+                                      faces)
+
+    def test_a_fit_on_a_partial_bore_is_stated_on_its_diameter(self) -> None:
+        """A pivot bore opened by a relief (300° of its circle): an H11 class belongs to its diameter, not a radius."""
+        fit = {"running_fit": {"fit": "5 H11/c11", "hole": {"PN": "TST-0006", "feature": "bore"},
+                               "shaft": {"PN": "TST-0007", "feature": "pin"}}}
+        (char,) = [c for c in self.measure(300.0, 5.03, fit).characteristics if c.feature == "bore"]
+        self.assertEqual((char.operation, char.value), ("diameter", 5.03))
+        self.assertEqual(sheet._callout_text(char, "iso"), "⌀5 H11 (+0.075/0)")   # ISO 286-2: H11 over 3 to 6 mm
+
+    def test_a_partial_bore_with_no_interface_size_keeps_its_radius(self) -> None:
+        (char,) = [c for c in self.measure(300.0, 5.0, {}).characteristics if c.feature == "bore"]
+        self.assertEqual((char.operation, char.value), ("radius", 2.5))
+        self.assertEqual(sheet._callout_text(char, "iso"), "R2.5")
+
+    def test_a_heat_set_seat_without_hole_tol_is_refused_not_drawn_with_zero_limits(self) -> None:
+        seat = {"heat_set": [{"pair": ["TST-0006", "TST-0008"], "feature": "bore", "hole_d": 5.7, "insert": "M3 x 5.7",
+                              "source": "https://example.com/m3-insert"}]}
+        measured = self.measure(360.0, 5.7, seat)
+        self.assertEqual([c for c in measured.characteristics if c.feature == "bore" and c.operation == "diameter"], [])
+        (refusal,) = [f for f in measured.findings if f["code"] == "tolerance_missing"]
+        self.assertEqual(refusal["feature"], "bore")
+        self.assertIn("hole_tol", refusal["message"])
+
+
 def strip(index: int, ends: tuple, normal) -> Face:
     """A plane face 40 long along x through the two YZ points ``ends``."""
     (y0, z0), (y1, z1) = ends
